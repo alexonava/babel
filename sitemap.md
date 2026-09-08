@@ -1,10 +1,10 @@
 # alexnava.me site map
 
-> Public resources for Alex Nava's professional site.
+> Public resources for Alex Nava’s personal website.
 
 ## Pages
 
-- [Home](https://alexnava.me/): Analytics, governance, and effective challenge for high-stakes decisions.
+- [Home](https://alexnava.me/): Alex Nava’s personal website
 
 ## Machine-readable resources
 

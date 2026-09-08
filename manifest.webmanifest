@@ -1,7 +1,7 @@
 {
-  "name": "alex nava — calm by design",
-  "short_name": "alex nava",
-  "description": "Alex Nava designs and builds interfaces, tools, and product systems with a calm, tactile approach.",
+  "name": "Alex Nava",
+  "short_name": "Alex Nava",
+  "description": "Alex Nava’s personal website",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

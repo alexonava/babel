@@ -185,7 +185,7 @@ jobs:
             effective_host="${effective_host%%/*}"
             if [ "$status" = "200" ] &&
               [ "$effective_host" = "$expected_host" ] &&
-              grep -Fq "Nava Designs." "$body"; then
+              grep -Fq "<title>Alex Nava</title>" "$body"; then
               echo "Preview smoke check passed."
               exit 0
             fi

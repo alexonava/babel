@@ -80,7 +80,7 @@ test("public agent-discovery files are built from sanitized source artifacts", a
   assert.match(llms, /^# Alex Nava/m);
   assert.match(sitemap, /^# alexnava\.me site map/m);
   assert.match(publicAgents, /^# alexnava\.me/m);
-  assert.match(markdownHome, /^---[\s\S]*?title: Nava Designs — Alex Nava/m);
+  assert.match(markdownHome, /^---[\s\S]*?title: Alex Nava/m);
 });
 
 test("scene posters are committed, copied into dist, and use stable-asset caching", async () => {
@@ -211,7 +211,7 @@ test("deploy workflows retry post-upload smoke checks", async () => {
   assert.match(smoke, /apex_sleep_seconds=10/);
   assert.match(smoke, /while \[ "\$attempt" -le "\$apex_max_attempts" \]/);
   assert.doesNotMatch(smoke, /\bseq\b/);
-  assert.match(smoke, /grep -Fq "Nava Designs\."/);
+  assert.match(smoke, /grep -Fq "<title>Alex Nava<\/title>"/);
   assert.match(smoke, /grep -Eiq '\^content-security-policy:'/);
   assert.match(smoke, /grep -Eiq '\^strict-transport-security:'/);
   assert.match(smoke, /grep -Eiq '\^x-content-type-options:/);
@@ -466,6 +466,11 @@ test("production deploy captures and verifies an automatic Pages rollback target
     2,
     "new deployments and rollbacks must use the same smoke script",
   );
+  assert.match(
+    deploy,
+    /bash \.github\/scripts\/smoke-pages\.sh "\$PREVIOUS_DEPLOYMENT_URL" --rollback/,
+  );
+  assert.doesNotMatch(deploy, /"\$DEPLOYMENT_URL" --rollback/);
   assert.match(deploy, /previous deployment was restored and verified\.[\s\S]*?exit 1/);
   assert.doesNotMatch(smoke, /CLOUDFLARE_(API_TOKEN|ACCOUNT_ID)/);
   assert.match(operations, /official Pages rollback endpoint/);

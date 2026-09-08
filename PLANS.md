@@ -24,7 +24,7 @@ Anyone (human or agent) can propose additions. Keep entries to one line. Size is
 - Audience: creative peers first, broader visitors second
 - Site role: sparse personal site, not a full portfolio hub
 - Babel role: atmospheric influence, not explicit framing copy
-- Public text: stay minimal; prefer small grounding changes over explanatory sections
+- Public text: Alex Nava, with a short first-person introduction and professional context inside About; keep visible copy, metadata, and public mirrors consistent
 - Resume: defer until there is a clearer reason to surface it
 
 ---

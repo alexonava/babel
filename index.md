@@ -1,18 +1,18 @@
 ---
-title: Nava Designs — Alex Nava
-description: Analytics, governance, and effective challenge for high-stakes decisions.
+title: Alex Nava
+description: Alex Nava’s personal website
 url: https://alexnava.me/
-dateModified: 2026-08-23
+dateModified: 2026-09-08
 ---
 
-# Nava Designs — Alex Nava
+# Alex Nava
 
-Nava Designs.
+A little about me and what I’m working on.
 
-## About
+## A little about me.
 
-Nine years across analytics, remediation, reporting, and controls, including regulated banking and health analytics.
+My background is in analytics, reporting, remediation, and controls, across banking and health analytics. This is my personal corner of the web.
 
-## Contact
+## Say hello.
 
-Use the contact option on the [homepage](https://alexnava.me/).
+You can reach me at [alexonava@gmail.com](mailto:alexonava@gmail.com).

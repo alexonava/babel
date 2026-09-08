@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-  echo "Usage: smoke-pages.sh <immutable-pages-deployment-url>" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ] || { [ "$#" -eq 2 ] && [ "$2" != "--rollback" ]; }; then
+  echo "Usage: smoke-pages.sh <immutable-pages-deployment-url> [--rollback]" >&2
   exit 2
 fi
 
@@ -12,6 +12,10 @@ if [[ ! "$deployment_url" =~ ^https://[a-z0-9-]+\.alexnava-me\.pages\.dev$ ]]; t
   exit 1
 fi
 deployment_host="${deployment_url#https://}"
+allow_previous_branding=false
+if [ "${2:-}" = "--rollback" ]; then
+  allow_previous_branding=true
+fi
 
 temp_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 mkdir -p "$temp_root"
@@ -24,6 +28,16 @@ extract_final_headers() {
   tr -d '\r' < "$raw_headers" |
     awk '/^HTTP\// { block = "" } { block = block $0 ORS } END { printf "%s", block }' \
       > "$final_headers"
+}
+
+matches_page_marker() {
+  local body="$1"
+
+  grep -Fq "<title>Alex Nava</title>" "$body" ||
+    {
+      [ "$allow_previous_branding" = "true" ] &&
+        grep -Fq "<title>Nava Designs — Alex Nava</title>" "$body"
+    }
 }
 
 fetch_page_once() {
@@ -62,7 +76,7 @@ fetch_page_once() {
 
   [ "$status" = "200" ] &&
     [ "$effective_host" = "$expected_host" ] &&
-    grep -Fq "Nava Designs." "$body" &&
+    matches_page_marker "$body" &&
     {
       [ "$require_security_headers" != "true" ] ||
         {
