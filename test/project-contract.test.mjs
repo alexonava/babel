@@ -466,6 +466,11 @@ test("production deploy captures and verifies an automatic Pages rollback target
     2,
     "new deployments and rollbacks must use the same smoke script",
   );
+  assert.match(
+    deploy,
+    /bash \.github\/scripts\/smoke-pages\.sh "\$PREVIOUS_DEPLOYMENT_URL" --rollback/,
+  );
+  assert.doesNotMatch(deploy, /"\$DEPLOYMENT_URL" --rollback/);
   assert.match(deploy, /previous deployment was restored and verified\.[\s\S]*?exit 1/);
   assert.doesNotMatch(smoke, /CLOUDFLARE_(API_TOKEN|ACCOUNT_ID)/);
   assert.match(operations, /official Pages rollback endpoint/);

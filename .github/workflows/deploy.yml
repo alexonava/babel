@@ -182,6 +182,6 @@ jobs:
         env:
           PREVIOUS_DEPLOYMENT_URL: ${{ steps.previous.outputs.deployment_url }}
         run: |
-          bash .github/scripts/smoke-pages.sh "$PREVIOUS_DEPLOYMENT_URL"
+          bash .github/scripts/smoke-pages.sh "$PREVIOUS_DEPLOYMENT_URL" --rollback
           echo "::error::The new production deployment failed smoke checks; the previous deployment was restored and verified."
           exit 1
