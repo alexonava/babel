@@ -42,6 +42,12 @@ Asset filenames in `dist/` are content-hashed by `build.mjs` (e.g. `scripts/app.
 
 The eager, decorative tower poster is the scene's first visual. Capable hardware, including phones, then loads and crossfades to the live scene. The UI keeps the poster static and does not download the scene bundle when reduced data or reduced motion is requested, WebGL is unavailable, or the WebGL renderer is software-only. `?quality=low|balanced|high` and `?sceneDebug=1` explicitly request the live scene through preference/software gates, but cannot bypass unavailable WebGL.
 
+The live high and balanced tiers optionally load a local stone color/roughness pair from `images/materials/`, after the scene has begun with procedural materials. Low tier and all static scene paths make no authored-material requests. Missing files, decode errors, or cancelled requests keep the procedural surface. Quality changes cancel stale loads and restore procedural materials before selecting the new tier; disposal releases the optional roughness atlas and decoded images.
+
+Stone detail is composited inside the existing brick cells before the procedural stains and mortar. The original bump map remains authoritative, so no normal-map sampler replaces its relief. The optional roughness atlas is at most 512 by 1024 pixels; geometry, draw calls, camera, and postprocessing are unchanged. Source settings live in `src/scene/stone-detail.js`: soft-light color strength 0.35, roughness blend 0.7, and 32 percent source-image crops. Source attribution is recorded in [CREDITS.md](CREDITS.md).
+
+For matched local comparisons, use `?quality=high&sceneDebug=1` and add `&stone=procedural` for the baseline. In debug mode, `window.BabelSite.sceneDebug.stone` reports loading, ready, fallback, or procedural. Check both camera angles and mobile before refreshing the static posters. The material transfer budgets are 750 KiB for the 1024 pair and 256 KiB for the 512 pair; tests also enforce that these requests stay outside the UI bundle and that published files match the source assets. Existing 30 KiB UI and 810 KiB deferred-scene bundle limits remain unchanged.
+
 CI and production deploys follow the same gate order: `npm run audit:ci`, `npm run verify`, `npm test`, then `npm run build:dist`.
 
 ## Security baseline

@@ -43,3 +43,28 @@ test("Three.js does not leak into the UI bundle", async () => {
   // minification — their presence in the UI bundle means the split regressed.
   assert.doesNotMatch(text, /gl_Position/, "app bundle contains Three.js GLSL");
 });
+
+test("authored material requests stay inside the deferred scene bundle", async () => {
+  const app = await readFile(await findHashedScript("app"), "utf8");
+  const scene = await readFile(await findHashedScript("scene"), "utf8");
+  assert.doesNotMatch(app, /images\/materials\/stone-/);
+  assert.match(scene, /images\/materials\/stone-/);
+});
+
+test("authored material pairs fit transfer budgets and are copied intact into dist", async () => {
+  for (const [size, budget] of [
+    [1024, 750 * 1024],
+    [512, 256 * 1024],
+  ]) {
+    let bytes = 0;
+    for (const kind of ["color", "roughness"]) {
+      const relative = path.join("images", "materials", `stone-${kind}-${size}.webp`);
+      const source = await readFile(path.join(projectRoot, relative));
+      const published = await readFile(path.join(distDir, relative));
+      assert.ok(source.length > 0);
+      assert.deepEqual(published, source);
+      bytes += source.length;
+    }
+    assert.ok(bytes <= budget, `${size} material pair is ${bytes} bytes; budget ${budget}`);
+  }
+});

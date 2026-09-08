@@ -2438,7 +2438,23 @@ function setSrgbTexture(texture) {
       chooseAnisotropy: chooseAnisotropy,
       collapseYaw: num511,
       collapseSpread: num512,
+      search: window.location?.search || "",
+      onDetailStatus(status) {
+        if (qualityDebug) qualityDebug.stone = status;
+      },
+      onDetailChange({ colorMap, roughnessMap }) {
+        homeScene.traverse((object) => {
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          materials.forEach((material) => {
+            if (material?.map !== colorMap) return;
+            material.roughnessMap = roughnessMap;
+            material.needsUpdate = true;
+          });
+        });
+        frameScheduler?.invalidate();
+      },
     });
+    subsystemRegistry.register(result108);
     function tmpV68(arg83, arg84) {
       return Math.abs(Math.atan2(Math.sin(arg83 - arg84), Math.cos(arg83 - arg84)));
     }
