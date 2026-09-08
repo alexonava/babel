@@ -540,7 +540,7 @@ main:focus {
 }
 
 .hero-intro {
-  max-width: 46ch;
+  max-width: 30ch;
   margin: 18px 0 0;
   color: var(--text-secondary);
   font-size: clamp(14px, 1.25vw, 17px);
@@ -579,22 +579,9 @@ main:focus {
 }
 
 .hero h1 .hero-word {
-  display: inline-block;
-  /* The parent line-height of 0.98 is tight for display-size Cormorant.
-     Combined with `background-clip: text` on the inline-block, a narrower
-     box clips descenders (e.g. the `g` in "design", `y` in "by"). A small
-     bottom padding expands the background box below the baseline without
-     altering the visual line spacing, so the full glyph gets its
-     background painted. */
+  display: block;
   padding-bottom: 0.12em;
-  color: var(--calm-prefix);
-}
-
-.hero h1 .hero-word--accent {
-  color: var(--accent-muted);
-  /* Muted stone on the twilight scene can lose edge definition. A barely-
-     there stroke nudges contrast up without reading as an outline. */
-  -webkit-text-stroke: 0.3px rgba(30, 26, 22, 0.28);
+  color: var(--text-primary);
 }
 
 @keyframes hero-reveal {
@@ -810,8 +797,8 @@ main:focus {
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--text-accent);
-  opacity: 0.5;
+  color: var(--text-primary);
+  opacity: 1;
   transform: translate(-50%, 0);
   pointer-events: none;
   transition:
@@ -1217,7 +1204,7 @@ main:focus {
   .hero-intro {
     max-width: 30ch;
     margin-top: 10px;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .story-text {
@@ -1330,7 +1317,7 @@ main:focus {
 @media (orientation: landscape) and (max-height: 500px) {
   .hero {
     min-height: 100svh;
-    align-items: flex-end;
+    align-items: flex-start;
     padding-top: max(12px, env(safe-area-inset-top));
     padding-bottom: max(68px, calc(58px + env(safe-area-inset-bottom)));
   }
@@ -1341,9 +1328,14 @@ main:focus {
   }
 
   .hero-minimal {
-    max-width: min(70vw, 480px);
+    max-width: min(45vw, 300px);
     margin-bottom: max(8px, env(safe-area-inset-bottom));
     padding-left: clamp(14px, 3vw, 22px);
+  }
+
+  .hero-intro {
+    max-width: 24ch;
+    margin-top: 8px;
   }
 
   .bottom-bar {

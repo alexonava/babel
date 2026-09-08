@@ -151,7 +151,7 @@ jobs:
             echo "::error::apex must return 200 directly from https://alexnava.me/ without redirecting."
             exit 1
           fi
-          grep -Fq "Nava Designs." "$apex_body"
+          grep -Fq "<title>Alex Nava</title>" "$apex_body"
 
           pages_raw_headers="$RUNNER_TEMP/pages-dev-headers.txt"
           pages_body="$RUNNER_TEMP/pages-dev-body.html"
@@ -176,7 +176,7 @@ jobs:
           grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' "$apex_headers"
 
           if [ "$pages_status" = "200" ]; then
-            grep -Fq "Nava Designs." "$pages_body"
+            grep -Fq "<title>Alex Nava</title>" "$pages_body"
             grep -Eiq '^x-robots-tag:.*noindex' "$pages_headers"
             pages_result="200 with X-Robots-Tag noindex"
           elif { [ "$pages_status" = "301" ] || [ "$pages_status" = "308" ]; } &&

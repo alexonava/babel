@@ -123,7 +123,7 @@ test("the loading ritual is decorative, self-contained, timed, and motion-safe",
   assert.match(ritual, /<svg[\s\S]*class="loading-ritual__seal"/);
   assert.match(ritual, /class="loading-ritual__tower"/);
   assert.doesNotMatch(ritual, /class="loading-ritual__name"/);
-  assert.match(ritual, /class="loading-ritual__motto">Nava Designs\.</);
+  assert.match(ritual, /class="loading-ritual__motto">Alex Nava</);
   assert.doesNotMatch(ritual, /loading-ritual__(?:fog|ticks|brazier|ember|progress)/);
   assert.doesNotMatch(ritual, /<(?:a|button|input|select|textarea)\b/i);
   assert.doesNotMatch(ritual, /\ssrc=/i, "the ritual adds no external media asset");
@@ -195,17 +195,22 @@ test("hero and About copy remain clear, grounded, and free of scramble hooks", a
     .replace(/\s+/g, " ")
     .trim();
 
-  assert.equal(heroText, "Nava Designs.");
-  assert.match(html, /Nine years across analytics, remediation, reporting, and controls\./);
-  assert.equal((html.match(/Regulated banking and health analytics\./g) || []).length, 2);
+  assert.equal(heroText, "Alex Nava A little about me and what I’m working on.");
+  assert.equal(
+    html.replace(/\s+/g, " ").split(
+      "My background is in analytics, reporting, remediation, and controls, across banking and health analytics. This is my personal corner of the web.",
+    ).length - 1,
+    2,
+  );
+  assert.doesNotMatch(html, /Nine years|advisory inquiries|Core focus areas|Nava Designs/);
   assert.doesNotMatch(html, /Wells Fargo|CVS Health/);
-  assert.match(html, /Clarity is the work\./);
+  assert.match(html, /A little about me\./);
   assert.doesNotMatch(html, /data-scramble/);
 });
 
-test("career metadata stays consistent and scene discovery uses inert metadata", async () => {
+test("personal metadata stays consistent and scene discovery uses inert metadata", async () => {
   const html = await readIndexHtml();
-  const description = "Analytics, governance, and effective challenge for high-stakes decisions.";
+  const description = "Alex Nava’s personal website";
   const sceneMeta = html.match(/<meta[^>]*name="babel:scene-script"[^>]*>/)?.[0] || "";
 
   assert.ok(
@@ -213,7 +218,7 @@ test("career metadata stays consistent and scene discovery uses inert metadata",
     "the shared public description must remain present in core and structured metadata",
   );
 
-  assert.match(html, /<title>Nava Designs — Alex Nava<\/title>/);
+  assert.match(html, /<title>Alex Nava<\/title>/);
   assert.match(sceneMeta, /content="\/scripts\/scene\.js\?v=648"/);
   assert.match(sceneMeta, /\sdata-scene-script(?:\s|\/?>)/);
   assert.doesNotMatch(html, /<link[^>]*data-scene-script/);
@@ -243,7 +248,7 @@ test("first-paint hero, action cursors, microcopy, and short-landscape labels st
     styles,
     /@media \(orientation: landscape\) and \(max-height: 500px\)[\s\S]*?\.btn-icon-label\s*\{[^}]*opacity:\s*1;/,
   );
-  assert.match(styles, /\.btn-icon-label\s*\{[^}]*opacity:\s*0\.5;/);
+  assert.match(styles, /\.btn-icon-label\s*\{[^}]*opacity:\s*1;/);
   assert.match(
     styles,
     /\.panel-parchment__sheet\s*\{[^}]*min-height:\s*clamp\(280px, 36vh, 380px\);/,

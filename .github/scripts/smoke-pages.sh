@@ -62,7 +62,7 @@ fetch_page_once() {
 
   [ "$status" = "200" ] &&
     [ "$effective_host" = "$expected_host" ] &&
-    grep -Fq "Nava Designs." "$body" &&
+    grep -Fq "<title>Alex Nava</title>" "$body" &&
     {
       [ "$require_security_headers" != "true" ] ||
         {
