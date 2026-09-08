@@ -55,7 +55,7 @@ Production releases serialize without canceling an in-progress upload or its ver
 
 ## Response-header contract
 
-`_headers` is the tracked baseline. HTML revalidates immediately. Unhashed stable assets, including fonts, icons, and scene posters, revalidate after seven days. Content-hashed CSS and JavaScript are immutable for one year. Do not add absolute-host patterns to `_headers`: Cloudflare Pages applies those rules by path, so an intended `pages.dev`-only `X-Robots-Tag` can leak onto the apex. Cloudflare supplies `noindex` on branch preview deployments by default.
+`_headers` is the tracked baseline. HTML revalidates immediately. Fonts, icons, and images revalidate after seven days. Published HTML uses content-hashed poster URLs so changed posters bypass previously cached images; stable poster copies remain for older HTML. The image cache policy is unchanged. Content-hashed CSS and JavaScript are immutable for one year. Do not add absolute-host patterns to `_headers`: Cloudflare Pages applies those rules by path, so an intended `pages.dev`-only `X-Robots-Tag` can leak onto the apex. Cloudflare supplies `noindex` on branch preview deployments by default.
 
 After an approved production deploy, compare live headers with `_headers`:
 

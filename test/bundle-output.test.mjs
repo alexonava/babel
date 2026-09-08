@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -102,5 +103,70 @@ test("shared brick binary is copied intact and fits the combined detail transfer
       bytes <= budget,
       `${size} maps plus shared brick are ${bytes} bytes; budget ${budget}`,
     );
+  }
+});
+
+test("published responsive posters use content hashes and retain intact compatibility copies", async () => {
+  const html = await readFile(path.join(distDir, "index.html"), "utf8");
+  const expectedNames = [];
+  for (const [orientation, attribute] of [
+    ["landscape", "src"],
+    ["portrait", "srcset"],
+  ]) {
+    const stableName = `scene-poster-${orientation}.webp`;
+    const source = await readFile(path.join(projectRoot, "images", stableName));
+    const hash = createHash("sha256").update(source).digest("hex").slice(0, 8);
+    const hashedName = `scene-poster-${orientation}.${hash}.webp`;
+    expectedNames.push(hashedName);
+    assert.ok(html.includes(`${attribute}="/images/${hashedName}"`));
+    assert.deepEqual(await readFile(path.join(distDir, "images", hashedName)), source);
+    assert.deepEqual(await readFile(path.join(distDir, "images", stableName)), source);
+  }
+  const emittedNames = (await readdir(path.join(distDir, "images"))).filter((name) =>
+    /^scene-poster-(landscape|portrait)\.[a-f0-9]{8}\.webp$/.test(name),
+  );
+  assert.deepEqual(emittedNames.sort(), expectedNames.sort());
+  assert.doesNotMatch(html, /\/images\/scene-poster-(landscape|portrait)\.webp/);
+});
+
+test("changing only fixture poster bytes changes only that poster URL", async () => {
+  const scratchRoot = path.join(projectRoot, ".tmp-preview-review");
+  await mkdir(scratchRoot, { recursive: true });
+  const fixture = await mkdtemp(path.join(scratchRoot, "poster-build-"));
+  const sourcePath = path.join(projectRoot, "images", "scene-poster-landscape.webp");
+  const sourceBefore = await readFile(sourcePath);
+  try {
+    // Reuse the sanitized static payload; only the actual build script and its
+    // unrewritten HTML/CSS inputs are copied from source. No user data or deps.
+    await cp(distDir, fixture, { recursive: true });
+    for (const file of ["build.mjs", "index.html", "404.html", "styles.css", "site-agents.md"]) {
+      await cp(path.join(projectRoot, file), path.join(fixture, file));
+    }
+    await mkdir(path.join(fixture, "src"));
+    await writeFile(path.join(fixture, "src", "app.js"), "void 0;");
+    await writeFile(path.join(fixture, "src", "scene-entry.js"), "void 0;");
+    async function posterUrls() {
+      await execFileP(process.execPath, ["build.mjs", "--dist"], { cwd: fixture });
+      const html = await readFile(path.join(fixture, "dist", "index.html"), "utf8");
+      return Object.fromEntries(
+        ["landscape", "portrait"].map((orientation) => [
+          orientation,
+          html.match(new RegExp(`/images/scene-poster-${orientation}\\.[a-f0-9]{8}\\.webp`))?.[0],
+        ]),
+      );
+    }
+    const before = await posterUrls();
+    assert.ok(before.landscape && before.portrait);
+    const changed = Buffer.concat([sourceBefore, Buffer.from("fixture-only-poster-change")]);
+    await writeFile(path.join(fixture, "images", "scene-poster-landscape.webp"), changed);
+    const after = await posterUrls();
+    const changedHash = createHash("sha256").update(changed).digest("hex").slice(0, 8);
+    assert.equal(after.landscape, `/images/scene-poster-landscape.${changedHash}.webp`);
+    assert.notEqual(after.landscape, before.landscape);
+    assert.equal(after.portrait, before.portrait);
+    assert.deepEqual(await readFile(sourcePath), sourceBefore, "tracked poster must not change");
+  } finally {
+    assert.equal(path.dirname(path.resolve(fixture)), scratchRoot);
+    await rm(fixture, { recursive: true, force: true });
   }
 });
