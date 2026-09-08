@@ -70,16 +70,20 @@ test("authored material pairs fit transfer budgets and are copied intact into di
   }
 });
 
-test("brick request and BRK1 decoder stay inside the deferred scene bundle", async () => {
+test("construction geometry requests and BRK1 decoder stay inside the deferred scene bundle", async () => {
   const app = await readFile(await findHashedScript("app"), "utf8");
   const scene = await readFile(await findHashedScript("scene"), "utf8");
-  for (const marker of [/images\/materials\/stone-brick\.bin/, /Invalid BRK1 brick geometry/]) {
-    assert.doesNotMatch(app, marker, "brick loading or decoding leaked into the UI bundle");
-    assert.match(scene, marker, "deferred scene is missing the brick loader or decoder");
+  for (const marker of [
+    /images\/materials\/stone-brick\.bin/,
+    /images\/materials\/stone-tread\.bin/,
+    /Invalid BRK1 brick geometry/,
+  ]) {
+    assert.doesNotMatch(app, marker, "geometry loading or decoding leaked into the UI bundle");
+    assert.match(scene, marker, "deferred scene is missing a geometry loader or decoder");
   }
 });
 
-test("shared brick binary is copied intact and fits the combined detail transfer budgets", async () => {
+test("shared brick and tread fit the combined detail transfer budgets", async () => {
   const relative = path.join("images", "materials", "stone-brick.bin");
   const source = await readFile(path.join(projectRoot, relative));
   const published = await readFile(path.join(distDir, relative));
@@ -89,21 +93,41 @@ test("shared brick binary is copied intact and fits the combined detail transfer
     `brick binary is ${source.length} bytes`,
   );
   assert.deepEqual(published, source);
+  const treadBytes = (await stat(path.join(distDir, "images", "materials", "stone-tread.bin")))
+    .size;
 
   for (const [size, budget] of [
     [1024, 750 * 1024],
     [512, 256 * 1024],
   ]) {
-    let bytes = source.length;
+    let bytes = source.length + treadBytes;
     for (const kind of ["color", "roughness"]) {
       const map = path.join(distDir, "images", "materials", `stone-${kind}-${size}.webp`);
       bytes += (await stat(map)).size;
     }
     assert.ok(
       bytes <= budget,
-      `${size} maps plus shared brick are ${bytes} bytes; budget ${budget}`,
+      `${size} maps plus shared brick and tread are ${bytes} bytes; budget ${budget}`,
     );
   }
+});
+
+test("the shared tread is at most 200 triangles and crown reuse adds no geometry asset", async () => {
+  const relative = path.join("images", "materials", "stone-tread.bin");
+  const source = await readFile(path.join(projectRoot, relative));
+  assert.ok(source.length >= 8 && source.length <= 9608, `tread is ${source.length} bytes`);
+  assert.equal(source.toString("ascii", 0, 4), "BRK1");
+  const vertices = source.readUInt32LE(4);
+  assert.ok(
+    vertices > 0 && vertices % 3 === 0 && vertices <= 600,
+    `${vertices / 3} tread triangles`,
+  );
+  assert.equal(source.length, 8 + vertices * 16, "BRK1 attributes must match the vertex count");
+  assert.deepEqual(await readFile(path.join(distDir, relative)), source);
+  const binaries = (await readdir(path.join(distDir, "images", "materials"))).filter((name) =>
+    /\.(bin|glb|gltf)$/i.test(name),
+  );
+  assert.deepEqual(binaries.sort(), ["stone-brick.bin", "stone-tread.bin"]);
 });
 
 test("published responsive posters use content hashes and retain intact compatibility copies", async () => {

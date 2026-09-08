@@ -44,8 +44,17 @@ The optional raised-brick geometry in `images/materials/stone-brick.bin` was
 generated for this site with Meshy 6, then normalized to a unit block and given
 box-projected UVs for the stone material. The shared model has 838 triangles and
 uses a compact local binary, without shipping the source GLB or a model loader.
-It preserves the existing raised-block positions and proportions; the rest of
-the tower geometry remains procedural. The selected geometry and texture
-direction were reviewed together before integration.
+It preserves the existing raised-block positions and proportions. The local
+construction pilot reuses this same geometry for selected crown blocks. The
+selected geometry and texture direction were reviewed together before integration.
 
 Tool: [Meshy](https://www.meshy.ai/).
+
+## Authored limestone tread
+
+The optional shared stair-tread geometry in `images/materials/stone-tread.bin`
+was generated for this site with Meshy 6 and prepared locally as a normalized
+BRK1 mesh with 180 triangles. It uses the existing Adobe Firefly/Meshy
+stone color and roughness maps described above; no additional generated image
+maps are shipped. Source masters remain outside the website payload. The tread
+and crown construction pilot is pending visual acceptance.

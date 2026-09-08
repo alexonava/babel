@@ -1,5 +1,5 @@
 // Optional relief geometry: the original boxes remain the first-frame fallback.
-import { BufferAttribute, BufferGeometry } from "three";
+import { BufferAttribute, BufferGeometry, Sphere } from "three";
 
 export const BRICK_DETAIL_MAX_BYTES = 48 * 1024;
 const POSITION_TOLERANCE = 1 / 32767;
@@ -75,10 +75,50 @@ async function loadBrickGeometry(url, { signal }) {
   return decodeBrickGeometry(await response.arrayBuffer());
 }
 
+function createDetailBounds(mesh, geometry) {
+  if (!geometry.boundingBox) geometry.computeBoundingBox();
+  const { min, max } = geometry.boundingBox;
+  const halfX = (max.x - min.x) / 2;
+  const halfY = (max.y - min.y) / 2;
+  const halfZ = (max.z - min.z) / 2;
+  const sphere = new Sphere();
+  geometry.boundingBox.getCenter(sphere.center);
+  const linearIndices = [0, 1, 2, 4, 5, 6, 8, 9, 10];
+  const previous = new Float64Array(9).fill(NaN);
+  return () => {
+    const elements = mesh.matrixWorld.elements;
+    if (linearIndices.every((index, i) => elements[index] === previous[i])) return sphere;
+    linearIndices.forEach((index, i) => {
+      previous[i] = elements[index];
+    });
+    // A unit sphere scaled by its largest axis greatly overestimates thin treads.
+    // Bound the eight box corners under the full current affine transform, so
+    // rotated, nonuniform parents remain safe without copying shared geometry.
+    let radiusSquared = 0;
+    for (let corner = 0; corner < 8; corner += 1) {
+      const x = corner & 1 ? halfX : -halfX;
+      const y = corner & 2 ? halfY : -halfY;
+      const z = corner & 4 ? halfZ : -halfZ;
+      const worldX = elements[0] * x + elements[4] * y + elements[8] * z;
+      const worldY = elements[1] * x + elements[5] * y + elements[9] * z;
+      const worldZ = elements[2] * x + elements[6] * y + elements[10] * z;
+      radiusSquared = Math.max(radiusSquared, worldX ** 2 + worldY ** 2 + worldZ ** 2);
+    }
+    // r160 Frustum copies object.boundingSphere then applies matrixWorld. Undo
+    // its radius multiplier here; the center still transforms normally. Cache
+    // only the linear matrix: camera motion and translations do not change it.
+    const maxScale = mesh.matrixWorld.getMaxScaleOnAxis();
+    sphere.radius = maxScale > 0 ? (Math.sqrt(radiusSquared) * (1 + 1e-7)) / maxScale : 0;
+    return sphere;
+  };
+}
+
 export function createBrickDetailController({
   profile,
   disabled = false,
   records = [],
+  geometryUrl = "/images/materials/stone-brick.bin",
+  materialColor = null,
   onChange = () => {},
   report = () => {},
   loadGeometry = loadBrickGeometry,
@@ -89,6 +129,7 @@ export function createBrickDetailController({
     geometry: mesh.geometry,
     material: mesh.material,
     scale: mesh.scale.clone(),
+    boundingSphere: Object.getOwnPropertyDescriptor(mesh, "boundingSphere"),
   }));
   let disposed = false;
   let revision = 0;
@@ -124,6 +165,11 @@ export function createBrickDetailController({
       original.mesh.geometry = original.geometry;
       original.mesh.material = original.material;
       original.mesh.scale.copy(original.scale);
+      if (original.boundingSphere) {
+        Object.defineProperty(original.mesh, "boundingSphere", original.boundingSphere);
+      } else {
+        delete original.mesh.boundingSphere;
+      }
     }
     applied = false;
     for (const material of materials.values()) material.dispose();
@@ -136,6 +182,7 @@ export function createBrickDetailController({
     if (disposed || !eligible || !geometry || !detailMaps || applied) return false;
     applyFailed = false;
     const nextMaterials = new Map();
+    const nextBounds = new Map();
     try {
       // Prepare every material before changing any mesh. A bad record or failed
       // clone leaves the whole relief set on its original boxes and materials.
@@ -147,9 +194,18 @@ export function createBrickDetailController({
         if (!original.material?.isMaterial || Array.isArray(original.material)) {
           throw new Error("Brick relief requires a single material");
         }
+        const descriptor = Object.getOwnPropertyDescriptor(original.mesh, "boundingSphere");
+        if (
+          descriptor?.configurable === false ||
+          (!descriptor && !Object.isExtensible(original.mesh))
+        ) {
+          throw new Error("Brick relief bounds cannot be installed");
+        }
+        nextBounds.set(original.mesh, createDetailBounds(original.mesh, geometry));
         if (!nextMaterials.has(original.material)) {
           const material = original.material.clone();
           nextMaterials.set(original.material, material);
+          if (materialColor !== null) material.color.set(materialColor);
           material.map = detailMaps.colorMap;
           material.roughnessMap = detailMaps.roughnessMap;
           material.roughness = 0.96;
@@ -168,6 +224,11 @@ export function createBrickDetailController({
     }
     materials = nextMaterials;
     for (const original of originals) {
+      Object.defineProperty(original.mesh, "boundingSphere", {
+        configurable: true,
+        enumerable: original.boundingSphere?.enumerable ?? false,
+        get: nextBounds.get(original.mesh),
+      });
       original.mesh.geometry = geometry;
       original.mesh.material = materials.get(original.material);
       original.mesh.scale.copy(original.scale).multiply(original.dimensions);
@@ -230,7 +291,7 @@ export function createBrickDetailController({
     void (async () => {
       let loaded = null;
       try {
-        loaded = await loadGeometry("/images/materials/stone-brick.bin", {
+        loaded = await loadGeometry(geometryUrl, {
           signal: controller.signal,
         });
         if (disposed || requestRevision !== revision || controller.signal.aborted) {

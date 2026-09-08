@@ -2435,8 +2435,11 @@ function setSrgbTexture(texture) {
     const materialSearch = new URLSearchParams(window.location?.search || "");
     const brickDetailDisabled =
       materialSearch.get("brick") === "boxes" || materialSearch.get("stone") === "procedural";
+    const constructionDetailDisabled =
+      brickDetailDisabled || materialSearch.get("construction") === "baseline";
     let brickDetail = null;
-    // Stone detail can resolve before the later brick controller is constructed.
+    let treadDetail = null;
+    // Stone detail can resolve before the later controllers are constructed.
     let latestBrickMaps = null;
     const result108 = createTowerTextures({
       THREE: THREE,
@@ -2452,11 +2455,13 @@ function setSrgbTexture(texture) {
         if (status.status === "fallback") {
           latestBrickMaps = null;
           brickDetail?.setDetailMaps(null);
+          treadDetail?.setDetailMaps(null);
         }
       },
       onDetailChange({ colorMap, roughnessMap, brickMaps }) {
         // Restore detached originals before rebinding or disposing their wall maps.
         brickDetail?.setDetailMaps(null);
+        treadDetail?.setDetailMaps(null);
         homeScene.traverse((object) => {
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           materials.forEach((material) => {
@@ -2467,6 +2472,7 @@ function setSrgbTexture(texture) {
         });
         latestBrickMaps = brickMaps;
         brickDetail?.setDetailMaps(latestBrickMaps);
+        treadDetail?.setDetailMaps(latestBrickMaps);
         frameScheduler?.invalidate();
       },
     });
@@ -2993,6 +2999,7 @@ function setSrgbTexture(texture) {
         metalness: 0,
       }),
       tmpV73 = state.lowPower ? 14 : 28;
+    const crownBrickRecords = [];
     for (let num449 = 0; num449 < tmpV73; num449 += 1) {
       const num277 = (num449 / tmpV73) * Math.PI * 2,
         result69 = Math.max(0, 1 - tmpV68(num277, num511) / 0.86);
@@ -3049,6 +3056,12 @@ function setSrgbTexture(texture) {
           (mesh4.castShadow = !state.lowPower),
           (mesh4.receiveShadow = !1),
           group11.add(mesh4));
+      }
+      if (!constructionDetailDisabled) {
+        crownBrickRecords.push({
+          mesh: mesh14,
+          dimensions: { x: num281, y: num282, z: num283 },
+        });
       }
     }
     const biteShardCount = state.lowPower ? 5 : 9;
@@ -3122,7 +3135,7 @@ function setSrgbTexture(texture) {
     brickDetail = createBrickDetailController({
       profile: state.profile,
       disabled: brickDetailDisabled,
-      records: reliefBrickRecords,
+      records: [...reliefBrickRecords, ...crownBrickRecords],
       onChange() {
         frameScheduler?.invalidate();
       },
@@ -4227,6 +4240,7 @@ function setSrgbTexture(texture) {
         num478 = mesh39.position.y + 17;
       return 12.2 + (8.8 - 12.2) * clamp01((arg124 - num477) / (num478 - num477));
     }
+    const treadBrickRecords = [];
     for (let num479 = 0; num479 < overlaySegments; num479 += 1) {
       const qeResult87 = tmpV65(1.73 * num479 + 4.7),
         qeResult88 = tmpV65(2.41 * num479 + 1.9),
@@ -4259,7 +4273,29 @@ function setSrgbTexture(texture) {
         (mesh25.castShadow = !state.lowPower),
         (mesh25.receiveShadow = !state.lowPower),
         group7.add(mesh25));
+      // Preserve the seven source variants and their completed placement math.
+      // The authored unit tread keeps +Y up and +X pointing out from the tower.
+      const { width, height, depth } = tmpV20.parameters;
+      treadBrickRecords.push({
+        mesh: mesh25,
+        dimensions: { x: width, y: height, z: depth },
+      });
     }
+    treadDetail = createBrickDetailController({
+      profile: state.profile,
+      disabled: constructionDetailDisabled,
+      records: treadBrickRecords,
+      geometryUrl: "/images/materials/stone-tread.bin",
+      materialColor: TOWER_SURFACE_MATERIALS.shellColor,
+      onChange() {
+        frameScheduler?.invalidate();
+      },
+      report(status) {
+        if (qualityDebug) qualityDebug.treads = status;
+      },
+    });
+    treadDetail.setDetailMaps(latestBrickMaps);
+    subsystemRegistry.register(treadDetail);
     const boxGeometry = new BoxGeometry(1.15, 1, 1.15),
       meshStandardMaterial12 = new MeshStandardMaterial({
         color: 11833972,

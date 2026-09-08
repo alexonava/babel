@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { BoxGeometry, Group, Mesh, MeshStandardMaterial, Texture, Vector3 } from "three";
+import {
+  BoxGeometry,
+  Frustum,
+  Group,
+  Mesh,
+  MeshStandardMaterial,
+  Plane,
+  Sphere,
+  Texture,
+  Vector3,
+} from "three";
 import {
   BRICK_DETAIL_MAX_BYTES,
   createBrickDetailController,
@@ -27,7 +37,14 @@ function maps() {
     roughnessDisposals: countDisposals(roughnessMap),
   };
 }
-function harness({ tier = "high", disabled = false, failSecondMaterial = false } = {}) {
+function harness({
+  tier = "high",
+  disabled = false,
+  failSecondMaterial = false,
+  configureMesh = () => {},
+  geometryUrl,
+  materialColor,
+} = {}) {
   const group = new Group();
   const material = new MeshStandardMaterial({ roughness: 0.8, metalness: 0.2 });
   const wallRoughness = new Texture();
@@ -49,6 +66,7 @@ function harness({ tier = "high", disabled = false, failSecondMaterial = false }
     mesh.visible = index === 0;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    configureMesh(mesh, index);
     group.add(mesh);
     return { mesh, dimensions: { x: 0.8 + index * 0.1, y: 0.4, z: 0.3 } };
   });
@@ -59,6 +77,7 @@ function harness({ tier = "high", disabled = false, failSecondMaterial = false }
     position: mesh.position.clone(),
     rotation: mesh.rotation.clone(),
     visible: mesh.visible,
+    boundingSphere: Object.getOwnPropertyDescriptor(mesh, "boundingSphere"),
   }));
   const requests = [],
     statuses = [],
@@ -67,6 +86,8 @@ function harness({ tier = "high", disabled = false, failSecondMaterial = false }
     profile: { tier },
     disabled,
     records,
+    geometryUrl,
+    materialColor,
     onChange() {
       changes.push(records.map(({ mesh }) => mesh.geometry));
     },
@@ -88,6 +109,10 @@ function harness({ tier = "high", disabled = false, failSecondMaterial = false }
       assert.equal(mesh.geometry, originals[index].geometry);
       assert.equal(mesh.material, originals[index].material);
       assert.deepEqual(mesh.scale, originals[index].scale);
+      assert.deepEqual(
+        Object.getOwnPropertyDescriptor(mesh, "boundingSphere"),
+        originals[index].boundingSphere,
+      );
     });
   }
   return {
@@ -374,4 +399,249 @@ test("a stale completion after low-tier reentry cannot replace or dispose the ne
   assert.equal(h.statuses.at(-1).status, "ready");
   h.controller.dispose();
   assert.equal(currentDisposal.count, 1);
+});
+
+test("a tread URL and limestone color override preserve the original material across resets", async () => {
+  const materialColor = 0x8f806e;
+  const h = harness({ geometryUrl: "/images/materials/stone-tread.bin", materialColor });
+  const originalColor = h.material.color.clone();
+  assert.equal(h.requests[0].url, "/images/materials/stone-tread.bin");
+  h.controller.applyQuality({ tier: "balanced" });
+  assert.equal(h.requests.length, 1);
+  h.controller.setDetailMaps(maps());
+  h.requests[0].resolve(decodeBrickGeometry(asset));
+  await flush();
+  const material = h.records[0].mesh.material;
+  assert.equal(material.color.getHex(), materialColor);
+  assert.deepEqual(h.material.color, originalColor);
+  h.controller.setDetailMaps(null);
+  h.assertOriginals();
+  assert.deepEqual(h.material.color, originalColor);
+  h.controller.setDetailMaps(maps());
+  assert.equal(h.records[0].mesh.material.color.getHex(), materialColor);
+  h.controller.dispose();
+  h.assertOriginals();
+});
+
+test("the construction baseline can disable treads while leaving the accepted brick controller active", async () => {
+  const bricks = harness();
+  const treads = harness({ disabled: true, geometryUrl: "/images/materials/stone-tread.bin" });
+  const pair = maps();
+  bricks.controller.setDetailMaps(pair);
+  treads.controller.setDetailMaps(pair);
+  assert.equal(bricks.requests.length, 1);
+  assert.equal(treads.requests.length, 0);
+  bricks.requests[0].resolve(decodeBrickGeometry(asset));
+  await flush();
+  assert.equal(bricks.statuses.at(-1).status, "ready");
+  assert.equal(treads.statuses.at(-1).status, "procedural");
+  treads.assertOriginals();
+  treads.controller.dispose();
+  bricks.controller.dispose();
+  assert.equal(pair.colorDisposals.count + pair.roughnessDisposals.count, 0);
+});
+
+test("two construction controllers restore independently before their external maps are disposed", async () => {
+  const bricks = harness();
+  const treads = harness({
+    geometryUrl: "/images/materials/stone-tread.bin",
+    materialColor: 0xa9a092,
+  });
+  const controllers = [bricks, treads];
+  const pair = maps();
+  const geometries = controllers.map(() => decodeBrickGeometry(asset));
+  const disposals = geometries.map(countDisposals);
+  controllers.forEach((h, index) => {
+    h.controller.setDetailMaps(pair);
+    h.requests[0].resolve(geometries[index]);
+  });
+  await flush();
+  controllers.forEach((h) => assert.equal(h.statuses.at(-1).status, "ready"));
+  controllers.forEach((h) => h.controller.setDetailMaps(null));
+  controllers.forEach((h) => h.assertOriginals());
+  assert.ok(disposals.every((counter) => counter.count === 0));
+  pair.colorMap.addEventListener("dispose", () => controllers.forEach((h) => h.assertOriginals()));
+  pair.roughnessMap.addEventListener("dispose", () =>
+    controllers.forEach((h) => h.assertOriginals()),
+  );
+  pair.colorMap.dispose();
+  pair.roughnessMap.dispose();
+  const nextPair = maps();
+  controllers.forEach((h) => h.controller.setDetailMaps(nextPair));
+  controllers.forEach((h) => assert.equal(h.statuses.at(-1).status, "ready"));
+  treads.controller.applyQuality({ tier: "low" });
+  treads.assertOriginals();
+  assert.equal(bricks.records[0].mesh.geometry, geometries[0]);
+  assert.deepEqual(
+    disposals.map((counter) => counter.count),
+    [0, 1],
+  );
+  controllers
+    .slice()
+    .reverse()
+    .forEach((h) => h.controller.dispose());
+  assert.deepEqual(
+    disposals.map((counter) => counter.count),
+    [1, 1],
+  );
+  assert.equal(nextPair.colorDisposals.count + nextPair.roughnessDisposals.count, 0);
+});
+
+async function activeTread() {
+  const bytes = await readFile(new URL("../images/materials/stone-tread.bin", import.meta.url));
+  const geometry = decodeBrickGeometry(bytes);
+  const dimensions = { x: 4.6, y: 0.4, z: 2 };
+  const mesh = new Mesh(new BoxGeometry(4.6, 0.4, 2), new MeshStandardMaterial());
+  mesh.scale.set(0.95, 1.02, 1.03);
+  const group = new Group();
+  group.add(mesh);
+  const controller = createBrickDetailController({
+    profile: { tier: "high" },
+    records: [{ mesh, dimensions }],
+    loadGeometry: async () => geometry,
+  });
+  controller.setDetailMaps(maps());
+  await flush();
+  group.updateMatrixWorld(true);
+  return { mesh, group, geometry, controller };
+}
+
+test("thin tread bounds cull the inflated shared-sphere false positive without extra geometry", async () => {
+  const { mesh, geometry, controller } = await activeTread();
+  const originalSphere = geometry.boundingSphere.clone();
+  const inflated = geometry.boundingSphere.clone().applyMatrix4(mesh.matrixWorld);
+  const tight = mesh.boundingSphere.clone().applyMatrix4(mesh.matrixWorld);
+  assert.ok(tight.radius < inflated.radius * 0.8);
+  mesh.position.x = 1 + (inflated.radius + tight.radius) / 2;
+  mesh.updateMatrixWorld(true);
+  const frustum = new Frustum(
+    new Plane(new Vector3(1, 0, 0), 1),
+    new Plane(new Vector3(-1, 0, 0), 1),
+    new Plane(new Vector3(0, 1, 0), 1),
+    new Plane(new Vector3(0, -1, 0), 1),
+    new Plane(new Vector3(0, 0, 1), 1),
+    new Plane(new Vector3(0, 0, -1), 1),
+  );
+  assert.equal(
+    frustum.intersectsSphere(geometry.boundingSphere.clone().applyMatrix4(mesh.matrixWorld)),
+    true,
+  );
+  assert.equal(frustum.intersectsObject(mesh), false);
+  assert.equal(mesh.geometry, geometry);
+  assert.deepEqual(geometry.boundingSphere, originalSphere);
+  controller.dispose();
+});
+
+test("tread bounds contain every vertex through rotated nonuniform parents and reflections", async () => {
+  const { mesh, group, geometry, controller } = await activeTread();
+  const ancestor = new Group();
+  ancestor.add(group);
+  ancestor.scale.set(1.3, 0.8, 1.7);
+  ancestor.rotation.set(-0.3, 0.2, 0.5);
+  mesh.rotation.set(0.6, -0.35, 0.15);
+  const vertex = new Vector3();
+  for (const scale of [
+    [1.7, 0.65, 2.2],
+    [-0.4, 2.8, 1.3],
+    [0, 0, 0],
+  ]) {
+    group.scale.set(...scale);
+    group.rotation.set(0.4, 0.8, -0.2);
+    group.position.set(11, -6, 3);
+    ancestor.updateMatrixWorld(true);
+    const world = mesh.boundingSphere.clone().applyMatrix4(mesh.matrixWorld);
+    for (let index = 0; index < geometry.attributes.position.count; index += 1) {
+      vertex
+        .fromBufferAttribute(geometry.attributes.position, index)
+        .applyMatrix4(mesh.matrixWorld);
+      assert.ok(
+        vertex.distanceTo(world.center) <= world.radius + 1e-10,
+        "A transformed vertex escaped the culling sphere",
+      );
+    }
+  }
+  controller.dispose();
+});
+
+test("detail bounds cache linear transforms while translation follows the current world matrix", async () => {
+  const { mesh, group, controller } = await activeTread();
+  const getMaxScale = mesh.matrixWorld.getMaxScaleOnAxis.bind(mesh.matrixWorld);
+  let calculations = 0;
+  mesh.matrixWorld.getMaxScaleOnAxis = () => {
+    calculations += 1;
+    return getMaxScale();
+  };
+  const first = mesh.boundingSphere;
+  assert.equal(calculations, 1);
+  assert.equal(mesh.boundingSphere, first);
+  assert.equal(calculations, 1);
+  group.position.set(5, 2, -6);
+  group.updateMatrixWorld(true);
+  assert.equal(mesh.boundingSphere, first);
+  assert.equal(calculations, 1);
+  group.scale.set(1.3, 0.6, 1.8);
+  group.updateMatrixWorld(true);
+  assert.equal(mesh.boundingSphere, first);
+  assert.equal(calculations, 2);
+  controller.dispose();
+});
+
+test("map resets, quality downgrades, and disposal restore exact original bounds descriptors", async () => {
+  for (const action of ["maps", "quality", "dispose"]) {
+    const originalSphere = new Sphere(new Vector3(1, 2, 3), 4);
+    const h = harness({
+      configureMesh(mesh, index) {
+        if (index === 1)
+          Object.defineProperty(mesh, "boundingSphere", {
+            configurable: true,
+            enumerable: true,
+            writable: false,
+            value: originalSphere,
+          });
+      },
+    });
+    const geometry = decodeBrickGeometry(asset);
+    h.controller.setDetailMaps(maps());
+    h.requests[0].resolve(geometry);
+    await flush();
+    assert.ok(
+      h.records.every(
+        ({ mesh }) =>
+          typeof Object.getOwnPropertyDescriptor(mesh, "boundingSphere").get === "function",
+      ),
+    );
+    geometry.addEventListener("dispose", h.assertOriginals);
+    if (action === "maps") h.controller.setDetailMaps(null);
+    else if (action === "quality") h.controller.applyQuality({ tier: "low" });
+    else h.controller.dispose();
+    h.assertOriginals();
+    assert.equal(Object.hasOwn(h.records[0].mesh, "boundingSphere"), false);
+    assert.equal(h.records[1].mesh.boundingSphere, originalSphere);
+    assert.deepEqual(originalSphere, new Sphere(new Vector3(1, 2, 3), 4));
+    h.controller.dispose();
+  }
+});
+
+test("locked bounds or a nonextensible mesh leave the entire relief set unchanged", async () => {
+  for (const locked of [true, false]) {
+    const h = harness({
+      configureMesh(mesh, index) {
+        if (index !== 1) return;
+        if (locked)
+          Object.defineProperty(mesh, "boundingSphere", {
+            value: new Sphere(),
+            configurable: false,
+          });
+        else Object.preventExtensions(mesh);
+      },
+    });
+    h.controller.setDetailMaps(maps());
+    h.requests[0].resolve(decodeBrickGeometry(asset));
+    await flush();
+    h.assertOriginals();
+    assert.equal(h.statuses.at(-1).status, "fallback");
+    assert.equal(h.changes.length, 0);
+    assert.equal(Object.hasOwn(h.records[0].mesh, "boundingSphere"), false);
+    h.controller.dispose();
+  }
 });
