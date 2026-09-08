@@ -58,3 +58,14 @@ BRK1 mesh with 180 triangles. It uses the existing Adobe Firefly/Meshy
 stone color and roughness maps described above; no additional generated image
 maps are shipped. Source masters remain outside the website payload. The tread
 and crown construction pilot is pending visual acceptance.
+
+## Supplied Meshy architecture models
+
+The architecture pilot uses five textured Meshy GLBs supplied by Alex Nava:
+a sandstone stair flight, modular dungeon wall, low ruined stone wall,
+Crumbled Bastion, and a tree. Local derivatives appear in images/architecture/
+as stairs, wall, base, crown, and tree, with high and balanced variants.
+Their source geometry and surface detail are retained through local
+optimization, fitting, and texture preparation. Original files, hashes, and
+preparation records are preserved in the local artwork archive. No new
+Meshy generation was commissioned for this integration.

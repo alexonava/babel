@@ -58,6 +58,8 @@ import {
   WebGLRenderer,
 } from "three";
 import { createBrickDetailController } from "./brick-detail.js";
+import { createArchitectureAssetController } from "./architecture-assets.js";
+import { createTowerArchitecture, createTreeArchitecture } from "./architecture.js";
 import { createSceneAtmosphere } from "./atmosphere.js";
 import { createSceneEnvironment } from "./environment.js";
 import { createSceneRendering } from "./rendering.js";
@@ -942,6 +944,7 @@ function setSrgbTexture(texture) {
       profile: state.profile,
     });
     subsystemRegistry.register(environmentSystem);
+    let classicTree = null;
     const group4 = environmentSystem.root;
     const circleGeometry = new CircleGeometry(WORLD.GROUND_RADIUS, circleSegments, 0, 2 * Math.PI),
       position9 = circleGeometry.attributes.position;
@@ -1993,6 +1996,8 @@ function setSrgbTexture(texture) {
           }));
         const result87 = groundHeight(arg74, arg75);
         (group3.position.set(arg74, result87, arg75), group4.add(group3));
+        group3.name = "classic-tree";
+        classicTree = group3;
       })(58, 38, state.lowPower ? 1.25 : 1.5));
     const towerSystem = createSceneTower({
       parent: group4,
@@ -2433,8 +2438,11 @@ function setSrgbTexture(texture) {
     }
     environmentSystem.setGroundPlantRecords(arr19);
     const materialSearch = new URLSearchParams(window.location?.search || "");
+    const architectureEnabled = materialSearch.get("architecture") !== "classic";
+    const classicTowerMeshes = [];
+    const baseMasonryRecords = [];
     const brickDetailDisabled =
-      materialSearch.get("brick") === "boxes" || materialSearch.get("stone") === "procedural";
+      architectureEnabled || materialSearch.get("brick") === "boxes" || materialSearch.get("stone") === "procedural";
     const constructionDetailDisabled =
       brickDetailDisabled || materialSearch.get("construction") === "baseline";
     let brickDetail = null;
@@ -2448,7 +2456,7 @@ function setSrgbTexture(texture) {
       chooseAnisotropy: chooseAnisotropy,
       collapseYaw: num511,
       collapseSpread: num512,
-      search: window.location?.search || "",
+      search: architectureEnabled ? "?stone=procedural" : window.location?.search || "",
       includeBrickDetail: !brickDetailDisabled,
       onDetailStatus(status) {
         if (qualityDebug) qualityDebug.stone = status;
@@ -2636,6 +2644,8 @@ function setSrgbTexture(texture) {
         (mesh13.castShadow = !state.lowPower),
         (mesh13.receiveShadow = !state.lowPower),
         group7.add(mesh13));
+      classicTowerMeshes.push(mesh13);
+      baseMasonryRecords.push(mesh13);
     }
     const mesh38 = new Mesh(
       new TorusGeometry(12.2, 0.6, 8, 40),
@@ -2898,7 +2908,7 @@ function setSrgbTexture(texture) {
           return new Mesh(bufferGeometry, meshStandardMaterial);
         })(result89, 0, 0, arg98, arg99);
       return (
-        result90 && ((result90.position.y = mesh39.position.y), group7.add(result90)),
+        result90 && ((result90.position.y = mesh39.position.y), group7.add(result90), classicTowerMeshes.push(result90)),
         result89
       );
     }
@@ -4273,6 +4283,7 @@ function setSrgbTexture(texture) {
         (mesh25.castShadow = !state.lowPower),
         (mesh25.receiveShadow = !state.lowPower),
         group7.add(mesh25));
+      classicTowerMeshes.push(mesh25);
       // Preserve the seven source variants and their completed placement math.
       // The authored unit tread keeps +Y up and +X pointing out from the tower.
       const { width, height, depth } = tmpV20.parameters;
@@ -4296,6 +4307,55 @@ function setSrgbTexture(texture) {
     });
     treadDetail.setDetailMaps(latestBrickMaps);
     subsystemRegistry.register(treadDetail);
+    // Retain the structural shell for atmospheric anchors. Crown smoke sprites
+    // keep their parent while only the old visible masonry is replaced.
+    classicTowerMeshes.push(mesh39, mesh40, ...group11.children.filter((object) => object.isMesh));
+    let treeArchitecture = null;
+    let towerVisibility = [];
+    let treeVisibility = true;
+    const architectureAssets = createArchitectureAssetController({
+      disabled: !architectureEnabled,
+      onTowerReady(assets) {
+        const replacement = createTowerArchitecture({
+          assets, groundY: result107, collapseYaw: num511,
+          baseRecords: baseMasonryRecords, anisotropy: chooseAnisotropy(2, 6),
+        });
+        towerVisibility = classicTowerMeshes.map((mesh) => [mesh, mesh.visible]);
+        group7.add(replacement.root);
+        classicTowerMeshes.forEach((mesh) => { mesh.visible = false; });
+        frameScheduler?.invalidate();
+        return () => replacement.dispose();
+      },
+      onRestoreTower() {
+        towerVisibility.forEach(([mesh, visible]) => { mesh.visible = visible; });
+        towerVisibility = [];
+        frameScheduler?.invalidate();
+      },
+      onTreeReady(asset) {
+        const replacement = createTreeArchitecture({ asset, groundHeight, anisotropy: chooseAnisotropy(2, 6) });
+        replacement.applyQuality(state.profile);
+        group4.add(replacement.root);
+        treeVisibility = classicTree.visible;
+        classicTree.visible = false;
+        treeArchitecture = replacement;
+        frameScheduler?.invalidate();
+        return () => { replacement.dispose(); treeArchitecture = null; };
+      },
+      onRestoreTree() {
+        classicTree.visible = treeVisibility;
+        frameScheduler?.invalidate();
+      },
+      onStatus(status) {
+        if (qualityDebug) {
+          qualityDebug.architecture ||= { mode: architectureEnabled ? "supplied" : "classic" };
+          qualityDebug.architecture[status.kind] = status;
+        }
+      },
+    });
+    subsystemRegistry.register(architectureAssets);
+    subsystemRegistry.register({
+      applyQuality(profile) { treeArchitecture?.applyQuality(profile); },
+    });
     const boxGeometry = new BoxGeometry(1.15, 1, 1.15),
       meshStandardMaterial12 = new MeshStandardMaterial({
         color: 11833972,
@@ -5309,6 +5369,7 @@ function setSrgbTexture(texture) {
       if (!sceneReadyMarked) {
         sceneReadyMarked = true;
         if (container && container.classList) container.classList.add("is-ready");
+        architectureAssets.setQuality(state.profile, true);
       }
     }
     frameScheduler = createSceneFrameScheduler({

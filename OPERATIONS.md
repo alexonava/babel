@@ -22,11 +22,21 @@ The responsive tower poster is eager and decorative, so it remains a truthful fi
 
 `?quality=low|balanced|high` and `?sceneDebug=1` are explicit diagnostics that force the live path through preference and software-renderer gates. They still stop when WebGL is actually unavailable. Do not add user-agent, Lighthouse, or phone-viewport exceptions; the default audit must measure the same product policy visitors receive.
 
-## Construction pilot validation
+## Supplied architecture pilot validation
+
+Keep this rebuild isolated from PR #93 until visual acceptance. Compare the default high/balanced scene with `&architecture=classic` at matching full-orbit, stair, crown, base, and tree views. The lantern must illuminate the trunk without another shadow pass or distracting foreground glare.
+
+A fresh supplied high/balanced scene requests five content-hashed GLBs after the first rendered frame, with no classic BRK1 or stone-map requests. Enforce 6 MiB high / 3 MiB balanced for all model-and-texture payloads together, alongside the existing 30 KiB UI and 810 KiB scene bundle limits. Low/static paths request no authored models. Four tower roles commit together; tree readiness and failure remain independent.
+
+Run assembly/controller tests and the full verification/test/build/audit sequence. Include partial downloads, bad embedded images, stale completions, high/balanced/low transitions, repeated disposal, and originals restored before derived resources are freed. Compare actual WebGL draw calls and frame behavior with classic at identical cameras, beyond default static-path Lighthouse checks.
+
+Leave posters unchanged during comparison. After visual acceptance, refresh fingerprinted posters and review the complete diff before any approved PR update or publication. Existing protected release checks still apply.
+
+## Classic construction pilot validation
 
 The local limestone tread and crown pilot remains separate from the accepted raised-brick release until visual acceptance. Leave its inherited posters unchanged during comparison. After source and assets are ready, run `node --test test/brick-detail.test.mjs test/bundle-output.test.mjs`, then the full release-gate sequence above from this isolated checkout. The bundle tests build their own output; avoid a concurrent build against the same `dist/` directory.
 
-- Compare high desktop and balanced phone views with `?quality=high&sceneDebug=1` (or `quality=balanced`) and `&construction=baseline` at matching camera positions. Include stair detail, the complete orbit, crown silhouette, collapsed sections, and rubble. Confirm readable foreground text, unchanged placement, and no additional meshes or draw calls.
+- Compare high desktop and balanced phone views with `?quality=high&sceneDebug=1` (or `quality=balanced`) with `&architecture=classic` and `&construction=baseline` at matching camera positions. Include stair detail, the complete orbit, crown silhouette, collapsed sections, and rubble. Confirm readable foreground text, unchanged placement, and no additional meshes or draw calls.
 - A fresh high or balanced live scene should request exactly one brick binary, one tread binary, and the matching color/roughness pair. Crown reuse must not request or decode a second brick. Total detail transfer must stay within 750 KiB high and 256 KiB balanced; the tread alone is at most 200 triangles and 9,608 bytes.
 - Check each geometry request failing, a failed companion material map, high/balanced/low transitions, late completion after downgrade, and repeated disposal. Original geometry and materials must be restored before owned resources are disposed, shared maps released only by their owner, and the first live frame must not wait for optional assets.
 - Without diagnostic overrides, reduced motion/data, unavailable or software WebGL, and no JavaScript must preserve the static path without scene or optional-asset downloads. Test keyboard panel access on desktop and phone. Keep the existing Lighthouse median and bundle limits; also inspect the actual live WebGL scene, which the default static-path audit may not exercise.

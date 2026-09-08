@@ -44,6 +44,22 @@ The build also writes content-hashed landscape and portrait poster copies and re
 
 The eager, decorative tower poster is the scene's first visual. Capable hardware, including phones, then loads and crossfades to the live scene. The UI keeps the poster static and does not download the scene bundle when reduced data or reduced motion is requested, WebGL is unavailable, or the WebGL renderer is software-only. `?quality=low|balanced|high` and `?sceneDebug=1` explicitly request the live scene through preference/software gates, but cannot bypass unavailable WebGL.
 
+## Supplied Meshy architecture pilot
+
+The default high and balanced live scene uses five locally optimized source models: a complete sandstone stair flight, modular masonry, a thick base wall, a broken Bastion wall, and a tree. Sixteen sectors across eight tiers form the wall, with staggered joints and a broken crown. Eight solid curved flights form one continuous spiral. The replacement tree retains its distant position and has a visible warm lantern beside its trunk.
+
+Models load after the first rendered scene frame. The four architecture roles swap together only after successful loading and validation; the tree swaps independently. Low quality and failed downloads retain the procedural scene. Quality changes and disposal restore original visible groups before releasing optional resources. The supplied mode does not download classic stone maps or BRK1 geometry.
+
+Use `?quality=high&sceneDebug=1` for the new architecture and add `&architecture=classic` for the accepted local construction baseline. `window.BabelSite.sceneDebug.architecture` reports tower/tree readiness. Classic brick, stone, and construction comparison controls still work within `architecture=classic`.
+
+The complete optional model and embedded-texture budgets are 6 MiB high and 3 MiB balanced. The existing build fingerprints all ten GLBs under `images/architecture/` and injects their URLs into the deferred scene bundle. The installed Three.js GLTFLoader needs no external decoder or new dependency. Embedded image decoding uses local blob URLs; the content policy allows these for images and connections while retaining same-origin network restrictions.
+
+This local pilot is pending visual acceptance. Existing posters and the protected publication workflow remain unchanged.
+
+## Classic stone and construction comparison
+
+The following material behavior and limits apply when `architecture=classic` is selected.
+
 The live high and balanced tiers optionally load a local stone color/roughness pair from `images/materials/`, after the scene has begun with procedural materials. Low tier and all static scene paths make no authored-material requests. Missing files, decode errors, or cancelled requests keep the procedural surface. Quality changes cancel stale loads and restore procedural materials before selecting the new tier; disposal releases the optional roughness atlas and decoded images.
 
 Stone detail is composited inside the existing brick cells before the procedural stains and mortar. The original wall bump map remains authoritative, so no normal-map sampler replaces its relief. The optional roughness atlas is at most 512 by 1024 pixels. Source settings live in `src/scene/stone-detail.js`: soft-light color strength 0.35, roughness blend 0.7, and 32 percent source-image crops. Source attribution is recorded in [CREDITS.md](CREDITS.md).
@@ -54,9 +70,9 @@ The brick begins as the original box while its optional geometry loads. A failed
 
 The construction pilot adds limestone stair treads and reuses the accepted brick geometry on selected crown blocks. It is local and pending visual acceptance; the existing posters still show the accepted raised-brick and texture pass. High and balanced tiers request one additional shared `images/materials/stone-tread.bin` geometry with 180 triangles in 8,648 bytes, below its 200-triangle and 9,608-byte limits. Both geometry sets use the existing Firefly/Meshy stone maps, with no new image downloads. Crown blocks share the existing brick request and decoded geometry. Low and static paths retain the original scene without requesting either binary.
 
-Use `?quality=high&sceneDebug=1&construction=baseline` to compare against the accepted raised-brick scene, leaving the original crown and stairs in place. `&brick=boxes` or `&stone=procedural` also disables construction changes. `window.BabelSite.sceneDebug.treads` reports tread readiness alongside `sceneDebug.bricks` and `sceneDebug.stone`. Tread loading and failures remain independent of the shared brick request; both controllers restore their originals before shared material maps are reset or released. Each authored mesh uses cached bounds that account for its current scale and parent transforms, keeping thin treads from adding off-screen draw calls. Original bounds are restored with the original geometry.
+Use `?quality=high&sceneDebug=1&architecture=classic&construction=baseline` to compare against the accepted raised-brick scene, leaving the original crown and stairs in place. `&brick=boxes` or `&stone=procedural` also disables construction changes. `window.BabelSite.sceneDebug.treads` reports tread readiness alongside `sceneDebug.bricks` and `sceneDebug.stone`. Tread loading and failures remain independent of the shared brick request; both controllers restore their originals before shared material maps are reset or released. Each authored mesh uses cached bounds that account for its current scale and parent transforms, keeping thin treads from adding off-screen draw calls. Original bounds are restored with the original geometry.
 
-For matched local comparisons, use `?quality=high&sceneDebug=1`. Add `&brick=boxes` to compare the original geometry while retaining authored stone detail, or `&stone=procedural` for the fully procedural baseline, which disables both authored stone and brick geometry. In debug mode, `window.BabelSite.sceneDebug.stone` reports loading, ready, fallback, or procedural. The raised-brick direction was reviewed on desktop and mobile, across a full orbit and close details. Construction changes require their own matched comparison before the posters or release are updated.
+For matched classic-material comparisons, use `?quality=high&sceneDebug=1&architecture=classic`. Add `&brick=boxes` to compare the original geometry while retaining authored stone detail, or `&stone=procedural` for the fully procedural baseline, which disables both authored stone and brick geometry. In debug mode, `window.BabelSite.sceneDebug.stone` reports loading, ready, fallback, or procedural. The raised-brick direction was reviewed on desktop and mobile, across a full orbit and close details. Construction changes require their own matched comparison before the posters or release are updated.
 
 The refreshed posters retain the existing 1600 by 900 landscape and 900 by 1600 portrait dimensions. They were captured directly from the high-quality canvas with both optional resources ready, preserving the initial camera profiles and excluding page text. A local capture helper uses seed 23917, DPR 1, and a controlled 17 ms scene advance; portrait output reuses the existing 450 by 800 `portraitPhone` composition at native output resolution. PNG masters, original poster backups, and camera metadata are retained with the source artwork. WebP quality 80, method 6 preserves the canvas alpha; the landscape and portrait files are 91,836 and 89,572 bytes.
 
@@ -86,6 +102,7 @@ GitHub CodeQL default setup is enabled as the repository's code scanner, avoidin
 | `dist/`                   | Generated publish directory for Cloudflare Pages         |
 | `fonts/*.woff2`           | Self-hosted font subsets                                 |
 | `images/*.webp`           | Responsive static tower posters                          |
+| `images/architecture/` | Optional textured architecture and tree GLBs |
 | `images/materials/`       | Optional stone WebP maps and shared BRK1 brick geometry    |
 | `404.html`                | Not-found page                                           |
 | `og.png`                  | Social share image for Open Graph and Twitter cards      |

@@ -194,3 +194,33 @@ test("changing only fixture poster bytes changes only that poster URL", async ()
     await rm(fixture, { recursive: true, force: true });
   }
 });
+
+test("supplied architecture stays deferred and both complete asset tiers fit their budgets", async () => {
+  const app = await readFile(await findHashedScript("app"), "utf8");
+  const scene = await readFile(await findHashedScript("scene"), "utf8");
+  assert.doesNotMatch(app, /images\/architecture\//);
+  for (const [tier, limit] of [["high", 6 * 1024 * 1024], ["balanced", 3 * 1024 * 1024]]) {
+    let total = 0;
+    for (const role of ["stairs", "wall", "base", "crown", "tree"]) {
+      const name = role + "-" + tier + ".glb";
+      const source = await readFile(path.join(projectRoot, "images", "architecture", name));
+      const hash = createHash("sha256").update(source).digest("hex").slice(0, 8);
+      const hashedName = role + "-" + tier + "." + hash + ".glb";
+      assert.deepEqual(await readFile(path.join(distDir, "images", "architecture", hashedName)), source);
+      assert.ok(scene.includes("/images/architecture/" + hashedName), "scene must request the current fingerprint");
+      assert.equal(source.toString("ascii", 0, 4), "glTF");
+      assert.equal(source.readUInt32LE(8), source.length);
+      const gltf = JSON.parse(source.toString("utf8", 20, 20 + source.readUInt32LE(12)));
+      assert.equal(gltf.meshes.length, 1, name + " should have one shared mesh");
+      assert.equal(gltf.meshes[0].primitives.length, 1, name + " should have one shared material");
+      assert.ok(gltf.images.length > 0, name + " must retain source surface detail");
+      for (const resource of [...gltf.images, ...gltf.buffers]) assert.equal(resource.uri, undefined);
+      assert.equal(gltf.animations?.length || 0, 0);
+      const primitive = gltf.meshes[0].primitives[0];
+      assert.equal(primitive.mode ?? 4, 4, "triangle topology required");
+      for (const semantic of ["POSITION", "NORMAL", "TEXCOORD_0"]) assert.ok(Number.isInteger(primitive.attributes[semantic]));
+      total += source.length;
+    }
+    assert.ok(total <= limit, tier + " complete architecture is " + total + " bytes; budget " + limit);
+  }
+});
