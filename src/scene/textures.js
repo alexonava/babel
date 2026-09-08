@@ -540,6 +540,7 @@ import {
     collapseYaw,
     collapseSpread,
     search = "",
+    includeBrickDetail = false,
     onDetailChange = () => {},
     onDetailStatus = () => {},
   }) {
@@ -569,6 +570,7 @@ import {
     let roughnessCanvas = null;
     let roughnessCtx = null;
     let roughnessMap = null;
+    let brickMaps = null;
 
     function paintTower(sources = null) {
       if (sources) {
@@ -752,17 +754,50 @@ import {
           tex.wrapT = THREE.ClampToEdgeWrapping;
           tex.anisotropy = aniso;
         });
+        if (includeBrickDetail) {
+          // Reuse the same decoded mineral images before the controller closes them.
+          // A single brick should not sample the entire wall's mortar atlas.
+          const brickColorCanvas = document.createElement("canvas");
+          const brickRoughnessCanvas = document.createElement("canvas");
+          const size = sources.color.width;
+          brickColorCanvas.width = brickColorCanvas.height = size;
+          brickRoughnessCanvas.width = brickRoughnessCanvas.height = size;
+          const brickColor = brickColorCanvas.getContext("2d");
+          const brickRoughness = brickRoughnessCanvas.getContext("2d");
+          if (!brickColor || !brickRoughness) throw new Error("Brick material canvas unavailable.");
+          brickColor.fillStyle = towerPalette.mapBase;
+          brickColor.fillRect(0, 0, size, size);
+          brickColor.globalCompositeOperation = "soft-light";
+          brickColor.globalAlpha = STONE_DETAIL_SETTINGS.colorStrength;
+          brickColor.drawImage(sources.color, 0, 0);
+          brickRoughness.fillStyle = "#ffffff";
+          brickRoughness.fillRect(0, 0, size, size);
+          brickRoughness.globalAlpha = STONE_DETAIL_SETTINGS.roughnessStrength;
+          brickRoughness.drawImage(sources.roughness, 0, 0);
+          brickMaps = {
+            colorMap: makeTexture(THREE, brickColorCanvas, (tex) => {
+              tex.colorSpace = THREE.SRGBColorSpace;
+              tex.anisotropy = aniso;
+            }),
+          };
+          brickMaps.roughnessMap = makeTexture(THREE, brickRoughnessCanvas, (tex) => {
+            tex.anisotropy = aniso;
+          });
+        }
         paintTower(sources);
         textures.colorMap.needsUpdate = true;
         roughnessMap.needsUpdate = true;
-        onDetailChange({ colorMap: textures.colorMap, roughnessMap });
+        onDetailChange({ colorMap: textures.colorMap, roughnessMap, brickMaps });
       },
       reset({ disposing }) {
         if (!disposing) {
           paintTower();
           textures.colorMap.needsUpdate = true;
         }
-        onDetailChange({ colorMap: textures.colorMap, roughnessMap: null });
+        onDetailChange({ colorMap: textures.colorMap, roughnessMap: null, brickMaps: null });
+        brickMaps?.colorMap?.dispose();
+        brickMaps?.roughnessMap?.dispose();
+        brickMaps = null;
         roughnessMap?.dispose();
         roughnessMap = null;
         roughnessCanvas = null;

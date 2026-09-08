@@ -68,3 +68,39 @@ test("authored material pairs fit transfer budgets and are copied intact into di
     assert.ok(bytes <= budget, `${size} material pair is ${bytes} bytes; budget ${budget}`);
   }
 });
+
+test("brick request and BRK1 decoder stay inside the deferred scene bundle", async () => {
+  const app = await readFile(await findHashedScript("app"), "utf8");
+  const scene = await readFile(await findHashedScript("scene"), "utf8");
+  for (const marker of [/images\/materials\/stone-brick\.bin/, /Invalid BRK1 brick geometry/]) {
+    assert.doesNotMatch(app, marker, "brick loading or decoding leaked into the UI bundle");
+    assert.match(scene, marker, "deferred scene is missing the brick loader or decoder");
+  }
+});
+
+test("shared brick binary is copied intact and fits the combined detail transfer budgets", async () => {
+  const relative = path.join("images", "materials", "stone-brick.bin");
+  const source = await readFile(path.join(projectRoot, relative));
+  const published = await readFile(path.join(distDir, relative));
+  assert.equal(source.toString("ascii", 0, 4), "BRK1");
+  assert.ok(
+    source.length > 8 && source.length < 48 * 1024,
+    `brick binary is ${source.length} bytes`,
+  );
+  assert.deepEqual(published, source);
+
+  for (const [size, budget] of [
+    [1024, 750 * 1024],
+    [512, 256 * 1024],
+  ]) {
+    let bytes = source.length;
+    for (const kind of ["color", "roughness"]) {
+      const map = path.join(distDir, "images", "materials", `stone-${kind}-${size}.webp`);
+      bytes += (await stat(map)).size;
+    }
+    assert.ok(
+      bytes <= budget,
+      `${size} maps plus shared brick are ${bytes} bytes; budget ${budget}`,
+    );
+  }
+});
