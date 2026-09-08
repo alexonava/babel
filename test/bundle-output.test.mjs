@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { access, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -42,4 +42,25 @@ test("Three.js does not leak into the UI bundle", async () => {
   // GLSL fragments are string literals in three.js shader chunks and survive
   // minification — their presence in the UI bundle means the split regressed.
   assert.doesNotMatch(text, /gl_Position/, "app bundle contains Three.js GLSL");
+});
+
+test("built HTML references fingerprinted responsive scene posters", async () => {
+  const html = await readFile(path.join(distDir, "index.html"), "utf8");
+  const posterPaths = [
+    ...html.matchAll(/\/images\/(scene-poster-(?:landscape|portrait)\.[a-f0-9]{8}\.webp)/g),
+  ].map((match) => match[1]);
+
+  assert.deepEqual(
+    posterPaths
+      .map((name) => name.replace(/\.[a-f0-9]{8}(?=\.webp$)/, ""))
+      .sort(),
+    ["scene-poster-landscape.webp", "scene-poster-portrait.webp"],
+    "both responsive poster variants are fingerprinted exactly once",
+  );
+  assert.doesNotMatch(
+    html,
+    /\/images\/scene-poster-(?:landscape|portrait)\.webp(?:\?v=\d+)?/,
+    "stable poster URLs are removed from built HTML",
+  );
+  await Promise.all(posterPaths.map((name) => access(path.join(distDir, "images", name))));
 });

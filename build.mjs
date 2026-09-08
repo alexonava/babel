@@ -37,7 +37,8 @@ const STATIC_FILES = [
   "_redirects",
 ];
 const STATIC_FILE_ALIASES = [{ source: "site-agents.md", destination: "AGENTS.md" }];
-const STATIC_DIRS = ["fonts", "images"];
+const STATIC_DIRS = ["fonts"];
+const FINGERPRINTED_IMAGES = ["scene-poster-landscape.webp", "scene-poster-portrait.webp"];
 const DIST_DIR = join(__dirname, "dist");
 const DIST_SCRIPTS_DIR = join(DIST_DIR, "scripts");
 const DIST_CSS_DIR = join(DIST_DIR, "css");
@@ -60,6 +61,10 @@ function sha8(buf) {
   return createHash("sha256").update(buf).digest("hex").slice(0, 8);
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function buildScriptBundle(entry) {
   const result = await build(scriptBuildOptions(entry));
   const out = result.outputFiles?.[0];
@@ -67,13 +72,20 @@ async function buildScriptBundle(entry) {
   return out.text;
 }
 
-function rewriteHtml(src, { appPath, cssPath, scenePath }) {
+function rewriteHtml(src, { appPath, cssPath, imagePaths = {}, scenePath }) {
   // Match source refs with or without a ?v=NNN query,
   // so stale query strings in source can't drift away from the real hashed path.
-  return src
+  return Object.entries(imagePaths).reduce(
+    (html, [sourcePath, fingerprintedPath]) =>
+      html.replace(
+        new RegExp(`${escapeRegExp(sourcePath)}(?:\\?v=\\d+)?`, "g"),
+        fingerprintedPath,
+      ),
+    src
     .replace(/\/styles\.css(\?v=\d+)?/g, cssPath)
     .replace(/\/scripts\/app\.js(\?v=\d+)?/g, appPath)
-    .replace(/\/scripts\/scene\.js(\?v=\d+)?/g, scenePath);
+    .replace(/\/scripts\/scene\.js(\?v=\d+)?/g, scenePath),
+  );
 }
 
 async function clearDist() {
@@ -121,12 +133,26 @@ async function buildDist() {
   await Promise.all(
     STATIC_DIRS.map((dir) => cp(join(__dirname, dir), join(DIST_DIR, dir), { recursive: true })),
   );
+  await mkdir(join(DIST_DIR, "images"), { recursive: true });
+  await cp(join(__dirname, "images"), join(DIST_DIR, "images"), { recursive: true });
+  const imagePaths = Object.fromEntries(
+    await Promise.all(
+      FINGERPRINTED_IMAGES.map(async (name) => {
+        const image = await readFile(join(__dirname, "images", name));
+        const fingerprintedName = name.replace(/(\.[^.]+)$/, `.${sha8(image)}$1`);
+        await writeFile(join(DIST_DIR, "images", fingerprintedName), image);
+        await rm(join(DIST_DIR, "images", name));
+        return [`/images/${name}`, `/images/${fingerprintedName}`];
+      }),
+    ),
+  );
 
   for (const name of ["index.html", "404.html"]) {
     const htmlSrc = await readFile(join(__dirname, name), "utf8");
     const rewritten = rewriteHtml(htmlSrc, {
       appPath: scriptPaths.app,
       cssPath: cssHashedUrl,
+      imagePaths,
       scenePath: scriptPaths.scene,
     });
     await writeFile(join(DIST_DIR, name), rewritten);
