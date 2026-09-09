@@ -1,4 +1,4 @@
-import { build } from "esbuild";
+import { build, context } from "esbuild";
 import { watch as watchFiles } from "node:fs";
 import { copyFile, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -60,11 +60,29 @@ function sha8(buf) {
   return createHash("sha256").update(buf).digest("hex").slice(0, 8);
 }
 
+// In watch mode each entry gets a persistent esbuild context so subsequent
+// rebuilds reuse the dependency-graph cache instead of paying cold-start cost
+// every time a source file is saved. One-shot paths (--check, --dist) stay
+// on the simple build() call so they don't have to manage a context lifecycle.
+const scriptContexts = new Map();
+
 async function buildScriptBundle(entry) {
-  const result = await build(scriptBuildOptions(entry));
+  const ctx = scriptContexts.get(entry);
+  const result = ctx ? await ctx.rebuild() : await build(scriptBuildOptions(entry));
   const out = result.outputFiles?.[0];
   if (!out) throw new Error(`esbuild produced no output for ${entry}`);
   return out.text;
+}
+
+async function openScriptContexts() {
+  for (const { entry } of SCRIPT_ENTRIES) {
+    scriptContexts.set(entry, await context(scriptBuildOptions(entry)));
+  }
+}
+
+async function closeScriptContexts() {
+  await Promise.all([...scriptContexts.values()].map((ctx) => ctx.dispose()));
+  scriptContexts.clear();
 }
 
 function rewriteHtml(src, { appPath, cssPath, scenePath }) {
@@ -164,17 +182,17 @@ function watchSourceTree() {
   };
 
   const watcher = watchFiles(sourceRoot, { recursive: true }, rebuild);
-  process.on("SIGINT", () => {
+  const shutdown = async () => {
     watcher.close();
+    await closeScriptContexts();
     process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    watcher.close();
-    process.exit(0);
-  });
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
 if (watch) {
+  await openScriptContexts();
   await buildDist();
   watchSourceTree();
   console.log("watching src/ (rerun build:dist after static asset changes)");
