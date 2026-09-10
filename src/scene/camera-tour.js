@@ -3,17 +3,19 @@ import { DIRECTED_SHOTS } from "./directed-shots.js";
 const TOUR_INTERVALS = Object.freeze([3, 5, 20]);
 
 export function readTourInterval(search = "") {
-  const seconds = Number(new URLSearchParams(search).get("tour"));
+  const query = new URLSearchParams(search);
+  // A selected view sets the opening composition, not a static mode. The
+  // tour stays alive unless a reviewer explicitly requests tour=0.
+  if (!query.has("tour")) return 5;
+  const seconds = Number(query.get("tour"));
   return TOUR_INTERVALS.includes(seconds) ? seconds : 0;
 }
 
 // Uses scene time rather than a separate timer: hidden/offscreen tabs do not skip
 // shots, and all geometry, materials and decoded images remain loaded.
-// A slow, lingering dissolve joins consecutive shots: the outgoing view
-// darkens over the last FADE_OUT seconds of its dwell and the next view opens
-// over FADE_IN. Kept below the shortest possible dwell (the 5s wildcard, see
-// TOUR_DWELL) with headroom, so a fully visible moment always remains.
-export const TOUR_FADE = Object.freeze({ out: 1.1, in: 1.3 });
+// A brief dip masks a hard camera cut without obscuring the composition long
+// enough to feel stalled at the five-second cadence.
+export const TOUR_FADE = Object.freeze({ out: 0.3, in: 0.45 });
 
 // The 20-second mode's actual pacing: mostly a long, intimate dwell, with an
 // occasional short wildcard shot for variety. Sampled fresh each time a shot

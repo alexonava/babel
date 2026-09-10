@@ -148,18 +148,21 @@ test("supplied tower and tree switch between source and moonlight grades without
   close(u.babelSaturation.value, 0.94);
   assert.equal(u.babelLift.value, 0);
   tower.setFilmTreatment(true);
-  close(u.babelSaturation.value, 0.8);
-  close(u.babelHighlights.value, 0.38);
-  close(u.babelTint.value.r, 1.0);
-  close(u.babelLift.value, 0.14);
+  close(u.babelSaturation.value, 0.68);
+  close(u.babelHighlights.value, 0.56);
+  close(u.babelTint.value.r, 0.93);
+  close(u.babelShadowTint.value.b, 0.2);
+  close(u.babelLift.value, 0.11);
   tower.setFilmTreatment(false);
   close(u.babelSaturation.value, 0.94);
   assert.equal(u.babelTint.value.r, 1);
+  close(u.babelShadowTint.value.r, 0.19);
   assert.equal(u.babelLift.value, 0);
   assert.equal(applyFilmGrade(new MeshStandardMaterial(), true), false);
   const shader = { uniforms: {}, fragmentShader: "#include <common>\n#include <map_fragment>\n#include <roughnessmap_fragment>" };
   material.onBeforeCompile(shader);
   assert.equal(shader.uniforms.babelTint, u.babelTint);
+  assert.equal(shader.uniforms.babelShadowTint, u.babelShadowTint);
   assert.match(shader.fragmentShader, /babelLift/);
   tower.dispose();
   tower.setFilmTreatment(true);
@@ -168,7 +171,7 @@ test("supplied tower and tree switch between source and moonlight grades without
   const tree = createTreeArchitecture({ asset: asset(), groundHeight: () => 0 });
   const treeUniforms = tree.root.getObjectByName("meshy-tree").material.userData.babelGrade.uniforms;
   tree.setFilmTreatment(true);
-  close(treeUniforms.babelSaturation.value, 0.86);
+  close(treeUniforms.babelSaturation.value, 0.74);
   tree.setFilmTreatment(false);
   assert.equal(treeUniforms.babelSaturation.value, 1);
   tree.dispose();
@@ -214,7 +217,7 @@ test("the lantern is an iron post lantern with glass, candle and flame, authored
   assert.equal(disposed, geometries.size + materials.size);
 });
 
-test("the seven directed shots keep their names and distinct viewpoints", () => {
+test("the nine directed shots keep their names and distinct viewpoints", () => {
   const all = [...DIRECTED_SHOTS.tower, ...DIRECTED_SHOTS.tree];
   assert.deepEqual(
     all.map((s) => s.name),
@@ -222,14 +225,16 @@ test("the seven directed shots keep their names and distinct viewpoints", () => 
       "Arrival",
       "The watch",
       "Threshold",
+      "Masonry study",
+      "Gallery detail",
       "Portrait",
-      "Under the branches",
       "Lantern study",
       "Close-up",
+      "Root and lantern",
     ],
   );
   const keys = new Set(all.map((s) => `${s.azimuth}/${s.height}/${s.region.join()}`));
-  assert.equal(keys.size, 7);
+  assert.equal(keys.size, 9);
   for (const shot of all) {
     assert.ok(shot.height >= 0.1 && shot.height <= 0.7);
     assert.ok(shot.fov >= 30 && shot.fov <= 46);

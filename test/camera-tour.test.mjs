@@ -54,15 +54,17 @@ function setup(interval = 5, random = Math.random) {
   };
 }
 
-test("tour is explicit and accepts only the three requested timing options", () => {
-  for (const query of ["", "?tour=0", "?tour=1", "?tour=nan", "?tour=100"])
+test("tour defaults to five seconds even when a link chooses its opening composition", () => {
+  for (const query of ["", "?quality=high", "?view=tower", "?angle=1", "?view=tree&angle=6"])
+    assert.equal(readTourInterval(query), 5);
+  for (const query of ["?tour=0", "?tour=1", "?tour=nan", "?tour=100"])
     assert.equal(readTourInterval(query), 0);
   assert.equal(readTourInterval("?tour=3"), 3);
   assert.equal(readTourInterval("?tour=5"), 5);
   assert.equal(readTourInterval("?tour=20"), 20);
+  assert.equal(readTourInterval("?view=tower&tour=5"), 5);
 });
-
-test("all seven views cycle at the selected interval with small drift and cached repeat framing", () => {
+test("all nine views cycle at the selected interval with small drift and cached repeat framing", () => {
   for (const interval of [3, 5]) {
     const f = setup(interval);
     f.render(0);
@@ -72,7 +74,7 @@ test("all seven views cycle at the selected interval with small drift and cached
     assert.ok(f.camera.position.distanceTo(firstPosition) > 0.1);
     assert.equal(f.camera.position.y, firstPosition.y);
     const names = [f.controller.shot.name];
-    for (let i = 1; i <= 7; i++) {
+    for (let i = 1; i <= 9; i++) {
       f.render(interval * i);
       names.push(f.controller.shot.name);
     }
@@ -80,10 +82,12 @@ test("all seven views cycle at the selected interval with small drift and cached
       "Arrival",
       "The watch",
       "Threshold",
+      "Masonry study",
+      "Gallery detail",
       "Portrait",
-      "Under the branches",
       "Lantern study",
       "Close-up",
+      "Root and lantern",
       "Arrival",
     ]);
     assert.equal(f.controller.frame, firstFit);
@@ -159,7 +163,7 @@ test("unavailable subjects are skipped, loading holds, and disposal blocks later
   const f = setup();
   f.controller.setSubject("tree", null);
   f.controller.setStatus({ kind: "tree", status: "fallback" });
-  for (const t of [0, 5, 10, 15]) f.render(t);
+  for (const t of [0, 5, 10, 15, 20, 25]) f.render(t);
   assert.equal(f.controller.shot.name, "Arrival");
   f.controller.setStatus({ kind: "tower", status: "loading" });
   f.render(16);

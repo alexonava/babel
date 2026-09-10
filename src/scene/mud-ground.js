@@ -143,20 +143,20 @@ export function configureMudShading(material, active, quiet = false, film = fals
       ${
         film
           ? `
-      // Low-frequency world-space variation keeps the two-meter tile quiet.
+      // Three incommensurate world-space fields keep the two-meter tile quiet and avoid repeated wet ovals.
       // A single wide, soft falloff marks ground contact at the tower and the
       // tree/lantern (quiet mode's own rootContact/footingDry darkening is
       // skipped under film — stacking both produced a visible hard-edged
       // dark disc around the tree instead of a gradual clearing).
-      float earthBroad = .5 + .25*sin(vMudWorld.x*.073 + sin(vMudWorld.z*.049)) + .25*sin(vMudWorld.z*.087 + sin(vMudWorld.x*.061));
+      float earthBroad = .5 + .16*sin(vMudWorld.x*.043 + sin(vMudWorld.z*.031)) + .12*sin(vMudWorld.z*.067 + sin(vMudWorld.x*.052)) + .08*sin((vMudWorld.x+vMudWorld.z)*.109);
       float earthContact = max(1.0-smoothstep(5.0,13.0,length(vMudWorld.xz)), 1.0-smoothstep(2.5,10.0,length(vMudWorld.xz-vec2(55.1,36.1))));
       // A narrow (.80-.98) window here read as a hard-edged dark "puddle" in
       // low, close shots, since damp also swings roughness from .86 to .74 —
       // a visible sheen boundary, not just the small diffuse darkening below.
       // Widened so the same patchiness reads as a gentle gradient instead.
-      float damp = smoothstep(.55,.95,earthBroad)*(1.0-earthContact);
-      roughnessFactor = mix(max(.86,roughnessFactor), .74, damp);
-      diffuseColor.rgb *= .8 + .14*earthBroad - .045*earthContact - .05*damp;
+      float damp = smoothstep(.78,.98,earthBroad)*(1.0-earthContact);
+      roughnessFactor = mix(max(.88,roughnessFactor), .78, damp);
+      diffuseColor.rgb *= .84 + .10*earthBroad - .04*earthContact - .035*damp;
       ${
         useGrass
           ? `
@@ -169,8 +169,8 @@ export function configureMudShading(material, active, quiet = false, film = fals
       float grassMaskSample = texture2D(grassMask, grassUv).r;
       // Measured runtime mean of the mask is ~0.14 (mostly sparse dark soil
       // with occasional brighter tufts up to ~0.8); remap that low range so
-      // typical soil stays bare and only the brighter tuft areas go green.
-      float grassAmount = clamp((grassMaskSample - 0.03) / 0.22, 0.0, 1.0) * (1.0 - earthContact);
+      // typical soil stays bare; only sparse peripheral tufts reach the final mix.
+      float grassAmount = clamp((grassMaskSample - 0.28) / 0.48, 0.0, 1.0) * .18 * (1.0 - earthContact);
       diffuseColor.rgb = mix(diffuseColor.rgb, grassColorSample, grassAmount);
       roughnessFactor = mix(roughnessFactor, .82, grassAmount);
       `

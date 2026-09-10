@@ -37,7 +37,7 @@ test("directed framing clips actual geometry and includes the entire lantern", (
   const lantern = new Mesh(new BoxGeometry(1, 4, 1), new MeshStandardMaterial());
   lantern.position.set(7, 2, 0);
   root.add(trunk, lantern);
-  const measured = measureShot(root, DIRECTED_SHOTS.tree[2]);
+  const measured = measureShot(root, DIRECTED_SHOTS.tree[1]);
   close(measured.region.min.y, 0);
   close(measured.region.max.y, 10);
   close(measured.region.max.x, 7.5);

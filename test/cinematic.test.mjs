@@ -156,42 +156,19 @@ test("quiet presentation suppresses re-enabled objects and restores original vis
 });
 
 test("angle overrides and fresh-load angle sampling stay within each subject's own composition count", () => {
-  for (const angle of [1, 2, 3]) assert.equal(chooseCinematicAngle(`?angle=${angle}`, "tower"), angle - 1);
-  // Tree has a 4th composition; an explicit angle=4 should resolve for tree
-  // but not for tower, which only has three.
-  assert.equal(
-    chooseCinematicAngle("?angle=4", "tree", () => 0.99),
-    3,
-  );
-  // tower has only three compositions, so an out-of-range angle=4 falls back
-  // to the random sample instead.
-  assert.equal(
-    chooseCinematicAngle("?angle=4", "tower", () => 0.99),
-    2,
-  );
-  assert.equal(
-    chooseCinematicAngle("?view=tree", "tree", () => 0.99),
-    0,
-  );
-  assert.equal(
-    chooseCinematicAngle("", "tower", () => 0),
-    0,
-  );
-  assert.equal(
-    chooseCinematicAngle("", "tower", () => 0.5),
-    1,
-  );
-  assert.equal(
-    chooseCinematicAngle("", "tower", () => 0.99),
-    2,
-  );
-  // Tree's wider random range (4 shots) can reach its 4th composition.
-  assert.equal(
-    chooseCinematicAngle("", "tree", () => 0.99),
-    3,
-  );
+  for (const angle of [1, 2, 3, 4, 5])
+    assert.equal(chooseCinematicAngle(`?angle=${angle}`, "tower"), angle - 1);
+  // Tree has four compositions, so its fourth direct URL remains reproducible.
+  assert.equal(chooseCinematicAngle("?angle=4", "tree", () => 0.99), 3);
+  // Tower has five, so the sixth URL falls back to its sampled composition.
+  assert.equal(chooseCinematicAngle("?angle=6", "tower", () => 0.99), 4);
+  assert.equal(chooseCinematicAngle("?view=tree", "tree", () => 0.99), 0);
+  assert.equal(chooseCinematicAngle("", "tower", () => 0), 0);
+  assert.equal(chooseCinematicAngle("", "tower", () => 0.5), 2);
+  assert.equal(chooseCinematicAngle("", "tower", () => 0.99), 4);
+  // Tree's random range can reach its fourth composition.
+  assert.equal(chooseCinematicAngle("", "tree", () => 0.99), 3);
 });
-
 test("all angle variants retain safe portrait framing at both arc limits", () => {
   for (const subject of ["tower", "tree"])
     for (const angle of DIRECTED_SHOTS[subject].keys()) {

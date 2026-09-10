@@ -69,8 +69,23 @@ const MATERIAL_PROFILES = Object.freeze({
 // ambient occlusion: cooler, less saturated, compressed sunlit highlights and
 // lifted black undersides. Uniform values switch without a shader rebuild.
 const FILM_GRADES = Object.freeze({
-  tower: { saturation: 0.8, highlights: 0.38, tint: [1.0, 0.95, 0.88], lift: 0.14 },
-  tree: { saturation: 0.86, highlights: 0.2, tint: [1.0, 0.96, 0.9], lift: 0.09 },
+  // The supplied maps contain their own warm daylight. Keep their authored
+  // detail, but compress it beneath a cool moon key instead of just tinting
+  // the entire asset blue. This leaves the lantern as the sole warm accent.
+  tower: {
+    saturation: 0.68,
+    highlights: 0.56,
+    tint: [0.93, 0.97, 1.0],
+    shadowTint: [0.12, 0.15, 0.2],
+    lift: 0.11,
+  },
+  tree: {
+    saturation: 0.74,
+    highlights: 0.4,
+    tint: [0.9, 0.95, 1.0],
+    shadowTint: [0.1, 0.14, 0.18],
+    lift: 0.07,
+  },
 });
 export function applyFilmGrade(material, active) {
   const grade = material?.userData?.babelGrade;
@@ -80,6 +95,7 @@ export function applyFilmGrade(material, active) {
   grade.uniforms.babelSaturation.value = film?.saturation ?? profile.saturation ?? 1;
   grade.uniforms.babelHighlights.value = film?.highlights ?? profile.highlights ?? 0;
   grade.uniforms.babelTint.value.setRGB(...(film?.tint ?? [1, 1, 1]));
+  grade.uniforms.babelShadowTint.value.setRGB(...(film?.shadowTint ?? [0.19, 0.17, 0.15]));
   grade.uniforms.babelLift.value = film?.lift ?? 0;
   return true;
 }
@@ -276,10 +292,11 @@ function materialFor(asset, anisotropy, role) {
       babelSaturation: { value: profile.saturation ?? 1 },
       babelHighlights: { value: profile.highlights ?? 0 },
       babelTint: { value: new Color(1, 1, 1) },
+      babelShadowTint: { value: new Color(0.19, 0.17, 0.15) },
       babelLift: { value: 0 },
     };
     material.userData.babelGrade = { role, uniforms };
-    material.customProgramCacheKey = () => `babel-limestone-v2-${roughnessFloor}`;
+    material.customProgramCacheKey = () => `babel-moonlit-material-v3-${roughnessFloor}`;
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
       shader.fragmentShader = shader.fragmentShader
@@ -289,6 +306,7 @@ function materialFor(asset, anisotropy, role) {
           uniform float babelSaturation;
           uniform float babelHighlights;
           uniform vec3 babelTint;
+          uniform vec3 babelShadowTint;
           uniform float babelLift;`,
         )
         .replace(
@@ -301,7 +319,7 @@ function materialFor(asset, anisotropy, role) {
           float babelLuma = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
           diffuseColor.rgb = mix(vec3(babelLuma), diffuseColor.rgb, babelSaturation);
           diffuseColor.rgb *= 1.0 - babelHighlights * smoothstep(0.30, 0.85, babelLuma);
-          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.19, 0.17, 0.15), babelLift * (1.0 - smoothstep(0.02, 0.22, babelLuma)));
+          diffuseColor.rgb = mix(diffuseColor.rgb, babelShadowTint, babelLift * (1.0 - smoothstep(0.02, 0.22, babelLuma)));
           diffuseColor.rgb *= babelTint;`,
         );
     };

@@ -18,6 +18,13 @@ export const DIRECTED_SHOTS = {
     { name: "The watch", region: [0.55, 1], fov: 32, azimuth: -40, height: 0.66, arc: 2 },
     // Threshold: low and close at the entrance; buttresses and earth contact.
     { name: "Threshold", region: [0, 0.45], fov: 36, azimuth: 72, height: 0.12, arc: 2 },
+    // Masonry study: an eye-level section of the wall, framed as a person
+    // would encounter it on approach. It keeps enough depth to show stone
+    // scale and joints without reading as a texture swatch.
+    { name: "Masonry study", region: [0.22, 0.58], fov: 32, azimuth: 44, height: 0.42, arc: 1, margin: 0.96 },
+    // Gallery detail: the timber brackets and balcony rail in a human-scale
+    // view. The small arc preserves the roofline and shadow rhythm.
+    { name: "Gallery detail", region: [0.6, 0.84], fov: 30, azimuth: -26, height: 0.7, arc: 1, margin: 0.96 },
   ],
   // Tree shots use a tighter 0.93 fit margin (vs. the 0.85 default) so the
   // tree reads closer and more intimate in frame; tower shots keep the
@@ -26,12 +33,7 @@ export const DIRECTED_SHOTS = {
     // Lower and tighter than before so the tree looms the way Arrival's
     // tower does, instead of just sitting centered in frame.
     { name: "Portrait", region: [0, 1], fov: 36, azimuth: -77, height: 0.24, arc: 4, margin: 0.93 },
-    // Under the branches: a low, wide view from the far side of the tree. The
-    // lantern glows from behind the trunk and the watchtower stands in the haze
-    // beyond, placing the two subjects in one field. Azimuth turned toward the
-    // sun's own side (~24 deg) so the canopy's cast shadow falls away behind
-    // the trunk rather than filling the wide, low foreground.
-    { name: "Under the branches", region: [0, 1], fov: 44, azimuth: 70, height: 0.1, arc: 4, margin: 0.93 },
+
     {
       name: "Lantern study",
       widthBelow: 0.25,
@@ -65,6 +67,19 @@ export const DIRECTED_SHOTS = {
       arc: 2,
       margin: 0.95,
     },
+    // Root and lantern: the immediate arrival-scale view. It includes the
+    // whole lantern with trunk flare and roots, avoiding a detached glowing prop.
+    {
+      name: "Root and lantern",
+      widthBelow: 0.34,
+      region: [0, 0.3],
+      fov: 32,
+      azimuth: -98,
+      height: 0.17,
+      arc: 1,
+      margin: 0.97,
+    },
+
   ],
 };
 
