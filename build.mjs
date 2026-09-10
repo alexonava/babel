@@ -61,8 +61,30 @@ function sha8(buf) {
   return createHash("sha256").update(buf).digest("hex").slice(0, 8);
 }
 
+async function architectureAssetManifest() {
+  const urls = {};
+  const files = [];
+  for (const tier of ["high", "balanced"]) {
+    urls[tier] = {};
+    for (const role of ["stairs", "wall", "base", "crown", "tower", "tree"]) {
+      const name = role + "-" + tier + ".glb";
+      const bytes = await readFile(join(__dirname, "images", "architecture", name));
+      const hashedName = name.replace(".glb", "." + sha8(bytes) + ".glb");
+      urls[tier][role] = "/images/architecture/" + hashedName;
+      files.push({ hashedName, bytes });
+    }
+  }
+  return { urls, files };
+}
+
 async function buildScriptBundle(entry) {
-  const result = await build(scriptBuildOptions(entry));
+  const options = scriptBuildOptions(entry);
+  if (entry === SCENE_ENTRY) {
+    options.define = {
+      __BABEL_ARCHITECTURE_URLS__: JSON.stringify((await architectureAssetManifest()).urls),
+    };
+  }
+  const result = await build(options);
   const out = result.outputFiles?.[0];
   if (!out) throw new Error(`esbuild produced no output for ${entry}`);
   return out.text;
@@ -126,6 +148,11 @@ async function buildDist() {
   await Promise.all(
     STATIC_DIRS.map((dir) => cp(join(__dirname, dir), join(DIST_DIR, dir), { recursive: true })),
   );
+
+  // Model revisions receive a new URL without invalidating the accepted classic assets.
+  for (const { hashedName, bytes } of (await architectureAssetManifest()).files) {
+    await writeFile(join(DIST_DIR, "images", "architecture", hashedName), bytes);
+  }
 
   // Keep the stable copies for older HTML while new pages receive a fresh URL
   // whenever poster bytes change, independent of the browser's image cache.

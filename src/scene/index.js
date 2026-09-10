@@ -1,3 +1,10 @@
+import { readTourInterval, createCameraTour, createTourControls } from "./camera-tour.js";
+import { wantsFilmTreatment } from "./directed-shots.js";
+import { createFilmScene } from "./film-scene.js";
+import { chooseCinematicView, chooseCinematicAngle, cinematicSafeArea, createCinematicCamera, createQuietScene } from "./cinematic.js";
+import { wantsMud, wantsPropScale, configureMudShading } from "./mud-ground.js";
+import { createHillSilhouette } from "./hill-silhouette.js";
+import { createPropScale } from "./prop-scale.js";
 import {
   AdditiveBlending,
   AmbientLight,
@@ -58,9 +65,12 @@ import {
   WebGLRenderer,
 } from "three";
 import { createBrickDetailController } from "./brick-detail.js";
+import { createArchitectureAssetController } from "./architecture-assets.js";
+import { createCompleteTowerArchitecture, createTowerArchitecture, createTreeArchitecture } from "./architecture.js";
 import { createSceneAtmosphere } from "./atmosphere.js";
 import { createSceneEnvironment } from "./environment.js";
 import { createSceneRendering } from "./rendering.js";
+import { createWatchtowerRefinement, wantsGroundedWatchtower } from "./watchtower-refinement.js";
 import {
   createSceneFrameScheduler,
   createSceneResizeController,
@@ -191,6 +201,11 @@ function setSrgbTexture(texture) {
     let reflectionRenderTarget = null;
     let runtimeDisposed = false;
     let sceneReadyMarked = false;
+    const quietObjects = [];
+    const filmEnabled = wantsFilmTreatment(window.location.search);
+    let filmActive = false, filmScene = null;
+    const groundRepeats = new WeakMap();
+    const quietSetting = !["classic", "assembled"].includes(new URLSearchParams(location.search).get("architecture")) && new URLSearchParams(location.search).get("setting") !== "previous";
     let webglContextAvailable = true;
     const reducedMotionMQ = window.matchMedia("(prefers-reduced-motion: reduce)");
     let reducedMotion = Boolean(reducedMotionMQ.matches);
@@ -427,6 +442,20 @@ function setSrgbTexture(texture) {
     subsystemRegistry.register(rendering);
     return runSceneInitialization(subsystemRegistry, () => {
     const { camera, homeScene, renderer } = rendering;
+    scene.cinematicSelection ??= chooseCinematicView(window.location.search);
+    scene.cinematicAngle ??= chooseCinematicAngle(window.location.search, scene.cinematicSelection);
+    let cinematicArea;
+    const measureCinematicArea = (width, height) => cinematicSafeArea(width, height,
+      document.getElementById("hero-minimal")?.getBoundingClientRect(), document.querySelector(".bottom-bar")?.getBoundingClientRect());
+    const cinematic = createCinematicCamera({ camera, fog: homeScene.fog, selected: scene.cinematicSelection, angle: scene.cinematicAngle, film: filmEnabled,
+      getSafeArea: (width, height) => cinematicArea || measureCinematicArea(width, height),
+      getGroundY: (x, z) => groundHeight(x, z) + groundSurface.getWorldPosition(new Vector3()).y });
+    subsystemRegistry.register(cinematic);
+    const tourInterval = filmEnabled ? readTourInterval(window.location.search) : 0;
+    const cameraTour = tourInterval ? createCameraTour({ camera: cinematic, interval: tourInterval,
+      invalidate: () => frameScheduler?.invalidate() }) : null;
+    if (cameraTour) subsystemRegistry.register(createTourControls({ tour: cameraTour, document,
+      parent: document.getElementById("hero-minimal") }));
     function isLowPower() {
       return state.profile.isLow;
     }
@@ -942,20 +971,63 @@ function setSrgbTexture(texture) {
       profile: state.profile,
     });
     subsystemRegistry.register(environmentSystem);
+    let classicTree = null;
     const group4 = environmentSystem.root;
     const circleGeometry = new CircleGeometry(WORLD.GROUND_RADIUS, circleSegments, 0, 2 * Math.PI),
       position9 = circleGeometry.attributes.position;
     for (let num425 = 0; num425 < position9.count; num425 += 1) {
       const result56 = position9.getX(num425),
         result57 = position9.getY(num425);
-      position9.setZ(num425, groundHeight(result56, result57));
+      // CircleGeometry's local +Y becomes world -Z after its -X quarter turn.
+      // Sample in world coordinates so fallback assets seat on this surface.
+      position9.setZ(num425, groundHeight(result56, -result57));
     }
     circleGeometry.computeVertexNormals();
+    let groundSurface = null;
+    let groundOverlay = null;
+    let currentGroundMuddy = false;
+    let currentGrass = null;
     const result105 = createGroundTextures({
         THREE: THREE,
         lowPower: state.lowPower,
         qualityProfile: state.profile,
         chooseAnisotropy: chooseAnisotropy,
+        search: window.location?.search || "",
+        onDetailStatus(status) {
+          if (qualityDebug) qualityDebug.ground = status;
+        },
+        onGrassStatus(status) {
+          if (qualityDebug) qualityDebug.grass = status;
+        },
+        onGrassChange(grassDetail) {
+          currentGrass = grassDetail;
+          const material = groundSurface?.material;
+          if (!material) return;
+          configureMudShading(material, currentGroundMuddy, quietSetting, filmActive, currentGrass);
+          frameScheduler?.invalidate();
+        },
+        onDetailChange({ colorMap, normalMap, normalScale, bumpMap, roughnessMap = null, muddy = false, earth = false }) {
+          const material = groundSurface?.material;
+          if (!material) return;
+          currentGroundMuddy = muddy;
+          if (qualityDebug) qualityDebug.groundTreatment = muddy ? "mud" : "baseline";
+          configureMudShading(material, muddy, quietSetting, filmActive, currentGrass);
+          for (const texture of [colorMap, normalMap, roughnessMap, bumpMap].filter(Boolean)) {
+            if (!groundRepeats.has(texture)) groundRepeats.set(texture, texture.repeat.clone());
+            texture.repeat.copy(groundRepeats.get(texture)).multiplyScalar(filmActive && !earth ? 384 / 176 : 1);
+          }
+          material.map = colorMap;
+          material.roughnessMap = roughnessMap;
+          material.roughness = muddy ? 1 : filmActive ? .93 : GROUND_SURFACE_MATERIAL.roughness;
+          material.metalness = muddy || filmActive ? 0 : GROUND_SURFACE_MATERIAL.metalness;
+          material.color.setHex(muddy ? 0xffffff : filmActive ? 0x615447 : GROUND_SURFACE_MATERIAL.color);
+          if (groundOverlay) groundOverlay.material.opacity = muddy ? .22 : .92;
+          material.bumpMap = bumpMap;
+          material.normalMap = normalMap;
+          material.normalScale.set(normalScale, normalScale);
+          material.needsUpdate = true;
+          frameScheduler?.invalidate();
+        },
       }),
       mesh36 = new Mesh(
         circleGeometry,
@@ -973,6 +1045,11 @@ function setSrgbTexture(texture) {
     ((mesh36.rotation.x = -Math.PI / 2),
       (mesh36.receiveShadow = !state.lowPower),
       group4.add(mesh36));
+    groundSurface = mesh36;
+    subsystemRegistry.register(result105);
+    const hillSilhouette = createHillSilhouette({ groundHeight });
+    group4.add(hillSilhouette.mesh);
+    subsystemRegistry.register(hillSilhouette);
     if (createGroundOverlayTexture) {
       const createGroundOverlayTextureResult = createGroundOverlayTexture({
         THREE: THREE,
@@ -988,7 +1065,7 @@ function setSrgbTexture(texture) {
         for (let num47 = 0; num47 < overlayPos.count; num47 += 1) {
           const result = overlayPos.getX(num47),
             result2 = overlayPos.getY(num47);
-          overlayPos.setZ(num47, groundHeight(result, result2) + 0.04);
+          overlayPos.setZ(num47, groundHeight(result, -result2) + 0.04);
         }
         overlayPos.needsUpdate = !0;
         const mesh5 = new Mesh(
@@ -1000,6 +1077,7 @@ function setSrgbTexture(texture) {
             depthWrite: !1,
           }),
         );
+        groundOverlay = mesh5;
         ((mesh5.rotation.x = -Math.PI / 2), (mesh5.renderOrder = 1), group4.add(mesh5));
       }
     }
@@ -1265,6 +1343,7 @@ function setSrgbTexture(texture) {
           (mesh28.castShadow = !state.lowPower),
           (mesh28.receiveShadow = !state.lowPower),
           group4.add(mesh28));
+        quietObjects.push(mesh28);
       })());
     const group6 = new Group();
     group4.add(group6);
@@ -1993,6 +2072,8 @@ function setSrgbTexture(texture) {
           }));
         const result87 = groundHeight(arg74, arg75);
         (group3.position.set(arg74, result87, arg75), group4.add(group3));
+        group3.name = "classic-tree";
+        classicTree = group3;
       })(58, 38, state.lowPower ? 1.25 : 1.5));
     const towerSystem = createSceneTower({
       parent: group4,
@@ -2433,10 +2514,17 @@ function setSrgbTexture(texture) {
     }
     environmentSystem.setGroundPlantRecords(arr19);
     const materialSearch = new URLSearchParams(window.location?.search || "");
+    const architectureEnabled = materialSearch.get("architecture") !== "classic";
+    const completeTowerEnabled = architectureEnabled && materialSearch.get("architecture") !== "assembled";
+    const classicTowerMeshes = [];
+    const baseMasonryRecords = [];
     const brickDetailDisabled =
-      materialSearch.get("brick") === "boxes" || materialSearch.get("stone") === "procedural";
+      architectureEnabled || materialSearch.get("brick") === "boxes" || materialSearch.get("stone") === "procedural";
+    const constructionDetailDisabled =
+      brickDetailDisabled || materialSearch.get("construction") === "baseline";
     let brickDetail = null;
-    // Stone detail can resolve before the later brick controller is constructed.
+    let treadDetail = null;
+    // Stone detail can resolve before the later controllers are constructed.
     let latestBrickMaps = null;
     const result108 = createTowerTextures({
       THREE: THREE,
@@ -2445,18 +2533,20 @@ function setSrgbTexture(texture) {
       chooseAnisotropy: chooseAnisotropy,
       collapseYaw: num511,
       collapseSpread: num512,
-      search: window.location?.search || "",
+      search: architectureEnabled ? "?stone=procedural" : window.location?.search || "",
       includeBrickDetail: !brickDetailDisabled,
       onDetailStatus(status) {
         if (qualityDebug) qualityDebug.stone = status;
         if (status.status === "fallback") {
           latestBrickMaps = null;
           brickDetail?.setDetailMaps(null);
+          treadDetail?.setDetailMaps(null);
         }
       },
       onDetailChange({ colorMap, roughnessMap, brickMaps }) {
         // Restore detached originals before rebinding or disposing their wall maps.
         brickDetail?.setDetailMaps(null);
+        treadDetail?.setDetailMaps(null);
         homeScene.traverse((object) => {
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           materials.forEach((material) => {
@@ -2467,6 +2557,7 @@ function setSrgbTexture(texture) {
         });
         latestBrickMaps = brickMaps;
         brickDetail?.setDetailMaps(latestBrickMaps);
+        treadDetail?.setDetailMaps(latestBrickMaps);
         frameScheduler?.invalidate();
       },
     });
@@ -2630,6 +2721,8 @@ function setSrgbTexture(texture) {
         (mesh13.castShadow = !state.lowPower),
         (mesh13.receiveShadow = !state.lowPower),
         group7.add(mesh13));
+      classicTowerMeshes.push(mesh13);
+      baseMasonryRecords.push(mesh13);
     }
     const mesh38 = new Mesh(
       new TorusGeometry(12.2, 0.6, 8, 40),
@@ -2892,7 +2985,7 @@ function setSrgbTexture(texture) {
           return new Mesh(bufferGeometry, meshStandardMaterial);
         })(result89, 0, 0, arg98, arg99);
       return (
-        result90 && ((result90.position.y = mesh39.position.y), group7.add(result90)),
+        result90 && ((result90.position.y = mesh39.position.y), group7.add(result90), classicTowerMeshes.push(result90)),
         result89
       );
     }
@@ -2964,6 +3057,7 @@ function setSrgbTexture(texture) {
           num448 = Math.max(num448, position7.getY(num276));
       })(cylinderGeometry3));
     let craterEmber = null;
+    let crownEffectLight = null;
     {
       const craterRimLocal = tmpV69(cylinderGeometry3, num511),
         craterRimWorld = Number.isFinite(craterRimLocal)
@@ -2973,6 +3067,7 @@ function setSrgbTexture(texture) {
       (craterEmber.position.set(Math.cos(num511) * 4, craterRimWorld - 1.5, Math.sin(num511) * 4),
         (craterEmber.castShadow = !1),
         group7.add(craterEmber));
+      crownEffectLight = craterEmber;
     }
     const group11 = new Group();
     ((group11.position.y = mesh39.position.y), group7.add(group11));
@@ -2993,6 +3088,7 @@ function setSrgbTexture(texture) {
         metalness: 0,
       }),
       tmpV73 = state.lowPower ? 14 : 28;
+    const crownBrickRecords = [];
     for (let num449 = 0; num449 < tmpV73; num449 += 1) {
       const num277 = (num449 / tmpV73) * Math.PI * 2,
         result69 = Math.max(0, 1 - tmpV68(num277, num511) / 0.86);
@@ -3049,6 +3145,12 @@ function setSrgbTexture(texture) {
           (mesh4.castShadow = !state.lowPower),
           (mesh4.receiveShadow = !1),
           group11.add(mesh4));
+      }
+      if (!constructionDetailDisabled) {
+        crownBrickRecords.push({
+          mesh: mesh14,
+          dimensions: { x: num281, y: num282, z: num283 },
+        });
       }
     }
     const biteShardCount = state.lowPower ? 5 : 9;
@@ -3122,7 +3224,7 @@ function setSrgbTexture(texture) {
     brickDetail = createBrickDetailController({
       profile: state.profile,
       disabled: brickDetailDisabled,
-      records: reliefBrickRecords,
+      records: [...reliefBrickRecords, ...crownBrickRecords],
       onChange() {
         frameScheduler?.invalidate();
       },
@@ -4227,6 +4329,7 @@ function setSrgbTexture(texture) {
         num478 = mesh39.position.y + 17;
       return 12.2 + (8.8 - 12.2) * clamp01((arg124 - num477) / (num478 - num477));
     }
+    const treadBrickRecords = [];
     for (let num479 = 0; num479 < overlaySegments; num479 += 1) {
       const qeResult87 = tmpV65(1.73 * num479 + 4.7),
         qeResult88 = tmpV65(2.41 * num479 + 1.9),
@@ -4259,7 +4362,149 @@ function setSrgbTexture(texture) {
         (mesh25.castShadow = !state.lowPower),
         (mesh25.receiveShadow = !state.lowPower),
         group7.add(mesh25));
+      classicTowerMeshes.push(mesh25);
+      // Preserve the seven source variants and their completed placement math.
+      // The authored unit tread keeps +Y up and +X pointing out from the tower.
+      const { width, height, depth } = tmpV20.parameters;
+      treadBrickRecords.push({
+        mesh: mesh25,
+        dimensions: { x: width, y: height, z: depth },
+      });
     }
+    treadDetail = createBrickDetailController({
+      profile: state.profile,
+      disabled: constructionDetailDisabled,
+      records: treadBrickRecords,
+      geometryUrl: "/images/materials/stone-tread.bin",
+      materialColor: TOWER_SURFACE_MATERIALS.shellColor,
+      onChange() {
+        frameScheduler?.invalidate();
+      },
+      report(status) {
+        if (qualityDebug) qualityDebug.treads = status;
+      },
+    });
+    treadDetail.setDetailMaps(latestBrickMaps);
+    subsystemRegistry.register(treadDetail);
+    // Retain the structural shell for atmospheric anchors. Crown smoke sprites
+    // keep their parent while only the old visible masonry is replaced.
+    classicTowerMeshes.push(mesh39, mesh40, ...group11.children.filter((object) => object.isMesh));
+    let treeArchitecture = null;
+    let towerVisibility = [];
+    let treeVisibility = true;
+    const groundedWatchtower = wantsGroundedWatchtower(window.location?.search || "");
+    const watchtowerRefinement = createWatchtowerRefinement({
+      effects: [mesh41, ...arr24, ...arr22.map(record => record.mesh), crownEffectLight],
+      plinth: [ftLower, mesh37, ftSeam],
+      rubble: [
+        ...group12.children.filter(object => object.isMesh),
+        ...group5.children.filter(object => object.isMesh && Math.hypot(object.position.x, object.position.z) <= 28),
+      ],
+      setLighting(active) { rendering.setGroundedLighting(active); },
+    });
+    subsystemRegistry.register(watchtowerRefinement);
+    const earthFooting = completeTowerEnabled && new URLSearchParams(window.location.search).get("setting") !== "plinth";
+    const propScale = createPropScale({ groundRoot: group4, groundHeight: (x, z) => !earthFooting && Math.hypot(x, z) < 17.2 ? Math.max(groundHeight(x, z), result107 + 1.6) : groundHeight(x, z),
+      stones: group5.children.filter(o => o.isMesh), rubble: group12.children.filter(o => o.isMesh),
+      plants: group6.children.filter(o => o.isGroup && o !== classicTree), plantRecords: arr19,
+      torches: arr23, trim: [ftSeam],
+    });
+    subsystemRegistry.register(propScale);
+    const quietScene = createQuietScene(quietObjects, enabled => {
+      environmentSystem.setClutterEnabled(enabled);
+      arr23.forEach(record => { record.visibilitySystem.enabled = enabled; });
+    });
+    quietObjects.push(group5, group6, group10, group12, group13, group14, plantShadowGroup, plinthTorchLight, groundOverlay);
+    subsystemRegistry.register(quietScene);
+    let completeReady = false, completeTower = null;
+    const filmEffects = [orbitalGlowGroup, sprite15, sprite16];
+    filmScene = createFilmScene({ ground: groundSurface, groundHeight, rendering, atmosphere: atmosphereSystem,
+      effects: filmEffects, haloSystem, skyMaterial: skyShell.material,
+      onGroundChange(active) { filmActive = active; towerSystem.setFilmTreatment(active); completeTower?.setFilmTreatment(active); result105.setFilmActive(active); },
+    });
+    subsystemRegistry.register(filmScene);
+    const architectureAssets = createArchitectureAssetController({
+      disabled: !architectureEnabled,
+      towerModel: completeTowerEnabled ? "complete" : "assembled",
+      onTowerReady(assets) {
+        const replacement = completeTowerEnabled
+          ? createCompleteTowerArchitecture({
+            asset: assets.tower, groundY: result107, footingOffset: earthFooting ? -0.22 : 1.64, anisotropy: chooseAnisotropy(2, 6),
+          })
+          : createTowerArchitecture({
+            assets, groundY: result107, collapseYaw: num511,
+            baseRecords: baseMasonryRecords, anisotropy: chooseAnisotropy(2, 6),
+          });
+        const replacedMeshes = completeTowerEnabled ? [...classicTowerMeshes, mesh38, ...(earthFooting ? [ftLower, mesh37, ftSeam, ftSoot] : [])] : classicTowerMeshes;
+        try {
+          watchtowerRefinement.setActive(completeTowerEnabled && groundedWatchtower);
+          completeReady = completeTowerEnabled;
+          quietScene.setActive(completeReady && quietSetting);
+          propScale.setActive(completeReady && wantsPropScale(window.location.search));
+          result105.setMudActive?.(completeReady && wantsMud(window.location.search));
+          filmScene.setActive(completeReady && filmEnabled);
+          treeArchitecture?.setFilmTreatment(filmActive);
+          replacement.setFilmTreatment?.(filmActive);
+        } catch (error) { replacement.dispose(); throw error; }
+        towerVisibility = replacedMeshes.map((mesh) => [mesh, mesh.visible]);
+        completeTower = completeTowerEnabled ? replacement : null;
+        group7.add(replacement.root);
+        cinematic.setSubject("tower", replacement.root);
+        replacedMeshes.forEach((mesh) => { mesh.visible = false; });
+        frameScheduler?.invalidate();
+        return () => {
+          if (completeTower === replacement) completeTower = null;
+          replacement.dispose();
+        };
+      },
+      onRestoreTower() {
+        cinematic.setSubject("tower", null);
+        filmScene.setActive(false);
+        treeArchitecture?.setFilmTreatment(false);
+        quietScene.setActive(false);
+        completeReady = false;
+        propScale.setActive(false);
+        result105.setMudActive?.(false);
+        watchtowerRefinement.setActive(false);
+        towerVisibility.forEach(([mesh, visible]) => { mesh.visible = visible; });
+        towerVisibility = [];
+        frameScheduler?.invalidate();
+      },
+      onTreeReady(asset) {
+        const replacement = createTreeArchitecture({ asset, groundHeight, anisotropy: chooseAnisotropy(2, 6), anchor: earthFooting ? [55.1, 36.1] : [58, 38] });
+        replacement.applyQuality(state.profile);
+        group4.add(replacement.root);
+        treeVisibility = classicTree.visible;
+        classicTree.visible = false;
+        treeArchitecture = replacement;
+        propScale.setTree(replacement);
+        replacement.setFilmTreatment(filmActive);
+        cinematic.setSubject("tree", replacement.root);
+        frameScheduler?.invalidate();
+        return () => { replacement.dispose(); treeArchitecture = null; };
+      },
+      onRestoreTree() {
+        cinematic.setSubject("tree", null);
+        treeArchitecture?.setFilmTreatment(false);
+        propScale.setTree(null);
+        classicTree.visible = treeVisibility;
+        frameScheduler?.invalidate();
+      },
+      onStatus(status) {
+        cinematic.setStatus(status);
+        frameScheduler?.invalidate();
+        if (qualityDebug) {
+          qualityDebug.architecture ||= { mode: architectureEnabled ? (completeTowerEnabled ? "complete" : "assembled") : "classic" };
+          qualityDebug.architecture[status.kind] = status;
+          qualityDebug.architecture.propScale = propScale.active ? "doorway" : "baseline";
+          qualityDebug.architecture.refinement = watchtowerRefinement.active ? "grounded" : "baseline";
+        }
+      },
+    });
+    subsystemRegistry.register(architectureAssets);
+    subsystemRegistry.register({
+      applyQuality(profile) { treeArchitecture?.applyQuality(profile); },
+    });
     const boxGeometry = new BoxGeometry(1.15, 1, 1.15),
       meshStandardMaterial12 = new MeshStandardMaterial({
         color: 11833972,
@@ -4293,10 +4538,12 @@ function setSrgbTexture(texture) {
         (mesh27.castShadow = !state.lowPower),
         group4.add(mesh27),
         arr26.push(mesh27));
+      quietObjects.push(mesh26, mesh27);
     }
     environmentSystem.setCrystalRecords(arr26);
     const group15 = new Group();
     group4.add(group15);
+    quietObjects.push(group15);
     const boxGeometry2 = new BoxGeometry(0.65, 2.6, 0.65),
       meshStandardMaterial13 = new MeshStandardMaterial({
         color: 14074533,
@@ -4478,6 +4725,8 @@ function setSrgbTexture(texture) {
       }),
     );
     group4.add(points);
+    // Floating motes read as square sprites in the quiet film scene; film hides them.
+    filmEffects.push(points);
     atmosphereSystem.setPointField(points);
     const emberCloudGroup = new Group();
     cloudAnchor.add(emberCloudGroup);
@@ -4707,6 +4956,8 @@ function setSrgbTexture(texture) {
       radius: 122,
     });
     setShadowParticipation(pulseCloudGroup);
+    filmScene.setClouds([...driftClouds.map(c => c.mesh), ...arr16.map(c => c.mesh), ...arr17.map(c => c.mesh),
+      ...emberClouds.map(c => c.mesh), ...hazeClouds.map(c => c.mesh), ...pulseClouds.flatMap(c => c.puffs.map(p => p.sprite))]);
     const cfg2 = {
         scrollTarget: 0,
         scroll: 0,
@@ -4760,6 +5011,7 @@ function setSrgbTexture(texture) {
       return Math.max(minOpacity, Math.min(result92, result96));
     }
     function applySceneSize({ width, height }) {
+      cinematicArea = measureCinematicArea(width, height);
       ((cfg2.width = width),
         (cfg2.height = height),
         applySceneComposition(resolveSceneCompositionProfile(), "resize"),
@@ -4787,6 +5039,8 @@ function setSrgbTexture(texture) {
     // resize, so reading it inside the scroll handler avoids a layout-flushing
     // window.innerHeight access per scroll event.
     const onWindowResize = () => resizeController.resize();
+    const onFontsLoaded = () => { cinematicArea = measureCinematicArea(cfg2.width, cfg2.height); frameScheduler?.invalidate(); };
+    document.fonts?.addEventListener?.("loadingdone", onFontsLoaded);
     const onWindowScroll = () => {
       cfg2.scrollTarget = Math.min(window.scrollY / (1.8 * cfg2.height), 1.25);
       frameScheduler?.invalidate();
@@ -4830,13 +5084,17 @@ function setSrgbTexture(texture) {
           0.6 * Math.sin(0.13 * elapsedTime) * tmpV55,
         num495 = cameraProfile.lookAtBase + cameraProfile.lookAtScrollDelta * cfg2.scroll,
         num496 = cameraProfile.orbitScale * (num493 - cameraProfile.orbitTrim);
-      (scene.devMode?.active && typeof scene.devMode.update === "function"
-        ? scene.devMode.update(camera, result97)
-        : camera.position.set(Math.cos(num492) * num496, num494, Math.sin(num492) * num496),
-        (cloudAnchor.position.x = camera.position.x),
-        (cloudAnchor.position.z = camera.position.z),
-        cloudLookTarget.set(0, num495, 0),
-        scene.devMode?.active ? null : camera.lookAt(0, num495, 0),
+      const tourPhase = cameraTour?.update({ elapsedSeconds: elapsedTime, reducedMotion,
+        developer: Boolean(scene.devMode?.active), panelOpen: document.body.hasAttribute("data-panel-open") }) ?? null;
+      rendering.postprocessPipeline.setFade?.(cameraTour?.fade ?? 0);
+      const cinematicApplied = cinematic.apply({ width: cfg2.width, height: cfg2.height,
+        elapsedSeconds: elapsedTime, reducedMotion, developer: Boolean(scene.devMode?.active), tourPhase, fallbackFov: cameraProfile.fov || 45 });
+      if (scene.devMode?.active && typeof scene.devMode.update === "function") scene.devMode.update(camera, result97);
+      else if (!cinematicApplied) { camera.position.set(Math.cos(num492) * num496, num494, Math.sin(num492) * num496); camera.lookAt(0, num495, 0); }
+      cloudAnchor.position.x = camera.position.x;
+      cloudAnchor.position.z = camera.position.z;
+      if (cinematicApplied) cloudLookTarget.copy(cinematic.target); else cloudLookTarget.set(0, num495, 0);
+      (
         subsystemRegistry.update({
           elapsedSeconds: elapsedTime,
           reducedMotion,
@@ -4945,6 +5203,7 @@ function setSrgbTexture(texture) {
             })()
           : setRecordVisibility(emberClouds, !1),
         arr23.forEach((arg52) => {
+          if (quietScene.active) return;
           if (!arg52.visibilitySystem.active) return;
               const phase = arg52.phase,
                 result77 = Math.sin(6 * elapsedTime + phase),
@@ -5031,7 +5290,7 @@ function setSrgbTexture(texture) {
                 arg52.light.position.y = arg52.baseFlameY;
               }
         }),
-        plumeSystem.active
+        plumeSystem.active && !watchtowerRefinement.active
           ? (() => {
               const limit = getProfileCount("plumeColumns", arr22.length);
               arr22.forEach((arg14, arg15) => {
@@ -5141,7 +5400,7 @@ function setSrgbTexture(texture) {
                 });
               });
             })());
-      if (haloSystem.active) {
+      if (haloSystem.active && !filmActive) {
         const haloPulse =
           1 + 0.012 * Math.sin(1.3 * elapsedTime) + 0.006 * Math.sin(2.9 * elapsedTime);
         const haloLimit =
@@ -5259,6 +5518,11 @@ function setSrgbTexture(texture) {
         });
       }
       skyShell.material.uniforms.uTime.value = elapsedTime;
+      watchtowerRefinement.enforceVisibility();
+      quietScene.enforce();
+      if (filmActive) filmScene.finishFrame(camera, cloudLookTarget, cinematic.frame,
+        cfg2.width < 900 && cinematic.shot?.arc === 2, (cinematicArea?.top || 200) / cfg2.height);
+      if (qualityDebug) qualityDebug.cinematic = { tour: cameraTour ? { ...cameraTour.state, fade: cameraTour.fade } : null, film: filmActive, shot: cinematic.shot?.name, selected: cinematic.selected, angle: cinematic.angle + 1, current: cinematic.current, quiet: quietScene.active };
       rendering.update();
       if (qualityDebug) {
         debugRenderWindowStart ??= timestamp;
@@ -5272,8 +5536,10 @@ function setSrgbTexture(texture) {
       }
       if (!sceneReadyMarked) {
         sceneReadyMarked = true;
-        if (container && container.classList) container.classList.add("is-ready");
+
+        architectureAssets.setQuality(state.profile, true);
       }
+      container?.classList.toggle("is-ready", cinematic.ready || Boolean(scene.devMode?.active));
     }
     frameScheduler = createSceneFrameScheduler({
       isRenderable() {
@@ -5313,6 +5579,7 @@ function setSrgbTexture(texture) {
       runtimeDisposed = true;
       sceneReadyMarked = false;
       container.classList?.remove("is-ready");
+      document.fonts?.removeEventListener?.("loadingdone", onFontsLoaded);
       window.removeEventListener("resize", onWindowResize);
       window.removeEventListener("scroll", onWindowScroll);
       document.removeEventListener("visibilitychange", onDocumentVisibilityChange);

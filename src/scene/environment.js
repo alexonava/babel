@@ -6,6 +6,7 @@ export function createSceneEnvironment({ groundHeight, parent, profile }) {
 
   let crystalRecords = [];
   let disposed = false;
+  let clutterEnabled = true;
   let groundPlantRecords = [];
   let lowPower = Boolean(profile?.isLow);
   let monolithGroup = null;
@@ -32,6 +33,9 @@ export function createSceneEnvironment({ groundHeight, parent, profile }) {
       root.position.y = composition.sceneOffsetY;
       return true;
     },
+    setClutterEnabled(enabled) {
+      clutterEnabled = Boolean(enabled);
+    },
     setCrystalRecords(records) {
       crystalRecords = Array.isArray(records) ? records : [];
     },
@@ -43,6 +47,7 @@ export function createSceneEnvironment({ groundHeight, parent, profile }) {
     },
     update({ elapsedSeconds = 0, reducedMotion = false } = {}) {
       if (disposed) return false;
+      if (!clutterEnabled) return false;
       crystalRecords.forEach((mesh, index) => {
         if (!reducedMotion) mesh.rotation.y += 0.0035 + 0.00012 * index;
         mesh.position.y =
@@ -56,8 +61,7 @@ export function createSceneEnvironment({ groundHeight, parent, profile }) {
       groundPlantRecords.forEach((record, index) => {
         const phase = elapsedSeconds * (0.9 + (index % 7) * 0.05) + record.phase;
         record.mesh.position.y = record.baseY + Math.sin(phase) * record.amp;
-        record.mesh.material.opacity =
-          (lowPower ? 0.26 : 0.33) + 0.03 * Math.sin(0.7 * phase);
+        record.mesh.material.opacity = (lowPower ? 0.26 : 0.33) + 0.03 * Math.sin(0.7 * phase);
       });
       return true;
     },

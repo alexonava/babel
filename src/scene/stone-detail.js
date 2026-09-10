@@ -13,6 +13,21 @@ async function loadStoneImage(url, { signal }) {
   return createImageBitmap(await response.blob());
 }
 
+export const GROUND_DETAIL_SETTINGS = Object.freeze({
+  repeat: 8,
+  normalScale: 0.45,
+});
+
+export const STONE_DETAIL_KINDS = Object.freeze(["color", "roughness"]);
+
+export function stoneMaterialUrl(kind, size) {
+  return `/images/materials/stone-${kind}-${size}.webp`;
+}
+
+export function groundMaterialUrl(kind, size) {
+  return `/images/materials/ground-${kind}-${size}.webp`;
+}
+
 export function createStoneDetailController({
   profile,
   disabled = false,
@@ -20,6 +35,8 @@ export function createStoneDetailController({
   reset,
   report = () => {},
   loadImage = loadStoneImage,
+  kinds = STONE_DETAIL_KINDS,
+  urlFor = stoneMaterialUrl,
 }) {
   let disposed = false;
   let revision = 0;
@@ -51,9 +68,9 @@ export function createStoneDetailController({
     report({ status: "loading", tier });
     void (async () => {
       const results = await Promise.allSettled(
-        ["color", "roughness"].map(async (kind) => {
+        kinds.map(async (kind) => {
           try {
-            return await loadImage(`/images/materials/stone-${kind}-${size}.webp`, {
+            return await loadImage(urlFor(kind, size), {
               signal: controller.signal,
             });
           } catch (error) {
@@ -77,7 +94,7 @@ export function createStoneDetailController({
           return;
         }
         try {
-          apply({ color: images[0], roughness: images[1], tier });
+          apply({ ...Object.fromEntries(kinds.map((kind, i) => [kind, images[i]])), tier });
           rendered = true;
           report({ status: "ready", tier });
         } catch {
@@ -132,5 +149,17 @@ export function paintStoneCell({ colorCtx, roughnessCtx, sources, cell, sample, 
     roughnessCtx.drawImage(roughness, ...args);
   } finally {
     roughnessCtx.restore();
+  }
+}
+
+// Prepare both maps atomically; a failed second map must release the first.
+export function createGroundDetailMaps(sources, createMap) {
+  const maps = {};
+  try {
+    for (const kind of ["color", "normal"]) maps[kind] = createMap(sources[kind], kind);
+    return maps;
+  } catch (error) {
+    Object.values(maps).forEach((map) => map.dispose());
+    throw error;
   }
 }

@@ -6,7 +6,8 @@ export function createSceneTower({ parent, profile }) {
 
   let disposed = false;
   let architecturalLights = [];
-  let architecturalLightScale = 1;
+  let architecturalLightScale = 1,
+    film = false;
   let groundRing = null;
   let lowPower = Boolean(profile?.isLow);
   let orbitRings = [];
@@ -27,7 +28,7 @@ export function createSceneTower({ parent, profile }) {
       ? lighting.towerLightIntensityScale
       : 1;
     architecturalLights.forEach((record) => {
-      record.light.visible = architecturalLightScale > 0;
+      record.light.visible = !film && architecturalLightScale > 0;
     });
   }
 
@@ -61,6 +62,12 @@ export function createSceneTower({ parent, profile }) {
       groundRing = ground || null;
       orbitRings = Array.isArray(rings) ? rings : [];
     },
+    setFilmTreatment(active) {
+      film = Boolean(active);
+      architecturalLights.forEach((record) => {
+        record.light.visible = !film && architecturalLightScale > 0;
+      });
+    },
     setArchitecturalLights(records) {
       architecturalLights = Array.isArray(records)
         ? records.filter((record) => record?.light && Number.isFinite(record.baseIntensity))
@@ -74,7 +81,7 @@ export function createSceneTower({ parent, profile }) {
       applyPracticalLightScale(profile?.lighting);
     },
     update({ elapsedSeconds = 0 } = {}) {
-      if (disposed) return false;
+      if (disposed || film) return false;
       architecturalLights.forEach((record) => {
         const slowBreath =
           0.82 +

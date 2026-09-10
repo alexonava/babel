@@ -114,7 +114,7 @@ test("Cloudflare Pages headers preserve the static security contract", async () 
   );
   assert.match(
     headers,
-    /Content-Security-Policy:\s*default-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'/,
+    /Content-Security-Policy:\s*default-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; img-src 'self' data: blob:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self' blob:/,
   );
 
   const hsts = headers.match(

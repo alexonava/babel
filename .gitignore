@@ -34,6 +34,7 @@ npm-debug.log*
 .tmp-lighthouse-*/
 .tmp-preview-review/
 .playwright-cli/
+HANDOFF.md
 
 # Node / build
 node_modules/

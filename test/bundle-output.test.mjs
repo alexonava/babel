@@ -50,36 +50,45 @@ test("authored material requests stay inside the deferred scene bundle", async (
   const scene = await readFile(await findHashedScript("scene"), "utf8");
   assert.doesNotMatch(app, /images\/materials\/stone-/);
   assert.match(scene, /images\/materials\/stone-/);
+  assert.doesNotMatch(app, /images\/materials\/ground-/);
+  assert.match(scene, /images\/materials\/ground-/);
 });
 
 test("authored material pairs fit transfer budgets and are copied intact into dist", async () => {
-  for (const [size, budget] of [
-    [1024, 750 * 1024],
-    [512, 256 * 1024],
+  for (const [prefix, kinds, budgets] of [
+    ["stone", ["color", "roughness"], { 1024: 750 * 1024, 512: 256 * 1024 }],
+    ["ground", ["color", "normal"], { 1024: 640 * 1024, 512: 224 * 1024 }],
   ]) {
-    let bytes = 0;
-    for (const kind of ["color", "roughness"]) {
-      const relative = path.join("images", "materials", `stone-${kind}-${size}.webp`);
-      const source = await readFile(path.join(projectRoot, relative));
-      const published = await readFile(path.join(distDir, relative));
-      assert.ok(source.length > 0);
-      assert.deepEqual(published, source);
-      bytes += source.length;
+    for (const [size, budget] of Object.entries(budgets)) {
+      let bytes = 0;
+      for (const kind of kinds) {
+        const relative = path.join("images", "materials", `${prefix}-${kind}-${size}.webp`);
+        const source = await readFile(path.join(projectRoot, relative));
+        const published = await readFile(path.join(distDir, relative));
+        assert.ok(source.length > 0);
+        assert.equal(source.toString("ascii", 8, 12), "WEBP", `${relative} must be WebP`);
+        assert.deepEqual(published, source);
+        bytes += source.length;
+      }
+      assert.ok(bytes <= budget, `${size} ${prefix} pair is ${bytes} bytes; budget ${budget}`);
     }
-    assert.ok(bytes <= budget, `${size} material pair is ${bytes} bytes; budget ${budget}`);
   }
 });
 
-test("brick request and BRK1 decoder stay inside the deferred scene bundle", async () => {
+test("construction geometry requests and BRK1 decoder stay inside the deferred scene bundle", async () => {
   const app = await readFile(await findHashedScript("app"), "utf8");
   const scene = await readFile(await findHashedScript("scene"), "utf8");
-  for (const marker of [/images\/materials\/stone-brick\.bin/, /Invalid BRK1 brick geometry/]) {
-    assert.doesNotMatch(app, marker, "brick loading or decoding leaked into the UI bundle");
-    assert.match(scene, marker, "deferred scene is missing the brick loader or decoder");
+  for (const marker of [
+    /images\/materials\/stone-brick\.bin/,
+    /images\/materials\/stone-tread\.bin/,
+    /Invalid BRK1 brick geometry/,
+  ]) {
+    assert.doesNotMatch(app, marker, "geometry loading or decoding leaked into the UI bundle");
+    assert.match(scene, marker, "deferred scene is missing a geometry loader or decoder");
   }
 });
 
-test("shared brick binary is copied intact and fits the combined detail transfer budgets", async () => {
+test("shared brick and tread fit the combined detail transfer budgets", async () => {
   const relative = path.join("images", "materials", "stone-brick.bin");
   const source = await readFile(path.join(projectRoot, relative));
   const published = await readFile(path.join(distDir, relative));
@@ -89,21 +98,41 @@ test("shared brick binary is copied intact and fits the combined detail transfer
     `brick binary is ${source.length} bytes`,
   );
   assert.deepEqual(published, source);
+  const treadBytes = (await stat(path.join(distDir, "images", "materials", "stone-tread.bin")))
+    .size;
 
   for (const [size, budget] of [
     [1024, 750 * 1024],
     [512, 256 * 1024],
   ]) {
-    let bytes = source.length;
+    let bytes = source.length + treadBytes;
     for (const kind of ["color", "roughness"]) {
       const map = path.join(distDir, "images", "materials", `stone-${kind}-${size}.webp`);
       bytes += (await stat(map)).size;
     }
     assert.ok(
       bytes <= budget,
-      `${size} maps plus shared brick are ${bytes} bytes; budget ${budget}`,
+      `${size} maps plus shared brick and tread are ${bytes} bytes; budget ${budget}`,
     );
   }
+});
+
+test("the shared tread is at most 200 triangles and crown reuse adds no geometry asset", async () => {
+  const relative = path.join("images", "materials", "stone-tread.bin");
+  const source = await readFile(path.join(projectRoot, relative));
+  assert.ok(source.length >= 8 && source.length <= 9608, `tread is ${source.length} bytes`);
+  assert.equal(source.toString("ascii", 0, 4), "BRK1");
+  const vertices = source.readUInt32LE(4);
+  assert.ok(
+    vertices > 0 && vertices % 3 === 0 && vertices <= 600,
+    `${vertices / 3} tread triangles`,
+  );
+  assert.equal(source.length, 8 + vertices * 16, "BRK1 attributes must match the vertex count");
+  assert.deepEqual(await readFile(path.join(distDir, relative)), source);
+  const binaries = (await readdir(path.join(distDir, "images", "materials"))).filter((name) =>
+    /\.(bin|glb|gltf)$/i.test(name),
+  );
+  assert.deepEqual(binaries.sort(), ["stone-brick.bin", "stone-tread.bin"]);
 });
 
 test("published responsive posters use content hashes and retain intact compatibility copies", async () => {
@@ -168,5 +197,92 @@ test("changing only fixture poster bytes changes only that poster URL", async ()
   } finally {
     assert.equal(path.dirname(path.resolve(fixture)), scratchRoot);
     await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("architecture stays deferred and each selected model fits both tier budgets", async () => {
+  const app = await readFile(await findHashedScript("app"), "utf8");
+  const scene = await readFile(await findHashedScript("scene"), "utf8");
+  assert.doesNotMatch(app, /images\/architecture\//);
+  for (const [tier, limit] of [
+    ["high", 6 * 1024 * 1024],
+    ["balanced", 3 * 1024 * 1024],
+  ]) {
+    const bytesByRole = {};
+    for (const role of ["stairs", "wall", "base", "crown", "tower", "tree"]) {
+      const name = role + "-" + tier + ".glb";
+      const source = await readFile(path.join(projectRoot, "images", "architecture", name));
+      const hash = createHash("sha256").update(source).digest("hex").slice(0, 8);
+      const hashedName = role + "-" + tier + "." + hash + ".glb";
+      assert.deepEqual(
+        await readFile(path.join(distDir, "images", "architecture", hashedName)),
+        source,
+      );
+      assert.ok(
+        scene.includes("/images/architecture/" + hashedName),
+        "scene must request the current fingerprint",
+      );
+      assert.equal(source.toString("ascii", 0, 4), "glTF");
+      assert.equal(source.readUInt32LE(8), source.length);
+      const gltf = JSON.parse(source.toString("utf8", 20, 20 + source.readUInt32LE(12)));
+      assert.equal(gltf.meshes.length, 1, name + " should have one shared mesh");
+      assert.equal(gltf.meshes[0].primitives.length, 1, name + " should have one shared material");
+      assert.ok(gltf.images.length > 0, name + " must retain source surface detail");
+      for (const resource of [...gltf.images, ...gltf.buffers])
+        assert.equal(resource.uri, undefined);
+      assert.equal(gltf.animations?.length || 0, 0);
+      const primitive = gltf.meshes[0].primitives[0];
+      assert.equal(primitive.mode ?? 4, 4, "triangle topology required");
+      for (const semantic of ["POSITION", "NORMAL", "TEXCOORD_0"])
+        assert.ok(Number.isInteger(primitive.attributes[semantic]));
+      bytesByRole[role] = source.length;
+    }
+    // The authored ground pair loads alongside either supplied model set.
+    const groundSize = tier === "high" ? 1024 : 512;
+    let groundBytes = 0;
+    for (const kind of ["color", "normal"]) {
+      const file = path.join(projectRoot, "images", "materials", `ground-${kind}-${groundSize}.webp`);
+      groundBytes += (await stat(file)).size;
+    }
+    for (const [model, roles] of Object.entries({
+      assembled: ["stairs", "wall", "base", "crown", "tree"],
+      complete: ["tower", "tree"],
+    })) {
+      const total = roles.reduce((sum, role) => sum + bytesByRole[role], groundBytes);
+      assert.ok(
+        total <= limit,
+        tier + " " + model + " architecture plus ground is " + total + " bytes; budget " + limit,
+      );
+    }
+  }
+});
+
+
+test("filmic earth maps are deferred and fit both material and complete-scene budgets", async () => {
+  const app=await readFile(await findHashedScript("app"),"utf8");assert.doesNotMatch(app,/earth-(?:color|normal|roughness)/);
+  for(const [tier,size,limit,totalLimit] of [["high",1024,600*1024,6*1024*1024],["balanced",512,200*1024,3*1024*1024]]) {
+    let bytes=0;
+    for(const kind of ["color","normal","roughness"]) {
+      const file=`earth-${kind}-${size}.webp`,source=await readFile(path.join(projectRoot,"images","materials",file));
+      assert.equal(source.toString("ascii",8,12),"WEBP");assert.deepEqual(await readFile(path.join(distDir,"images","materials",file)),source);bytes+=source.length;
+    }
+    assert.ok(bytes<=limit,`${tier} earth: ${bytes}`);
+    for(const role of ["tower","tree"])bytes+=(await stat(path.join(projectRoot,"images","architecture",`${role}-${tier}.glb`))).size;
+    assert.ok(bytes<=totalLimit,`${tier} scene: ${bytes}`);
+  }
+});
+
+test("grass color/mask maps are deferred and fit both their own and the complete-scene budgets", async () => {
+  const app=await readFile(await findHashedScript("app"),"utf8");assert.doesNotMatch(app,/grass-(?:color|mask)/);
+  for(const [tier,size,limit,totalLimit] of [["high",1024,250*1024,6*1024*1024],["balanced",512,90*1024,3*1024*1024]]) {
+    let bytes=0;
+    for(const kind of ["color","mask"]) {
+      const file=`grass-${kind}-${size}.webp`,source=await readFile(path.join(projectRoot,"images","materials",file));
+      assert.equal(source.toString("ascii",8,12),"WEBP");assert.deepEqual(await readFile(path.join(distDir,"images","materials",file)),source);bytes+=source.length;
+    }
+    assert.ok(bytes<=limit,`${tier} grass: ${bytes}`);
+    for(const role of ["tower","tree"])bytes+=(await stat(path.join(projectRoot,"images","architecture",`${role}-${tier}.glb`))).size;
+    for(const kind of ["color","normal","roughness"])bytes+=(await stat(path.join(projectRoot,"images","materials",`earth-${kind}-${size}.webp`))).size;
+    assert.ok(bytes<=totalLimit,`${tier} scene incl. earth+grass: ${bytes}`);
   }
 });

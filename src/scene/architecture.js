@@ -1,0 +1,753 @@
+import {
+  BoxGeometry,
+  Color,
+  CylinderGeometry,
+  DoubleSide,
+  Float32BufferAttribute,
+  Group,
+  InstancedMesh,
+  Matrix4,
+  Mesh,
+  MeshStandardMaterial,
+  PointLight,
+  SphereGeometry,
+  TorusGeometry,
+  Vector3,
+} from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { createSpiralSupportGeometry } from "./spiral-support.js";
+
+export const ARCHITECTURE = Object.freeze({
+  sectors: 16,
+  tiers: 8,
+  height: 34,
+  bottom: 1.5,
+  bottomRadius: 12.2,
+  topRadius: 8.8,
+  stairWidth: 3.6,
+  stairStart: 0.7,
+  stairEnd: 33.5,
+  flights: 8,
+  treeHeight: 22,
+});
+
+const MATERIAL_PROFILES = Object.freeze({
+  tower: {
+    color: 0xe5e0d6,
+    normalScale: 0.35,
+    roughnessFloor: 0.9,
+    saturation: 0.94,
+    highlights: 0.18,
+  },
+  wall: { color: 0xe4ded0, normalScale: 0.36, roughnessFloor: 0.86 },
+  stairs: {
+    color: 0xe2ddd1,
+    normalScale: 0.4,
+    roughnessFloor: 0.9,
+    saturation: 0.84,
+    highlights: 0.16,
+  },
+  base: { color: 0xd9d0be, normalScale: 0.38, roughnessFloor: 0.88 },
+  crown: {
+    color: 0xddd8cf,
+    normalScale: 0.32,
+    roughnessFloor: 0.92,
+    saturation: 0.78,
+    highlights: 0.28,
+  },
+  tree: {
+    color: 0xffffff,
+    emissive: 0x26351f,
+    emissiveIntensity: 0.22,
+    normalScale: 0.46,
+    roughnessFloor: 0.94,
+    highlights: 0.12,
+  },
+});
+
+// Moonlight grade for the supplied maps, which carry baked daylight and
+// ambient occlusion: cooler, less saturated, compressed sunlit highlights and
+// lifted black undersides. Uniform values switch without a shader rebuild.
+const FILM_GRADES = Object.freeze({
+  // The supplied maps contain their own warm daylight. Keep their authored
+  // detail, but compress it beneath a cool moon key instead of just tinting
+  // the entire asset blue. This leaves the lantern as the sole warm accent.
+  tower: {
+    saturation: 0.68,
+    highlights: 0.56,
+    tint: [0.93, 0.97, 1.0],
+    shadowTint: [0.12, 0.15, 0.2],
+    lift: 0.11,
+  },
+  tree: {
+    saturation: 0.74,
+    highlights: 0.4,
+    tint: [0.9, 0.95, 1.0],
+    shadowTint: [0.1, 0.14, 0.18],
+    lift: 0.07,
+  },
+});
+export function applyFilmGrade(material, active) {
+  const grade = material?.userData?.babelGrade;
+  if (!grade) return false;
+  const film = active ? FILM_GRADES[grade.role] : null;
+  const profile = MATERIAL_PROFILES[grade.role] || {};
+  grade.uniforms.babelSaturation.value = film?.saturation ?? profile.saturation ?? 1;
+  grade.uniforms.babelHighlights.value = film?.highlights ?? profile.highlights ?? 0;
+  grade.uniforms.babelTint.value.setRGB(...(film?.tint ?? [1, 1, 1]));
+  grade.uniforms.babelShadowTint.value.setRGB(...(film?.shadowTint ?? [0.19, 0.17, 0.15]));
+  grade.uniforms.babelLift.value = film?.lift ?? 0;
+  return true;
+}
+
+// The supplied tower is scaled independently of ARCHITECTURE.height, which
+// still governs the classic/assembled procedural tower comparisons.
+const COMPLETE_TOWER_HEIGHT = 39;
+const COMPLETE_TOWER_RADIUS_CAP = 20.4;
+
+const TREE_LANTERN_INTENSITY = 4.0;
+const TREE_FILL_INTENSITY = 2.4;
+const WALL_TONE_BASE = new Color(0xffffff);
+
+export function towerRadius(y) {
+  const ratio = Math.max(0, Math.min(1, (y - ARCHITECTURE.bottom) / ARCHITECTURE.height));
+  return ARCHITECTURE.bottomRadius + (ARCHITECTURE.topRadius - ARCHITECTURE.bottomRadius) * ratio;
+}
+
+function sourceMesh(asset) {
+  const meshes = [];
+  asset?.scene?.updateMatrixWorld(true);
+  asset?.scene?.traverse((object) => {
+    if (object.isMesh) meshes.push(object);
+  });
+  if (
+    meshes.length !== 1 ||
+    !meshes[0].geometry?.attributes.uv ||
+    !meshes[0].material?.isMaterial ||
+    Array.isArray(meshes[0].material)
+  ) {
+    throw new Error("Architecture asset must contain one UV-mapped mesh.");
+  }
+  return meshes[0];
+}
+
+function editableGeometry(source) {
+  const geometry = source.clone();
+  // Quantized GLB attributes are compact transport data. Decode before applying
+  // transforms: normalized Int16 setters cannot store world-space coordinates.
+  for (const name of ["position", "normal"]) {
+    const attribute = geometry.getAttribute(name);
+    if (!attribute) continue;
+    const values = new Float32Array(attribute.count * 3);
+    for (let index = 0; index < attribute.count; index += 1) {
+      values[index * 3] = attribute.getX(index);
+      values[index * 3 + 1] = attribute.getY(index);
+      values[index * 3 + 2] = attribute.getZ(index);
+    }
+    geometry.setAttribute(name, new Float32BufferAttribute(values, 3));
+  }
+  return geometry;
+}
+
+function normalizedGeometry(asset) {
+  const source = sourceMesh(asset);
+  const geometry = editableGeometry(source.geometry).applyMatrix4(source.matrixWorld);
+  // Baking the source transform first keeps orientation explicit in the asset pass.
+  geometry.computeBoundingBox();
+  const { min, max } = geometry.boundingBox;
+  const size = new Vector3().subVectors(max, min);
+  if (![size.x, size.y, size.z].every((value) => Number.isFinite(value) && value > 0)) {
+    geometry.dispose();
+    throw new Error("Architecture asset has empty bounds.");
+  }
+  geometry.translate(-(min.x + max.x) / 2, -min.y, -(min.z + max.z) / 2);
+  geometry.scale(1 / size.x, 1 / size.y, 1 / size.z);
+  // Normals/tangents from the flat asset cannot survive a curved deformation.
+  geometry.deleteAttribute("tangent");
+  return geometry;
+}
+
+function radiusSlope(y) {
+  return y > ARCHITECTURE.bottom && y < ARCHITECTURE.bottom + ARCHITECTURE.height
+    ? (ARCHITECTURE.topRadius - ARCHITECTURE.bottomRadius) / ARCHITECTURE.height
+    : 0;
+}
+
+function deform(geometry, transform) {
+  const position = geometry.attributes.position;
+  const normal = geometry.attributes.normal;
+  const point = new Vector3();
+  const direction = new Vector3();
+  for (let index = 0; index < position.count; index += 1) {
+    point.fromBufferAttribute(position, index);
+    if (normal) direction.fromBufferAttribute(normal, index);
+    transform(point, normal ? direction : null);
+    position.setXYZ(index, point.x, point.y, point.z);
+    if (normal) normal.setXYZ(index, direction.x, direction.y, direction.z);
+  }
+  position.needsUpdate = true;
+  // Transform authored normals with the inverse-transpose Jacobian instead of
+  // averaging faces: duplicated UV-seam vertices retain their shared normals.
+  if (normal) normal.needsUpdate = true;
+  else geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function radialNormal(normal, angle, radial, vertical, tangent) {
+  normal
+    .set(
+      Math.cos(angle) * radial - Math.sin(angle) * tangent,
+      vertical,
+      Math.sin(angle) * radial + Math.cos(angle) * tangent,
+    )
+    .normalize();
+}
+
+export function bendWall(geometry, { bottom, height, arc, depth = 0.85 }) {
+  return deform(geometry, (point, normal) => {
+    // Local +Z remains the outer face. Negative angular X preserves handedness
+    // and triangle winding when flat X/Y/Z becomes tangent/up/radial.
+    const angle = -point.x * arc;
+    const y = bottom + point.y * height;
+    const radius = towerRadius(y) + point.z * depth - depth * 0.35;
+    if (normal) {
+      const radial = normal.z / depth;
+      radialNormal(
+        normal,
+        angle,
+        radial,
+        normal.y / height - radiusSlope(y) * radial,
+        -normal.x / (radius * arc),
+      );
+    }
+    point.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
+  });
+}
+
+export function bendFlight(geometry, flight, collapseYaw, walking = {}) {
+  const rise = (ARCHITECTURE.stairEnd - ARCHITECTURE.stairStart) / ARCHITECTURE.flights;
+  const levels = walking.levels || [0, 1];
+  if (
+    levels.length < 2 ||
+    levels.some(
+      (level, index) => !Number.isFinite(level) || (index > 0 && level <= levels[index - 1]),
+    )
+  ) {
+    throw new Error("Invalid stair walking levels.");
+  }
+  return deform(geometry, (point, normal) => {
+    let step = 0;
+    while (step < levels.length - 2 && point.y > levels[step + 1]) step += 1;
+    const levelSpan = levels[step + 1] - levels[step];
+    const equalRiserHeight = (step + (point.y - levels[step]) / levelSpan) / (levels.length - 1);
+    const along = point.z + 0.5;
+    const angle = collapseYaw + ((flight + along) * Math.PI) / 4;
+    const y = ARCHITECTURE.stairStart + flight * rise + equalRiserHeight * rise;
+    // Radial attachment follows height along the run, not the wedge's underside.
+    const walkingY = ARCHITECTURE.stairStart + (flight + along) * rise;
+    const radius = towerRadius(walkingY) - 0.25 + (point.x + 0.5) * ARCHITECTURE.stairWidth;
+    if (normal) {
+      const radial = normal.x / ARCHITECTURE.stairWidth;
+      radialNormal(
+        normal,
+        angle,
+        radial,
+        (normal.y * (levels.length - 1) * levelSpan) / rise,
+        (normal.z - radiusSlope(walkingY) * rise * radial) / ((radius * Math.PI) / 4),
+      );
+    }
+    point.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
+  });
+}
+
+function masonryTone(tier, sector) {
+  const courseShift = tier % 2 ? 0.035 : -0.015;
+  const sectorShift = ((sector * 37 + tier * 17) % 11) * 0.006 - 0.03;
+  const warmShift = ((sector + tier * 3) % 5) * 0.004;
+  return WALL_TONE_BASE.clone().setRGB(
+    0.97 + courseShift + sectorShift + warmShift,
+    0.955 + courseShift + sectorShift * 0.6 + warmShift * 0.7,
+    0.915 + courseShift * 0.55 + sectorShift * 0.45,
+  );
+}
+
+function materialFor(asset, anisotropy, role) {
+  const material = sourceMesh(asset).material.clone();
+  const profile = MATERIAL_PROFILES[role] || {};
+  try {
+    material.color?.setHex(profile.color ?? 0xffffff);
+    material.metalness = 0;
+    material.roughness = 0.94;
+    material.emissive.setHex(profile.emissive ?? 0);
+    material.emissiveIntensity = profile.emissiveIntensity ?? 1;
+    material.emissiveMap = null;
+    material.vertexColors = false;
+    // A PBR roughness map multiplies the scalar; it can otherwise make even a
+    // 0.94 material glossy. Keep its variation above a matte per-role floor.
+    // Compress bright baked edge detail in linear color without repainting maps.
+    const roughnessFloor = profile.roughnessFloor ?? 0.86;
+    const uniforms = {
+      babelSaturation: { value: profile.saturation ?? 1 },
+      babelHighlights: { value: profile.highlights ?? 0 },
+      babelTint: { value: new Color(1, 1, 1) },
+      babelShadowTint: { value: new Color(0.19, 0.17, 0.15) },
+      babelLift: { value: 0 },
+    };
+    material.userData.babelGrade = { role, uniforms };
+    material.customProgramCacheKey = () => `babel-moonlit-material-v3-${roughnessFloor}`;
+    material.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, uniforms);
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+          uniform float babelSaturation;
+          uniform float babelHighlights;
+          uniform vec3 babelTint;
+          uniform vec3 babelShadowTint;
+          uniform float babelLift;`,
+        )
+        .replace(
+          "#include <roughnessmap_fragment>",
+          `#include <roughnessmap_fragment>\nroughnessFactor = mix(${roughnessFloor.toFixed(3)}, 1.0, roughnessFactor);`,
+        )
+        .replace(
+          "#include <map_fragment>",
+          `#include <map_fragment>
+          float babelLuma = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+          diffuseColor.rgb = mix(vec3(babelLuma), diffuseColor.rgb, babelSaturation);
+          diffuseColor.rgb *= 1.0 - babelHighlights * smoothstep(0.30, 0.85, babelLuma);
+          diffuseColor.rgb = mix(diffuseColor.rgb, babelShadowTint, babelLift * (1.0 - smoothstep(0.02, 0.22, babelLuma)));
+          diffuseColor.rgb *= babelTint;`,
+        );
+    };
+    if (material.normalScale && profile.normalScale) {
+      material.normalScale.set(profile.normalScale, profile.normalScale);
+    }
+    for (const value of Object.values(material)) {
+      if (value?.isTexture) value.anisotropy = anisotropy;
+    }
+    return material;
+  } catch (error) {
+    material.dispose();
+    throw error;
+  }
+}
+
+export function createTowerArchitecture({
+  assets,
+  groundY = 0,
+  collapseYaw = 0.32 * Math.PI,
+  baseRecords = [],
+  anisotropy = 4,
+}) {
+  const root = new Group();
+  root.name = "supplied-meshy-tower";
+  root.position.y = groundY;
+  const geometries = new Set();
+  const materials = new Set();
+  const instanceMeshes = new Set();
+  let disposed = false;
+  const ownGeometry = (geometry) => {
+    geometries.add(geometry);
+    return geometry;
+  };
+  const ownMaterial = (asset, role) => {
+    const material = materialFor(asset, anisotropy, role);
+    materials.add(material);
+    return material;
+  };
+  const dispose = () => {
+    if (disposed) return false;
+    disposed = true;
+    root.removeFromParent();
+    instanceMeshes.forEach((mesh) => mesh.dispose());
+    instanceMeshes.clear();
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
+    geometries.clear();
+    materials.clear();
+    return true;
+  };
+  try {
+    const wallMaterial = ownMaterial(assets.wall, "wall");
+    const sectorArc = (Math.PI * 2) / ARCHITECTURE.sectors;
+    let wallCount = 0;
+    for (let tier = 0; tier < ARCHITECTURE.tiers; tier += 1) {
+      const geometry = ownGeometry(normalizedGeometry(assets.wall));
+      bendWall(geometry, {
+        bottom: ARCHITECTURE.bottom + tier * 4.25,
+        height: 4.27,
+        arc: sectorArc * 1.008,
+      });
+      const sectors = [];
+      for (let sector = 0; sector < ARCHITECTURE.sectors; sector += 1) {
+        const angle = collapseYaw + (sector + (tier % 2 ? 0 : 0.5)) * sectorArc;
+        const separation = Math.abs(
+          Math.atan2(Math.sin(angle - collapseYaw), Math.cos(angle - collapseYaw)),
+        );
+        if (tier === 7 && separation < sectorArc * 1.6) continue;
+        sectors.push({ angle, sector });
+      }
+      const instances = new InstancedMesh(geometry, wallMaterial, sectors.length);
+      instanceMeshes.add(instances);
+      instances.name = `masonry-tier-${tier}`;
+      sectors.forEach(({ angle, sector }, index) => {
+        instances.setMatrixAt(index, new Matrix4().makeRotationY(-angle));
+        instances.setColorAt(index, masonryTone(tier, sector));
+      });
+      instances.instanceMatrix.needsUpdate = true;
+      instances.instanceColor.needsUpdate = true;
+      instances.computeBoundingBox();
+      instances.computeBoundingSphere();
+      instances.castShadow = instances.receiveShadow = true;
+      root.add(instances);
+      wallCount += sectors.length;
+    }
+    const crownGeometry = ownGeometry(normalizedGeometry(assets.crown));
+    bendWall(crownGeometry, {
+      bottom: 30.8,
+      height: 4.7,
+      arc: sectorArc * 3.08,
+      depth: 1.0,
+    });
+    const crown = new Mesh(crownGeometry, ownMaterial(assets.crown, "crown"));
+    crown.name = "bastion-breach";
+    crown.rotation.y = -collapseYaw;
+    crown.castShadow = crown.receiveShadow = true;
+    root.add(crown);
+
+    const stairMaterial = ownMaterial(assets.stairs, "stairs");
+    const baseGeometry = ownGeometry(normalizedGeometry(assets.base));
+    const baseMaterial = ownMaterial(assets.base, "base");
+    const flightGeometries = [];
+    let supportMetadata;
+    try {
+      for (let flight = 0; flight < ARCHITECTURE.flights; flight += 1) {
+        const geometry = normalizedGeometry(assets.stairs);
+        flightGeometries.push(geometry);
+        bendFlight(
+          geometry,
+          flight,
+          collapseYaw,
+          assets.stairs.userData?.walking || sourceMesh(assets.stairs).userData?.walking,
+        );
+      }
+      const merged = mergeGeometries(flightGeometries, false);
+      if (!merged) throw new Error("Stair flights cannot be merged.");
+      const stairs = new Mesh(ownGeometry(merged), stairMaterial);
+      stairs.name = "eight-solid-stair-flights";
+      stairs.castShadow = stairs.receiveShadow = true;
+      root.add(stairs);
+      const supportSources = [];
+      try {
+        const wallGeometry = normalizedGeometry(assets.wall);
+        supportSources.push(wallGeometry);
+        const stairsGeometry = normalizedGeometry(assets.stairs);
+        supportSources.push(stairsGeometry);
+        const support = createSpiralSupportGeometry({
+          wallGeometry,
+          stairsGeometry,
+          walking: assets.stairs.userData?.walking || sourceMesh(assets.stairs).userData?.walking,
+          architecture: ARCHITECTURE,
+          collapseYaw,
+        });
+        const masonry = new Mesh(ownGeometry(support.geometry), wallMaterial);
+        masonry.name = "spiral-masonry-support";
+        masonry.castShadow = masonry.receiveShadow = true;
+        root.add(masonry);
+        supportMetadata = support.metadata;
+      } finally {
+        supportSources.forEach((geometry) => geometry.dispose());
+      }
+    } finally {
+      flightGeometries.forEach((geometry) => geometry.dispose());
+    }
+
+    const instances = new InstancedMesh(baseGeometry, baseMaterial, baseRecords.length);
+    instanceMeshes.add(instances);
+    instances.name = "ruined-base-masonry";
+    baseRecords.forEach((record, index) => {
+      const angle = Math.atan2(record.position.z, record.position.x);
+      // Seat each block in the existing perimeter; keep its outer face inside r=18.7.
+      const matrix = new Matrix4().makeRotationY(Math.PI / 2 - angle);
+      matrix.scale(new Vector3(2.1, 1.7, 1.35));
+      matrix.setPosition(Math.cos(angle) * 17.9, 0.1, Math.sin(angle) * 17.9);
+      instances.setMatrixAt(index, matrix);
+    });
+    instances.instanceMatrix.needsUpdate = true;
+    instances.computeBoundingBox();
+    instances.computeBoundingSphere();
+    instances.castShadow = instances.receiveShadow = true;
+    if (baseRecords.length) root.add(instances);
+    root.userData.architecture = {
+      wallCount,
+      flights: 8,
+      stairSupports: supportMetadata,
+      baseCount: baseRecords.length,
+      sourceRoles: ["wall", "stairs", "crown", "base"],
+    };
+    return { root, dispose };
+  } catch (error) {
+    dispose();
+    throw error;
+  }
+}
+
+// The supplied watchtower is fitted uniformly; its stone, timber, roof, and
+// entrance keep their authored proportions instead of becoming curved modules.
+export function createCompleteTowerArchitecture({
+  asset,
+  groundY = 0,
+  yaw = Math.PI / 4,
+  footingOffset = 1.64,
+  anisotropy = 4,
+}) {
+  const root = new Group();
+  root.name = "supplied-meshy-tower";
+  let geometry;
+  let material;
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return false;
+    disposed = true;
+    root.removeFromParent();
+    geometry?.dispose();
+    material?.dispose();
+    return true;
+  };
+  try {
+    if (![groundY, yaw, footingOffset].every(Number.isFinite))
+      throw new Error("Invalid complete tower placement.");
+    const source = sourceMesh(asset);
+    geometry = editableGeometry(source.geometry).applyMatrix4(source.matrixWorld);
+    geometry.computeBoundingBox();
+    const { min, max } = geometry.boundingBox;
+    const dimensions = new Vector3().subVectors(max, min);
+    if (
+      ![dimensions.x, dimensions.y, dimensions.z].every(
+        (value) => Number.isFinite(value) && value > 0,
+      )
+    ) {
+      throw new Error("Complete tower asset has empty bounds.");
+    }
+    geometry.translate(-(min.x + max.x) / 2, -min.y, -(min.z + max.z) / 2);
+    const position = geometry.attributes.position;
+    let radius = 0;
+    for (let i = 0; i < position.count; i += 1) {
+      const x = position.getX(i),
+        y = position.getY(i),
+        z = position.getZ(i);
+      if (![x, y, z].every(Number.isFinite))
+        throw new Error("Complete tower positions must be finite.");
+      radius = Math.max(radius, Math.hypot(x, z));
+    }
+    const scale = Math.min(COMPLETE_TOWER_HEIGHT / dimensions.y, COMPLETE_TOWER_RADIUS_CAP / radius);
+    geometry.scale(scale, scale, scale);
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    material = materialFor(asset, anisotropy, "tower");
+    const tower = new Mesh(geometry, material);
+    tower.name = "complete-meshy-tower";
+    tower.castShadow = tower.receiveShadow = true;
+    root.add(tower);
+    // Upper plinth peaks near 1.7. A small overlap avoids a daylight gap beneath
+    // the irregular source footing without burying the entrance threshold.
+    root.position.y = groundY + footingOffset;
+    root.rotation.y = yaw;
+    root.userData.architecture = {
+      mode: "complete",
+      sourceRoles: ["tower"],
+      uniformScale: scale,
+      height: dimensions.y * scale,
+      radius: radius * scale,
+      entranceAxis: "+Z",
+    };
+    return {
+      root,
+      dispose,
+      setFilmTreatment(active) {
+        if (!disposed) applyFilmGrade(material, active);
+      },
+    };
+  } catch (error) {
+    dispose();
+    throw error;
+  }
+}
+
+export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4, anchor = [58, 38] }) {
+  const root = new Group();
+  root.name = "supplied-meshy-tree";
+  const [treeX, treeZ] = anchor;
+  root.position.set(treeX, groundHeight(treeX, treeZ), treeZ);
+  const geometries = new Set();
+  const materials = new Set();
+  const ownGeometry = (geometry) => {
+    geometries.add(geometry);
+    return geometry;
+  };
+  const ownMaterial = (material) => {
+    materials.add(material);
+    return material;
+  };
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return false;
+    disposed = true;
+    root.removeFromParent();
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
+    geometries.clear();
+    materials.clear();
+    return true;
+  };
+  try {
+    const source = sourceMesh(asset);
+    const geometry = ownGeometry(editableGeometry(source.geometry));
+    geometry.applyMatrix4(source.matrixWorld);
+    geometry.computeBoundingBox();
+    const bounds = geometry.boundingBox;
+    const height = bounds.max.y - bounds.min.y;
+    if (!Number.isFinite(height) || height <= 0) throw new Error("Tree asset has empty bounds.");
+    const scale = ARCHITECTURE.treeHeight / height;
+    geometry.translate(0, -bounds.min.y, 0);
+    geometry.scale(scale, scale, scale);
+    geometry.computeBoundingSphere();
+    const material = ownMaterial(materialFor(asset, anisotropy, "tree"));
+    const tree = new Mesh(geometry, material);
+    tree.name = "meshy-tree";
+    tree.castShadow = tree.receiveShadow = true;
+    root.add(tree);
+    const lantern = new Group();
+    lantern.name = "tree-lantern";
+    const direction = new Vector3(-treeX, 0, -treeZ).normalize();
+    lantern.position.copy(direction.multiplyScalar(2.4));
+    lantern.position.y =
+      groundHeight(treeX + lantern.position.x, treeZ + lantern.position.z) - root.position.y;
+    // Iron post lantern, authored 2.48 units tall: foot, post, tray, four
+    // stiles, top plate, pyramid cap and finial ring merge into one frame. The
+    // candle flame is the emitter, seen through four tinted glass panes.
+    const frameMaterial = ownMaterial(
+      new MeshStandardMaterial({ color: 0x2f2825, roughness: 0.68, metalness: 0.55 }),
+    );
+    const frameParts = [];
+    let frameGeometry;
+    try {
+      const part = (shape, x, y, z, yaw = 0) => {
+        shape.rotateY(yaw);
+        shape.translate(x, y, z);
+        frameParts.push(shape);
+      };
+      part(new CylinderGeometry(0.17, 0.21, 0.08, 10), 0, 0.04, 0);
+      part(new CylinderGeometry(0.05, 0.07, 1.2, 8), 0, 0.64, 0);
+      part(new BoxGeometry(0.74, 0.07, 0.74), 0, 1.265, 0);
+      for (const x of [-0.31, 0.31])
+        for (const z of [-0.31, 0.31]) part(new BoxGeometry(0.055, 0.7, 0.055), x, 1.65, z);
+      part(new BoxGeometry(0.78, 0.05, 0.78), 0, 2.025, 0);
+      part(new CylinderGeometry(0.03, 0.5, 0.27, 4), 0, 2.185, 0, Math.PI / 4);
+      part(new TorusGeometry(0.06, 0.016, 6, 12), 0, 2.4, 0);
+      frameGeometry = mergeGeometries(frameParts, false);
+      if (!frameGeometry) throw new Error("Lantern frame cannot be merged.");
+      ownGeometry(frameGeometry);
+    } finally {
+      frameParts.forEach((item) => item.dispose());
+    }
+    const frame = new Mesh(frameGeometry, frameMaterial);
+    frame.name = "lantern-frame";
+    lantern.add(frame);
+    const glassMaterial = ownMaterial(
+      new MeshStandardMaterial({
+        color: 0xffe2b0,
+        emissive: 0xffb562,
+        emissiveIntensity: 0.3,
+        roughness: 0.3,
+        metalness: 0,
+        transparent: true,
+        opacity: 0.18,
+        depthWrite: false,
+        side: DoubleSide,
+      }),
+    );
+    const paneGeometry = ownGeometry(new BoxGeometry(0.6, 0.66, 0.02));
+    for (const [x, z, yaw] of [
+      [0, 0.31, 0],
+      [0, -0.31, 0],
+      [0.31, 0, Math.PI / 2],
+      [-0.31, 0, Math.PI / 2],
+    ]) {
+      const pane = new Mesh(paneGeometry, glassMaterial);
+      pane.name = "lantern-glass";
+      pane.position.set(x, 1.65, z);
+      pane.rotation.y = yaw;
+      lantern.add(pane);
+    }
+    const candle = new Mesh(
+      ownGeometry(new CylinderGeometry(0.06, 0.065, 0.3, 8)),
+      ownMaterial(new MeshStandardMaterial({ color: 0xe9dcbc, roughness: 0.85 })),
+    );
+    candle.name = "lantern-candle";
+    candle.position.y = 1.45;
+    lantern.add(candle);
+    const glowGeometry = ownGeometry(new SphereGeometry(0.075, 8, 8));
+    const glowMaterial = ownMaterial(
+      new MeshStandardMaterial({
+        color: 0xffcf82,
+        emissive: 0xffa640,
+        emissiveIntensity: 2.0,
+        roughness: 1,
+      }),
+    );
+    const glow = new Mesh(glowGeometry, glowMaterial);
+    glow.name = "lantern-flame";
+    glow.scale.set(1.25, 2.4, 1.25);
+    glow.position.y = 1.7;
+    lantern.add(glow);
+    const light = new PointLight(0xffbe72, TREE_LANTERN_INTENSITY, 23, 1.45);
+    light.name = "tree-lantern-light";
+    light.position.y = 1.7;
+    light.castShadow = false;
+    lantern.add(light);
+    root.add(lantern);
+    const fillLight = new PointLight(0xffd49a, TREE_FILL_INTENSITY, 30, 1.25);
+    fillLight.name = "tree-fill-light";
+    fillLight.position.set(-3.8, ARCHITECTURE.treeHeight * 0.42, -2.5);
+    fillLight.castShadow = false;
+    root.add(fillLight);
+    let film = false, currentProfile = {}, savedDistance = light.distance, savedDecay = light.decay;
+    const originalFillColor = fillLight.color.clone(), originalEmission = material.emissiveIntensity;
+    function applyTreeLighting() {
+      const intensityScale = currentProfile.lighting?.practicalIntensityScale ?? 1;
+      light.intensity = (film ? 3.4 : TREE_LANTERN_INTENSITY) * intensityScale;
+      fillLight.intensity = TREE_FILL_INTENSITY * (film ? .4 : 1) * intensityScale;
+      fillLight.color.copy(originalFillColor);
+      if (film) fillLight.color.setHex(0xd9e2f2);
+      glowMaterial.emissiveIntensity = film ? 2.8 : 2;
+      glassMaterial.emissiveIntensity = film ? 0.38 : 0.3;
+      material.emissiveIntensity = film ? .04 : originalEmission;
+      applyFilmGrade(material, film);
+      if (film) { light.distance = 13.2; light.decay = 0.9; }
+    }
+    return {
+      root,
+      light,
+      fillLight,
+      setFilmTreatment(active) {
+        const next = Boolean(active); if (disposed || next === film) return;
+        if (next) { savedDistance = light.distance; savedDecay = light.decay; }
+        film = next;
+        if (!film) { light.distance = savedDistance; light.decay = savedDecay; }
+        applyTreeLighting();
+      },
+      applyQuality(profile = {}) {
+        currentProfile = profile; applyTreeLighting();
+      },
+      dispose,
+    };
+  } catch (error) {
+    dispose();
+    throw error;
+  }
+}

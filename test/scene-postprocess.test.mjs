@@ -238,3 +238,35 @@ test("dispose releases pipeline resources without throwing", () => {
 
   assert.doesNotThrow(() => pipeline.dispose());
 });
+
+test("film grading survives quality changes and restores the current profile without adding passes", () => {
+  const profile = {
+    postprocessBloom: true,
+    postprocessGrading: true,
+    postprocessVignette: true,
+    postprocessGrain: true,
+  };
+  const pipeline = createPipeline(profile),
+    g = pipeline.passes.grading.uniforms,
+    v = pipeline.passes.vignetteGrain.uniforms;
+  pipeline.setFilmTreatment(true);
+  pipeline.setTextProtection(true, 0.3);
+  assert.equal(pipeline.composer.passes.length, 4);
+  assert.equal(g.uCelMix.value, 0.16);
+  assert.equal(g.uInkMix.value, 0);
+  assert.equal(g.uContrast.value, 0.99);
+  assert.equal(g.uHighlightWarmMix.value, 0.2);
+  assert.equal(g.uShadowCoolMix.value, 0.1);
+  assert.equal(pipeline.passes.bloom.strength, 0.2);
+  assert.equal(v.uGrainStrength.value, 0.014);
+  assert.equal(v.uVignetteStrength.value, 0.14);
+  pipeline.setQualityProfile({ ...profile, postprocessBloom: false });
+  assert.equal(pipeline.passes.bloom.enabled, false);
+  assert.equal(g.uCelMix.value, 0.16);
+  assert.equal(v.uTextProtection.value, 1);
+  pipeline.setFilmTreatment(false);
+  assert.equal(g.uCelMix.value, 0.24);
+  assert.equal(g.uInkMix.value, 0.14);
+  assert.equal(v.uTextProtection.value, 0);
+  pipeline.dispose();
+});

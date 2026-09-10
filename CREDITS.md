@@ -44,8 +44,79 @@ The optional raised-brick geometry in `images/materials/stone-brick.bin` was
 generated for this site with Meshy 6, then normalized to a unit block and given
 box-projected UVs for the stone material. The shared model has 838 triangles and
 uses a compact local binary, without shipping the source GLB or a model loader.
-It preserves the existing raised-block positions and proportions; the rest of
-the tower geometry remains procedural. The selected geometry and texture
-direction were reviewed together before integration.
+It preserves the existing raised-block positions and proportions. The local
+construction pilot reuses this same geometry for selected crown blocks. The
+selected geometry and texture direction were reviewed together before integration.
 
 Tool: [Meshy](https://www.meshy.ai/).
+
+## Authored limestone tread
+
+The optional shared stair-tread geometry in `images/materials/stone-tread.bin`
+was generated for this site with Meshy 6 and prepared locally as a normalized
+BRK1 mesh with 180 triangles. It uses the existing Adobe Firefly/Meshy
+stone color and roughness maps described above; no additional generated image
+maps are shipped. Source masters remain outside the website payload. The tread
+and crown construction pilot is pending visual acceptance.
+
+## Supplied Meshy architecture models
+
+The architecture pilot uses five textured Meshy GLBs supplied by Alex Nava:
+a sandstone stair flight, modular dungeon wall, low ruined stone wall,
+Crumbled Bastion, and a tree. Local derivatives appear in images/architecture/
+as stairs, wall, base, crown, and tree, with high and balanced variants.
+Their source geometry and surface detail are retained through local
+optimization, fitting, and texture preparation. Original files, hashes, and
+preparation records are preserved in the local artwork archive. No new
+Meshy generation was commissioned for this integration.
+
+## Authored ground material
+
+The optional ground colour and normal maps in `images/materials/ground-*.webp`
+were baked locally from the Meshy "Cracked Desert Ground" model supplied by
+Alex Nava. The textured slab was rasterised top-down into planar tiles, its
+height converted to a tangent-space normal map, and its colour desaturated and
+remapped to the site's night ground palette. The source model, hashes, and bake
+parameters are preserved in the local artwork archive and summarised in
+README.md. No new Meshy generation was commissioned for this integration.
+
+Tool: [Meshy](https://www.meshy.ai/).
+
+
+## Poly Haven Dirt
+
+The optional `images/materials/earth-*.webp` color, OpenGL normal and roughness
+maps derive from [Dirt by Charlotte Baglioni](https://polyhaven.com/a/dirt),
+available from Poly Haven under [CC0](https://polyhaven.com/license).
+The source two-meter tile is calibrated to 6.3 scene units. Local derivatives
+use muted damp-earth color, normalized normals and mostly matte roughness,
+exported at 1024 and 512 pixels. Original PNGs, download URLs, SHA-256 hashes
+and optimization settings remain in the owner's `Pictures/Assets/Babel/Materials/PolyHaven-Dirt`
+archive. No external runtime service or additional generation is used.
+
+## Poly Haven Sparse Grass
+
+The optional `images/materials/grass-{color,mask}.webp` maps derive from
+[Sparse Grass by Poly Haven](https://polyhaven.com/a/sparse_grass), available
+under [CC0](https://polyhaven.com/license). The source two-meter tile is
+calibrated to 9 scene units, chosen to avoid a correlated repeat with the
+earth material's own 6.3-unit tile. The local derivative mutes the diffuse map
+into a subdued moss-olive tone under moonlight, and lightly smooths the mask
+to cut file size while keeping its tuft-versus-soil patchiness; both are
+exported at 1024 and 512 pixels. Blended into the earth material as patchy
+grass away from the tower footing and tree roots — never a base ground
+replacement. Original PNGs, download URLs, MD5 hashes and optimization
+settings remain in the owner's `Pictures/Assets/Babel/Materials/PolyHaven-SparseGrass`
+archive. No external runtime service or additional generation is used.
+
+## Background hill silhouette elevation data
+
+The distant hill silhouette (`src/scene/hill-silhouette.js`) is built from a
+48-sample circular elevation traverse (1.6 km radius, centered on the South
+Downs near Devil's Dyke, West Sussex, England, 50.9050 N -0.2110 W), retrieved
+2026-09-09 via the public [Open-Elevation API](https://api.open-elevation.com),
+which serves SRTM-derived elevation data — a NASA/USGS public-domain work, no
+attribution legally required. The samples are baked as a normalized constant
+array in source; no binary asset, runtime fetch, or additional generation is
+used. Noted here for transparency, consistent with this file's practice of
+recording sourcing even where the license does not require it.

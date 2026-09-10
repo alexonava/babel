@@ -16,7 +16,7 @@ export function createSceneAtmosphere({
   let cloudsEnabled = true;
   let disposed = false;
   let lowPower = Boolean(profile?.isLow);
-  let pointField = null;
+  let pointField = null, film = false, pointSize = 1;
 
   function setCloudGroupSceneVisibility(group, visible) {
     if (!group) return;
@@ -38,6 +38,16 @@ export function createSceneAtmosphere({
     let cloudVisibilityDirty = false;
     visibilityTracker?.updateCameraState();
     decorativeSystems.forEach((system) => {
+      if (system.enabled === false) {
+        system.active = false;
+        if (system.renderVisible !== false) {
+          system.renderVisible = false;
+          system.setVisible?.(false);
+        }
+        if (system.group) system.group.visible = false;
+        if (debugSystems) debugSystems[system.name] = { active: false, bucket: "disabled" };
+        return;
+      }
       if (!visibilityTracker || system.importance === "core") {
         system.active = true;
         system.bucket = system.importance === "core" ? "core" : system.bucket;
@@ -130,8 +140,10 @@ export function createSceneAtmosphere({
       onInvalidate?.();
       return cloudsEnabled;
     },
+    setFilmTreatment(active) { film = Boolean(active); if (pointField) pointField.material.size = pointSize * (film ? .55 : 1); },
     setPointField(points) {
       pointField = points || null;
+      if (pointField) { pointSize = pointField.material.size; pointField.material.size = pointSize * (film ? .55 : 1); }
     },
     toggleClouds() {
       return this.setClouds(!cloudsEnabled);
@@ -141,7 +153,7 @@ export function createSceneAtmosphere({
       updateDecorativeVisibility();
       if (pointField) {
         pointField.rotation.y = 0.02 * elapsedSeconds;
-        pointField.material.opacity = (lowPower ? 0.42 : 0.5) * visibilityScale;
+        pointField.material.opacity = (lowPower ? 0.42 : 0.5) * visibilityScale * (film ? .4 : 1);
       }
       return true;
     },
