@@ -2436,6 +2436,7 @@ function setSrgbTexture(texture) {
     const brickDetailDisabled =
       materialSearch.get("brick") === "boxes" || materialSearch.get("stone") === "procedural";
     let brickDetail = null;
+    let latestBrickMaps = null;
     const result108 = createTowerTextures({
       THREE: THREE,
       lowPower: state.lowPower,
