@@ -978,7 +978,9 @@ function setSrgbTexture(texture) {
     for (let num425 = 0; num425 < position9.count; num425 += 1) {
       const result56 = position9.getX(num425),
         result57 = position9.getY(num425);
-      position9.setZ(num425, groundHeight(result56, result57));
+      // CircleGeometry's local +Y becomes world -Z after its -X quarter turn.
+      // Sample in world coordinates so fallback assets seat on this surface.
+      position9.setZ(num425, groundHeight(result56, -result57));
     }
     circleGeometry.computeVertexNormals();
     let groundSurface = null;
@@ -1063,7 +1065,7 @@ function setSrgbTexture(texture) {
         for (let num47 = 0; num47 < overlayPos.count; num47 += 1) {
           const result = overlayPos.getX(num47),
             result2 = overlayPos.getY(num47);
-          overlayPos.setZ(num47, groundHeight(result, result2) + 0.04);
+          overlayPos.setZ(num47, groundHeight(result, -result2) + 0.04);
         }
         overlayPos.needsUpdate = !0;
         const mesh5 = new Mesh(

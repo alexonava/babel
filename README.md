@@ -46,7 +46,7 @@ The eager, decorative tower poster is the scene's first visual. Capable hardware
 
 ## Supplied Meshy architecture pilot
 
-The default high and balanced live scene uses the supplied complete watchtower, with its stone walls, timber balcony, tiled roof, and entrance preserved. It is uniformly fitted to a 34-unit height on the existing plinth, with its entrance facing the opening camera. The replacement tree retains its distant position, warm lantern, and restrained canopy fill.
+The default high and balanced live scene uses the supplied complete watchtower, with its stone walls, timber balcony, tiled roof, and entrance preserved. It is uniformly fitted to a 39-unit height and seated directly into the earth by default, with its entrance facing the opening camera. `setting=plinth` restores the raised platform comparison. The replacement tree retains its distant position, warm lantern, and restrained canopy fill.
 
 The complete watchtower uses a grounded night treatment: neutral moonlight, softer plinth contrast, muted nearby stones, and no inherited orbit rings, roof smoke, or crown light. It activates only after a successful tower load and restores the original scene on fallback. Add `&refinement=baseline` to compare the prior watchtower presentation; geometry, source textures, and asset downloads are unchanged.
 
@@ -184,118 +184,68 @@ No release posters or publication state were changed for this local comparison.
 
 ### Directed moonlit scene (local visual review)
 
-Default complete-tower mode now uses seven curated shots: three for the tower, four for the
-tree. `cinematography=baseline` restores the prior six-angle presentation above. Selection
-occurs once per document; resizing, font loading, quality changes and panel interaction do
-not reroll it. Subject probability is equal (tower/tree 50/50); the shot within a subject is
-equally likely among however many that subject has (three for tower, four for tree).
+Default complete-tower mode uses nine curated shots: five for the tower and four for the
+tree. `cinematography=baseline` restores the prior six-angle presentation. Selection occurs
+once per document; resizing, font loading, quality changes and panel interaction do not
+reroll it. Tower and tree have equal subject probability, and the shot within a subject is
+equally likely.
 
 | Preview | Shot | Vertical region | FOV | Azimuth | Initial camera height |
 | --- | --- | --- | --- | --- | --- |
 | `view=tower&angle=1` | Arrival | Full tower | 38 | -6 | 34% |
 | `view=tower&angle=2` | The watch | Upper 45% | 32 | -40 | 66% |
 | `view=tower&angle=3` | Threshold | Lower 45% | 36 | 72 | 12% |
+| `view=tower&angle=4` | Masonry study | Middle wall | 32 | 44 | 42% |
+| `view=tower&angle=5` | Gallery detail | Balcony and roof | 30 | -26 | 70% |
 | `view=tree&angle=1` | Portrait | Full tree | 36 | -77 | 24% |
-| `view=tree&angle=2` | Under the branches | Full tree | 44 | 70 | 10% |
-| `view=tree&angle=3` | Lantern study | Lower half | 34 | -115 | 15% |
-| `view=tree&angle=4` | Close-up | Mid band, 30% span | 30 | -40 | 50% |
+| `view=tree&angle=2` | Lantern study | Lower half | 34 | -115 | 15% |
+| `view=tree&angle=3` | Close-up | Trunk fork and lower canopy | 30 | -40 | 50% |
+| `view=tree&angle=4` | Root and lantern | Roots, trunk and lantern | 32 | -98 | 17% |
 
-Arrival sits a little lower so the tower looms; Portrait matches that low, committed
-angle so the tree looms too, rather than just centering it. The watch places the camera just
-below the gallery, looking up at balcony and roof. Threshold is low and close at
-the entrance. Under the branches now looks across the field from the far side of
-the tree: the lantern glows beside the trunk and the watchtower stands in the haze
-beyond, so the two subjects share one place. Close-up sits at canopy height for a
-tight, dense look at the trunk fork and lower branches — a different idea from Lantern
-study's grounded roots-and-lantern warmth.
+Arrival provides the broad desktop hero. The watch, Masonry study and Gallery detail keep
+close tower views tied to the watchtower's actual construction. Portrait supplies the full
+tree view; Lantern study and Root and lantern make the warm light legible, while Close-up
+stays on the trunk and lower canopy.
 
-Heights are measured above the subject footing. Geometry is clipped to the shot
-region, projected at the midpoint and arc limits, and fitted within 85% of the
-available composition area (93% for Portrait/Under the branches/Lantern study and 95% for
-Close-up, for a more intimate, closer-filling frame). The lantern study takes its horizontal anchor from
-the roots, trunk and complete lantern; incidental branches may crop. Low cameras
-rise only when necessary to clear terrain and retain a line of sight to the
-footing. Elevation then remains fixed during the 48-second movement: +/-4 degrees
-for full views and +/-2 for detail views, with a 2.5% breathing dolly. Tour shots
-dolly in by 4.5% over their dwell; the fit keeps a 15% margin, and terrain
-clearance is sampled across the dolly range. Reduced motion holds the midpoint at
-full distance; developer camera control takes priority. Phone detail crops receive a
-subtle scene-only text gradient. Measurements and responsive fits are cached.
+Heights are measured above the subject footing. Geometry is clipped to the shot region,
+projected at the midpoint and arc limits, and fitted within the available composition area.
+Detail shots use smaller arcs and closer margins. Low cameras rise only when necessary to
+clear terrain and retain a line of sight to the footing. Reduced motion holds the midpoint;
+developer camera control takes priority. Phone detail crops receive a subtle scene-only text
+gradient.
 
-The film treatment keeps a light cel banding (0.16), removes ink edges and
-orange flare effects, softens cloud contrast, hides the floating point field, and
-and, darkened and warmed on Alex's request into a true night grade, uses contrast 0.99, bloom 0.2,
-grain 0.014, highlight warm mix 0.2, shadow cool mix 0.1 and vignette 0.14. The supplied tower and tree colour maps carry
-baked daylight, so film applies a moonlight grade through material uniforms
-without rebuilding shaders: saturation 0.80/0.86, sunlit highlights compressed
-0.38/0.20, a faint warm tint, and near-black undersides lifted toward a dim warm
-and near-black undersides. Under film the amber key drops to 50% while fill (110%), hemisphere
-(125%, with a warm earth ground colour) and ambient (95%) hold; the shadow radius
-softens to 4.2 and shadow extent follows the subject at radius+8 (minimum 12).
-Moonlight direction is unchanged. Lantern base intensity is 3.4 with a 13.2-unit
-range; quality scaling still applies. Tree emission is 0.04 and its supplemental
-light is cool neutral at 40% of its prior intensity. No lights or shadow passes
-are added.
+The film treatment removes ink edges and orange flares, softens cloud contrast, and uses a
+darkened, warm night grade: contrast 0.99, bloom 0.2, grain 0.014, highlight warm mix 0.2,
+shadow cool mix 0.1 and vignette 0.14. The supplied tower and tree colour maps carry baked
+daylight, so film applies a moonlight grade through material uniforms without rebuilding
+shaders. The amber key drops to 50% while fill (110%), hemisphere (125%, with a warm earth
+ground colour) and ambient (95%) preserve shadow detail. Film uses shadow radius 6.5 and a
+subject-centred shadow extent from 32 to 48 units. Moonlight direction is unchanged. Lantern
+base intensity is 3.4 with a 13.2-unit range; quality scaling still applies. Tree emission is
+0.04 and its supplemental light is cool neutral at 40% of its prior intensity. No lights or
+shadow passes are added.
 
-The lantern is an iron post lantern authored 2.48 units tall: foot, post, tray,
-four stiles, top plate, pyramid cap and finial ring merge into one frame, with
-four tinted glass panes, a candle and an emissive flame that carries the point
-light. All of its geometry and materials are owned and disposed with the tree.
+One indexed 384-unit terrain plane with 128 subdivisions per side replaces the circular
+ground. It samples the existing height function with the correct rotated world Z, takes its
+normals from the height field itself, preserves direct footing, and blends distant earth into
+the horizon. Poly Haven's CC0 Dirt supplies color, OpenGL normal and roughness detail.
+Published 1K and 512px maps remain within the 600 KiB and 200 KiB ground limits. The complete
+tower, tree, ground and grass remain within the 6 MiB high and 3 MiB balanced deferred limits;
+they load only after successful complete-tower activation. A failed companion map retains the
+procedural surface; stale images close without rebinding. Quality changes and teardown restore
+borrowed resources before disposal. `ground=desert` and `ground=procedural` remain available.
 
-One indexed 384-unit terrain plane with 128 subdivisions per side replaces the
-circular ground. It samples the existing height function with the correct rotated
-world Z, takes its normals from the height field itself (central differences over
-half a quad, so lit earth shows no quad-aligned shading), preserves direct
-footing, and blends distant earth into the horizon.
-Poly Haven's CC0 Dirt supplies color, OpenGL normal and roughness detail. The
-published two-meter tile is calibrated to 6.3 scene units from D=6.6. The colour
-map keeps the source's local contrast (pebbles, cracks, tonal patches) against a
-tile-scale mean at a warm damp night-earth level, and the normal map is
-high-passed so no tile carries a large-scale slope or luminance gradient (the
-scan's own tile-edge darkening otherwise reads as a grid); normal scale is 0.7.
-Film shadows use bias -0.0016 and normal bias 0.09 so relief-mapped earth shows
-no acne under grazing moonlight. Contact areas remain matte, damp patches
-sit at roughness 0.74 with bounded grazing response, so the earth reads at low
-camera angles without sheen smears.
-
-The three `earth-*.webp` maps total 518,196 bytes at 1024 and 99,338 bytes at 512,
-under the 600/200 KiB ground limits.
-
-Patchy grass (`src/scene/grass-detail.js`, own loading channel, disabled outside film)
-blends into the earth material away from the tower footing and tree roots, using
-CC0 Poly Haven Sparse Grass (`grass-{color,mask}.webp`, its own 9-unit tile so it
-doesn't correlate with earth's 6.3-unit repeat). The two maps total 232,576 bytes
-at 1024 and 64,540 bytes at 512, under a 250/90 KiB budget. A distant hill
-silhouette (`src/scene/hill-silhouette.js`) rises just past the tree's own radius,
-built from a real 48-sample elevation traverse baked as source constants — no
-texture, no runtime fetch, zero payload; it hides on the low quality tier.
-
-Complete tower, tree, ground and grass together total 4,157,520 bytes high and
-1,511,446 bytes balanced, below the 6/3 MiB deferred limits. They load only after
-successful complete-tower activation. A failed companion map retains the
-procedural surface; stale images close without rebinding. Quality changes and
-teardown restore borrowed resources before disposing derived maps, terrain and
-cloud textures. The older authored-ground download is disabled in this path,
-while `ground=desert` and `ground=procedural` remain available.
-
-`view=orbit`, `setting=previous`, `architecture=assembled`, `architecture=classic`,
-and existing material/scale comparisons remain intact. Tree failure chooses a
-tower shot; tower failure, reduced-data and unavailable WebGL retain their existing
-fallbacks. Source provenance is in CREDITS.md and the local artwork archive.
-Local desktop/phone captures cover all seven shots and both movement limits.
-The release posters are captured from the Arrival shot of this scene (landscape
-1600 by 900 desktop composition, portrait 900 by 1600 phone composition resolved
-at logical 450 by 800), as the composited page with all copy hidden at DPR 1,
-seed 23917 and a controlled clock, then WebP quality 80: 38,724 and 44,838 bytes.
-First paint and the static fallback therefore show the watchtower that the live
-scene crossfades into. Publication is unchanged.
-
+`view=orbit`, `setting=previous`, `architecture=assembled`, `architecture=classic`, and
+existing material/scale comparisons remain intact. Tree failure chooses a tower shot; tower
+failure, reduced-data and unavailable WebGL retain their existing fallbacks. Source provenance
+is in CREDITS.md and the local artwork archive. First paint and the static fallback show the
+released watchtower poster.
 
 For an automatic local review, add `tour=5`, `tour=3`, or `tour=20` to a
-directed-view URL. The tour cuts through all seven loaded cameras with a gentle
+directed-view URL. The tour cuts through all nine loaded cameras with a gentle
 horizontal drift and slow dolly-in within each shot. Cuts dip to black: the
-outgoing view darkens slowly over the last 1.1 s of its dwell and the next opens over
-1.3 s through the existing final pass, with no added pass. `tour=5` and `tour=3`
+outgoing view darkens over the last 0.3 s of its dwell and the next opens over
+0.45 s through the existing final pass, with no added pass. `tour=5` and `tour=3`
 hold a fixed dwell as before; `tour=20`, added on Alex's request for a much
 slower, more intimate pace, dwells 20 seconds per shot with an occasional
 5-second "wildcard" shot (a 20% chance, sampled fresh each time a shot starts —
@@ -303,5 +253,5 @@ slower, more intimate pace, dwells 20 seconds per shot with an occasional
 selected `view` and `angle`.
 Pause, Next view and timing controls appear beneath the intro. Panels, developer
 camera control and reduced motion pause cycling; Next view still works with
-reduced motion. Missing subjects are skipped. No models reload between cuts,
-and URLs without `tour` retain one composition per document.
+reduced motion. Missing subjects are skipped. No models reload between cuts. The default tour
+interval is five seconds; use `tour=0` for a still composition.

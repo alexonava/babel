@@ -18,7 +18,8 @@ export function createFilmScene({
     terrain = null,
     clouds = [],
     undo = [],
-    blurred = new Map();
+    blurred = new Map(),
+    cloudOpacity = new Map();
   const originalGeometry = ground.geometry;
   const offset = new Vector3(),
     direction = new Vector3(),
@@ -55,6 +56,7 @@ export function createFilmScene({
         const materials = new Set(clouds.map((c) => c.material));
         for (const m of materials) {
           const original = { map: m.map, color: m.color.clone(), opacity: m.opacity };
+          cloudOpacity.set(m, original.opacity);
           undo.push(() => {
             m.map = original.map;
             m.color.copy(original.color);
@@ -87,6 +89,7 @@ export function createFilmScene({
           .splice(0)
           .reverse()
           .forEach((fn) => fn());
+        cloudOpacity.clear();
       }
       rendering.setFilmTreatment(active);
       atmosphere.setFilmTreatment(active);
@@ -110,7 +113,9 @@ export function createFilmScene({
           const lateral = offset.addScaledVector(direction, -depth).length();
           fade = Math.max(0.02, Math.min(1, (lateral - radius) / (radius + cloud.scale.x * 0.25)));
         }
-        cloud.material.opacity *= 0.44 * fade;
+        // Reapply the captured baseline each frame. Multiplying the current
+        // opacity would compound until every cloud disappeared.
+        cloud.material.opacity = (cloudOpacity.get(cloud.material) ?? cloud.material.opacity) * 0.44 * fade;
       }
       rendering.focusFilmShadow(target, frame?.radius || 20);
       rendering.postprocessPipeline.setTextProtection?.(phoneDetail, textBottom);
