@@ -2436,6 +2436,7 @@ function setSrgbTexture(texture) {
     const brickDetailDisabled =
       materialSearch.get("brick") === "boxes" || materialSearch.get("stone") === "procedural";
     let brickDetail = null;
+    // Stone detail can resolve before the later brick controller is constructed.
     let latestBrickMaps = null;
     const result108 = createTowerTextures({
       THREE: THREE,
