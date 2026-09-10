@@ -38,6 +38,7 @@ const STATIC_FILES = [
 ];
 const STATIC_FILE_ALIASES = [{ source: "site-agents.md", destination: "AGENTS.md" }];
 const STATIC_DIRS = ["fonts", "images"];
+const FINGERPRINTED_POSTERS = ["scene-poster-landscape.webp", "scene-poster-portrait.webp"];
 const DIST_DIR = join(__dirname, "dist");
 const DIST_SCRIPTS_DIR = join(DIST_DIR, "scripts");
 const DIST_CSS_DIR = join(DIST_DIR, "css");
@@ -67,13 +68,17 @@ async function buildScriptBundle(entry) {
   return out.text;
 }
 
-function rewriteHtml(src, { appPath, cssPath, scenePath }) {
+function rewriteHtml(src, { appPath, cssPath, scenePath, posterPaths }) {
   // Match source refs with or without a ?v=NNN query,
   // so stale query strings in source can't drift away from the real hashed path.
-  return src
+  let html = src
     .replace(/\/styles\.css(\?v=\d+)?/g, cssPath)
     .replace(/\/scripts\/app\.js(\?v=\d+)?/g, appPath)
     .replace(/\/scripts\/scene\.js(\?v=\d+)?/g, scenePath);
+  for (const [sourcePath, hashedPath] of Object.entries(posterPaths)) {
+    html = html.replaceAll(sourcePath, hashedPath);
+  }
+  return html;
 }
 
 async function clearDist() {
@@ -122,12 +127,23 @@ async function buildDist() {
     STATIC_DIRS.map((dir) => cp(join(__dirname, dir), join(DIST_DIR, dir), { recursive: true })),
   );
 
+  // Keep the stable copies for older HTML while new pages receive a fresh URL
+  // whenever poster bytes change, independent of the browser's image cache.
+  const posterPaths = {};
+  for (const name of FINGERPRINTED_POSTERS) {
+    const bytes = await readFile(join(__dirname, "images", name));
+    const hashedName = name.replace(/\.webp$/, `.${sha8(bytes)}.webp`);
+    await writeFile(join(DIST_DIR, "images", hashedName), bytes);
+    posterPaths[`/images/${name}`] = `/images/${hashedName}`;
+  }
+
   for (const name of ["index.html", "404.html"]) {
     const htmlSrc = await readFile(join(__dirname, name), "utf8");
     const rewritten = rewriteHtml(htmlSrc, {
       appPath: scriptPaths.app,
       cssPath: cssHashedUrl,
       scenePath: scriptPaths.scene,
+      posterPaths,
     });
     await writeFile(join(DIST_DIR, name), rewritten);
   }

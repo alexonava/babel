@@ -57,6 +57,7 @@ import {
   WebGLCubeRenderTarget,
   WebGLRenderer,
 } from "three";
+import { createBrickDetailController } from "./brick-detail.js";
 import { createSceneAtmosphere } from "./atmosphere.js";
 import { createSceneEnvironment } from "./environment.js";
 import { createSceneRendering } from "./rendering.js";
@@ -2431,6 +2432,12 @@ function setSrgbTexture(texture) {
       }
     }
     environmentSystem.setGroundPlantRecords(arr19);
+    const materialSearch = new URLSearchParams(window.location?.search || "");
+    const brickDetailDisabled =
+      materialSearch.get("brick") === "boxes" || materialSearch.get("stone") === "procedural";
+    let brickDetail = null;
+    // Stone detail can resolve before the later brick controller is constructed.
+    let latestBrickMaps = null;
     const result108 = createTowerTextures({
       THREE: THREE,
       lowPower: state.lowPower,
@@ -2438,7 +2445,32 @@ function setSrgbTexture(texture) {
       chooseAnisotropy: chooseAnisotropy,
       collapseYaw: num511,
       collapseSpread: num512,
+      search: window.location?.search || "",
+      includeBrickDetail: !brickDetailDisabled,
+      onDetailStatus(status) {
+        if (qualityDebug) qualityDebug.stone = status;
+        if (status.status === "fallback") {
+          latestBrickMaps = null;
+          brickDetail?.setDetailMaps(null);
+        }
+      },
+      onDetailChange({ colorMap, roughnessMap, brickMaps }) {
+        // Restore detached originals before rebinding or disposing their wall maps.
+        brickDetail?.setDetailMaps(null);
+        homeScene.traverse((object) => {
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          materials.forEach((material) => {
+            if (material?.map !== colorMap) return;
+            material.roughnessMap = roughnessMap;
+            material.needsUpdate = true;
+          });
+        });
+        latestBrickMaps = brickMaps;
+        brickDetail?.setDetailMaps(latestBrickMaps);
+        frameScheduler?.invalidate();
+      },
     });
+    subsystemRegistry.register(result108);
     function tmpV68(arg83, arg84) {
       return Math.abs(Math.atan2(Math.sin(arg83 - arg84), Math.cos(arg83 - arg84)));
     }
@@ -3057,6 +3089,7 @@ function setSrgbTexture(texture) {
         metalness: 0.03,
       }),
       reliefBrickCount = state.profile.counts.reliefBricks;
+    const reliefBrickRecords = [];
     for (let num451 = 0; num451 < reliefBrickCount; num451 += 1) {
       const qeResult51 = tmpV65(7301 + 1.53 * num451),
         qeResult52 = tmpV65(7351 + 2.17 * num451),
@@ -3084,7 +3117,21 @@ function setSrgbTexture(texture) {
         (mesh.castShadow = !state.lowPower),
         (mesh.receiveShadow = !state.lowPower),
         group11.add(mesh));
+      reliefBrickRecords.push({ mesh, dimensions: { x: num292, y: num293, z: num294 } });
     }
+    brickDetail = createBrickDetailController({
+      profile: state.profile,
+      disabled: brickDetailDisabled,
+      records: reliefBrickRecords,
+      onChange() {
+        frameScheduler?.invalidate();
+      },
+      report(status) {
+        if (qualityDebug) qualityDebug.bricks = status;
+      },
+    });
+    brickDetail.setDetailMaps(latestBrickMaps);
+    subsystemRegistry.register(brickDetail);
     const tmpV74 = state.lowPower ? 12 : 26;
     for (let num452 = 0; num452 < tmpV74; num452 += 1) {
       const qeResult56 = tmpV65(3501 + 1.61 * num452),

@@ -1,3 +1,9 @@
+import {
+  createStoneDetailController,
+  paintStoneCell,
+  STONE_DETAIL_SETTINGS,
+} from "./stone-detail.js";
+
 (() => {
   const site = (window.BabelSite = window.BabelSite || {});
   const scene = (site.scene = site.scene || {});
@@ -533,6 +539,10 @@
     chooseAnisotropy,
     collapseYaw,
     collapseSpread,
+    search = "",
+    includeBrickDetail = false,
+    onDetailChange = () => {},
+    onDetailStatus = () => {},
   }) {
     const profile = resolveProfile(qualityProfile, lowPower);
     const balanced = profile.tier === "balanced";
@@ -557,143 +567,166 @@
     const columnWidth = width / columnCount;
     const mortarThickness = lowPower ? 1 : balanced ? 1.2 : 1.4;
 
-    colorCtx.imageSmoothingEnabled = false;
-    bumpCtx.imageSmoothingEnabled = false;
-    colorCtx.fillStyle = towerPalette.mapBase;
-    colorCtx.fillRect(0, 0, width, height);
-    bumpCtx.fillStyle = towerPalette.bumpBase;
-    bumpCtx.fillRect(0, 0, width, height);
+    let roughnessCanvas = null;
+    let roughnessCtx = null;
+    let roughnessMap = null;
+    let brickMaps = null;
 
-    for (let row = 0; row < rowCount; row += 1) {
-      const rowY = row * rowHeight;
-      const rowFrac = row / Math.max(1, rowCount - 1);
-      const rowCurve = Math.pow(rowFrac, 1.55);
-      const colOffset = row % 2 == 0 ? 0 : columnWidth / 2;
+    function paintTower(sources = null) {
+      if (sources) {
+        roughnessCtx.fillStyle = "#ffffff";
+        roughnessCtx.fillRect(0, 0, roughnessCanvas.width, roughnessCanvas.height);
+      }
+      colorCtx.imageSmoothingEnabled = false;
+      bumpCtx.imageSmoothingEnabled = false;
+      colorCtx.fillStyle = towerPalette.mapBase;
+      colorCtx.fillRect(0, 0, width, height);
+      bumpCtx.fillStyle = towerPalette.bumpBase;
+      bumpCtx.fillRect(0, 0, width, height);
 
-      colorCtx.fillStyle = row % 5 == 0 ? "rgba(0, 0, 0, 0.018)" : "rgba(255, 255, 255, 0.012)";
-      colorCtx.fillRect(0, rowY, width, rowHeight);
+      for (let row = 0; row < rowCount; row += 1) {
+        const rowY = row * rowHeight;
+        const rowFrac = row / Math.max(1, rowCount - 1);
+        const rowCurve = Math.pow(rowFrac, 1.55);
+        const colOffset = row % 2 == 0 ? 0 : columnWidth / 2;
 
-      for (let col = -1; col <= columnCount + 1; col += 1) {
-        const colX = col * columnWidth + colOffset;
-        const brickWrap = wrap01((colX + 0.5 * columnWidth) / width);
-        const collapseWeight =
-          clamp01(1 - wrappedDistance(brickWrap, yawWrap) / spreadWrap) *
-          smoothstep01(Math.max(0, (rowFrac - 0.42) / 0.58));
-        const brickInsetX =
-          mortarThickness * (0.62 + 0.48 * hashNoise(row, col, 1) * (1 + rowCurve));
-        const brickInsetY =
-          mortarThickness * (0.72 + 0.44 * hashNoise(row, col, 2) * (1 + rowCurve));
-        const brickW = Math.max(columnWidth - 2 * brickInsetX, 0.58 * columnWidth);
-        const brickH = Math.max(rowHeight - 1.6 * brickInsetY, 0.52 * rowHeight);
-        const brickX = colX + brickInsetX;
-        const brickY = rowY + brickInsetY;
-        const shadeOffset = (hashNoise(row, col, 3) - 0.5) * (0.16 + 0.12 * rowCurve);
-        const stainPick = hashNoise(row, col, 4);
+        colorCtx.fillStyle = row % 5 == 0 ? "rgba(0, 0, 0, 0.018)" : "rgba(255, 255, 255, 0.012)";
+        colorCtx.fillRect(0, rowY, width, rowHeight);
 
-        colorCtx.fillStyle =
-          shadeOffset >= 0
-            ? `rgba(255, 255, 255, ${shadeOffset})`
-            : `rgba(0, 0, 0, ${Math.abs(shadeOffset)})`;
-        colorCtx.fillRect(brickX, brickY, brickW, brickH);
+        for (let col = -1; col <= columnCount + 1; col += 1) {
+          const colX = col * columnWidth + colOffset;
+          const brickWrap = wrap01((colX + 0.5 * columnWidth) / width);
+          const collapseWeight =
+            clamp01(1 - wrappedDistance(brickWrap, yawWrap) / spreadWrap) *
+            smoothstep01(Math.max(0, (rowFrac - 0.42) / 0.58));
+          const brickInsetX =
+            mortarThickness * (0.62 + 0.48 * hashNoise(row, col, 1) * (1 + rowCurve));
+          const brickInsetY =
+            mortarThickness * (0.72 + 0.44 * hashNoise(row, col, 2) * (1 + rowCurve));
+          const brickW = Math.max(columnWidth - 2 * brickInsetX, 0.58 * columnWidth);
+          const brickH = Math.max(rowHeight - 1.6 * brickInsetY, 0.52 * rowHeight);
+          const brickX = colX + brickInsetX;
+          const brickY = rowY + brickInsetY;
+          const shadeOffset = (hashNoise(row, col, 3) - 0.5) * (0.16 + 0.12 * rowCurve);
+          const stainPick = hashNoise(row, col, 4);
 
-        if (stainPick > 0.72) {
-          colorCtx.fillStyle = towerPalette.warmStain;
+          if (sources) {
+            paintStoneCell({
+              colorCtx,
+              roughnessCtx,
+              sources,
+              cell: { x: brickX, y: brickY, width: brickW, height: brickH },
+              sample: { x: hashNoise(row, col, 21), y: hashNoise(row, col, 22) },
+              scale: roughnessCanvas.width / width,
+            });
+          }
+
+          colorCtx.fillStyle =
+            shadeOffset >= 0
+              ? `rgba(255, 255, 255, ${shadeOffset})`
+              : `rgba(0, 0, 0, ${Math.abs(shadeOffset)})`;
           colorCtx.fillRect(brickX, brickY, brickW, brickH);
-        } else if (stainPick > 0.48) {
-          colorCtx.fillStyle = towerPalette.coolStain;
-          colorCtx.fillRect(brickX, brickY, brickW, brickH);
-        } else if (stainPick < 0.16) {
-          colorCtx.fillStyle = towerPalette.mossStain;
-          colorCtx.fillRect(brickX, brickY, brickW, brickH);
-        }
 
-        colorCtx.fillStyle = towerPalette.mortarShadow;
-        colorCtx.fillRect(brickX, brickY + brickH - 1, brickW, 1);
-        colorCtx.fillStyle = towerPalette.mortarHighlight;
-        colorCtx.fillRect(brickX, brickY, brickW, 1);
+          if (stainPick > 0.72) {
+            colorCtx.fillStyle = towerPalette.warmStain;
+            colorCtx.fillRect(brickX, brickY, brickW, brickH);
+          } else if (stainPick > 0.48) {
+            colorCtx.fillStyle = towerPalette.coolStain;
+            colorCtx.fillRect(brickX, brickY, brickW, brickH);
+          } else if (stainPick < 0.16) {
+            colorCtx.fillStyle = towerPalette.mossStain;
+            colorCtx.fillRect(brickX, brickY, brickW, brickH);
+          }
 
-        if (collapseWeight > 0.02) {
-          colorCtx.fillStyle = `rgba(0, 0, 0, ${0.01 + 0.06 * collapseWeight})`;
-          colorCtx.fillRect(brickX, brickY, brickW, brickH);
+          colorCtx.fillStyle = towerPalette.mortarShadow;
+          colorCtx.fillRect(brickX, brickY + brickH - 1, brickW, 1);
+          colorCtx.fillStyle = towerPalette.mortarHighlight;
+          colorCtx.fillRect(brickX, brickY, brickW, 1);
 
-          if (hashNoise(row, col, 5) > 0.58) {
-            const crackW =
-              mortarThickness * (1.2 + 2.8 * hashNoise(row, col, 6) + 1.8 * collapseWeight);
-            const crackH = rowHeight * (0.08 + 0.18 * hashNoise(row, col, 7));
-            const crackX = hashNoise(row, col, 8) > 0.5 ? brickX : brickX + brickW - crackW;
-            const crackY = brickY + hashNoise(row, col, 9) * Math.max(1, brickH - crackH);
-            colorCtx.fillStyle = towerPalette.sootStain;
-            colorCtx.fillRect(crackX, crackY, crackW, crackH);
-            bumpCtx.fillStyle = "#98a3b8";
-            bumpCtx.fillRect(crackX, crackY, crackW, crackH);
+          if (collapseWeight > 0.02) {
+            colorCtx.fillStyle = `rgba(0, 0, 0, ${0.01 + 0.06 * collapseWeight})`;
+            colorCtx.fillRect(brickX, brickY, brickW, brickH);
+
+            if (hashNoise(row, col, 5) > 0.58) {
+              const crackW =
+                mortarThickness * (1.2 + 2.8 * hashNoise(row, col, 6) + 1.8 * collapseWeight);
+              const crackH = rowHeight * (0.08 + 0.18 * hashNoise(row, col, 7));
+              const crackX = hashNoise(row, col, 8) > 0.5 ? brickX : brickX + brickW - crackW;
+              const crackY = brickY + hashNoise(row, col, 9) * Math.max(1, brickH - crackH);
+              colorCtx.fillStyle = towerPalette.sootStain;
+              colorCtx.fillRect(crackX, crackY, crackW, crackH);
+              bumpCtx.fillStyle = "#98a3b8";
+              bumpCtx.fillRect(crackX, crackY, crackW, crackH);
+            }
+          }
+
+          const mortarX =
+            colX -
+            mortarThickness / 2 +
+            (hashNoise(row, col, 10) - 0.5) * mortarThickness * (0.7 + rowCurve);
+          const mortarY = rowY + 0.8 * mortarThickness;
+          const mortarH = Math.max(
+            0.38 * rowHeight,
+            rowHeight - mortarThickness * (1.8 + hashNoise(row, col, 11) * (1 + rowCurve)),
+          );
+
+          colorCtx.fillStyle = towerPalette.mortarShadow;
+          colorCtx.fillRect(mortarX, mortarY, mortarThickness, mortarH);
+          bumpCtx.fillStyle = "#98a3b8";
+          bumpCtx.fillRect(mortarX, mortarY, mortarThickness, mortarH);
+
+          if (rowFrac > 0.52 && hashNoise(row, col, 12) > 0.64 - 0.2 * collapseWeight) {
+            const streakH = rowHeight * (0.32 + 0.58 * hashNoise(row, col, 13));
+            const streakW = columnWidth * (0.02 + 0.04 * hashNoise(row, col, 14));
+            const streakGrad = colorCtx.createLinearGradient(0, rowY, 0, rowY + streakH);
+            streakGrad.addColorStop(0, towerPalette.sootStain);
+            streakGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+            colorCtx.fillStyle = streakGrad;
+            colorCtx.fillRect(brickX + brickW * hashNoise(row, col, 15), rowY, streakW, streakH);
           }
         }
-
-        const mortarX =
-          colX -
-          mortarThickness / 2 +
-          (hashNoise(row, col, 10) - 0.5) * mortarThickness * (0.7 + rowCurve);
-        const mortarY = rowY + 0.8 * mortarThickness;
-        const mortarH = Math.max(
-          0.38 * rowHeight,
-          rowHeight - mortarThickness * (1.8 + hashNoise(row, col, 11) * (1 + rowCurve)),
-        );
-
-        colorCtx.fillStyle = towerPalette.mortarShadow;
-        colorCtx.fillRect(mortarX, mortarY, mortarThickness, mortarH);
-        bumpCtx.fillStyle = "#98a3b8";
-        bumpCtx.fillRect(mortarX, mortarY, mortarThickness, mortarH);
-
-        if (rowFrac > 0.52 && hashNoise(row, col, 12) > 0.64 - 0.2 * collapseWeight) {
-          const streakH = rowHeight * (0.32 + 0.58 * hashNoise(row, col, 13));
-          const streakW = columnWidth * (0.02 + 0.04 * hashNoise(row, col, 14));
-          const streakGrad = colorCtx.createLinearGradient(0, rowY, 0, rowY + streakH);
-          streakGrad.addColorStop(0, towerPalette.sootStain);
-          streakGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
-          colorCtx.fillStyle = streakGrad;
-          colorCtx.fillRect(brickX + brickW * hashNoise(row, col, 15), rowY, streakW, streakH);
-        }
       }
+
+      const collapseGradient = colorCtx.createLinearGradient(
+        yawWrap * width - 0.24 * width,
+        0,
+        yawWrap * width + 0.18 * width,
+        0,
+      );
+      collapseGradient.addColorStop(0, "rgba(0, 0, 0, 0)");
+      collapseGradient.addColorStop(0.36, "rgba(0, 0, 0, 0.05)");
+      collapseGradient.addColorStop(0.5, towerPalette.collapseShadow);
+      collapseGradient.addColorStop(0.68, "rgba(0, 0, 0, 0.04)");
+      collapseGradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+      colorCtx.fillStyle = collapseGradient;
+      colorCtx.fillRect(0, 0, width, height);
+
+      const weatheringCount = lowPower ? 48 : 150;
+      for (let idx = 0; idx < weatheringCount; idx += 1) {
+        const wx = hashNoise(idx, 101) * width;
+        const wy = height * (0.06 + 0.88 * hashNoise(idx, 102));
+        const wrx = width * (0.0014 + 0.0038 * hashNoise(idx, 103));
+        const wry = height * (0.001 + 0.0028 * hashNoise(idx, 104));
+        colorCtx.fillStyle = `rgba(0, 0, 0, ${0.01 + 0.012 * hashNoise(idx, 105)})`;
+        colorCtx.beginPath();
+        colorCtx.ellipse(wx, wy, wrx, wry, hashNoise(idx, 106) * Math.PI, 0, 2 * Math.PI);
+        colorCtx.fill();
+        bumpCtx.fillStyle = "#aca59d";
+        bumpCtx.beginPath();
+        bumpCtx.ellipse(wx, wy, wrx, wry, hashNoise(idx, 107) * Math.PI, 0, 2 * Math.PI);
+        bumpCtx.fill();
+      }
+
+      const baseFade = colorCtx.createLinearGradient(0, 0.56 * height, 0, height);
+      baseFade.addColorStop(0, "rgba(0, 0, 0, 0)");
+      baseFade.addColorStop(1, "rgba(0, 0, 0, 0.05)");
+      colorCtx.fillStyle = baseFade;
+      colorCtx.fillRect(0, 0.56 * height, width, 0.44 * height);
     }
-
-    const collapseGradient = colorCtx.createLinearGradient(
-      yawWrap * width - 0.24 * width,
-      0,
-      yawWrap * width + 0.18 * width,
-      0,
-    );
-    collapseGradient.addColorStop(0, "rgba(0, 0, 0, 0)");
-    collapseGradient.addColorStop(0.36, "rgba(0, 0, 0, 0.05)");
-    collapseGradient.addColorStop(0.5, towerPalette.collapseShadow);
-    collapseGradient.addColorStop(0.68, "rgba(0, 0, 0, 0.04)");
-    collapseGradient.addColorStop(1, "rgba(0, 0, 0, 0)");
-    colorCtx.fillStyle = collapseGradient;
-    colorCtx.fillRect(0, 0, width, height);
-
-    const weatheringCount = lowPower ? 48 : 150;
-    for (let idx = 0; idx < weatheringCount; idx += 1) {
-      const wx = hashNoise(idx, 101) * width;
-      const wy = height * (0.06 + 0.88 * hashNoise(idx, 102));
-      const wrx = width * (0.0014 + 0.0038 * hashNoise(idx, 103));
-      const wry = height * (0.001 + 0.0028 * hashNoise(idx, 104));
-      colorCtx.fillStyle = `rgba(0, 0, 0, ${0.01 + 0.012 * hashNoise(idx, 105)})`;
-      colorCtx.beginPath();
-      colorCtx.ellipse(wx, wy, wrx, wry, hashNoise(idx, 106) * Math.PI, 0, 2 * Math.PI);
-      colorCtx.fill();
-      bumpCtx.fillStyle = "#aca59d";
-      bumpCtx.beginPath();
-      bumpCtx.ellipse(wx, wy, wrx, wry, hashNoise(idx, 107) * Math.PI, 0, 2 * Math.PI);
-      bumpCtx.fill();
-    }
-
-    const baseFade = colorCtx.createLinearGradient(0, 0.56 * height, 0, height);
-    baseFade.addColorStop(0, "rgba(0, 0, 0, 0)");
-    baseFade.addColorStop(1, "rgba(0, 0, 0, 0.05)");
-    colorCtx.fillStyle = baseFade;
-    colorCtx.fillRect(0, 0.56 * height, width, 0.44 * height);
+    paintTower();
 
     const aniso = chooseAnisotropy(3, 8);
-    return {
+    const textures = {
       colorMap: makeTexture(THREE, colorCanvas, (tex) => {
         tex.wrapS = THREE.RepeatWrapping;
         tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -705,6 +738,77 @@
         tex.wrapT = THREE.ClampToEdgeWrapping;
         tex.anisotropy = aniso;
       }),
+    };
+    const detail = createStoneDetailController({
+      profile,
+      disabled: new URLSearchParams(search).get("stone") === "procedural",
+      report: onDetailStatus,
+      apply(sources) {
+        roughnessCanvas = document.createElement("canvas");
+        roughnessCanvas.width = Math.min(width, STONE_DETAIL_SETTINGS.maxRoughnessWidth);
+        roughnessCanvas.height = 2 * roughnessCanvas.width;
+        roughnessCtx = roughnessCanvas.getContext("2d");
+        if (!roughnessCtx) throw new Error("Stone roughness canvas unavailable.");
+        roughnessMap = makeTexture(THREE, roughnessCanvas, (tex) => {
+          tex.wrapS = THREE.RepeatWrapping;
+          tex.wrapT = THREE.ClampToEdgeWrapping;
+          tex.anisotropy = aniso;
+        });
+        if (includeBrickDetail) {
+          // Reuse the same decoded mineral images before the controller closes them.
+          // A single brick should not sample the entire wall's mortar atlas.
+          const brickColorCanvas = document.createElement("canvas");
+          const brickRoughnessCanvas = document.createElement("canvas");
+          const size = sources.color.width;
+          brickColorCanvas.width = brickColorCanvas.height = size;
+          brickRoughnessCanvas.width = brickRoughnessCanvas.height = size;
+          const brickColor = brickColorCanvas.getContext("2d");
+          const brickRoughness = brickRoughnessCanvas.getContext("2d");
+          if (!brickColor || !brickRoughness) throw new Error("Brick material canvas unavailable.");
+          brickColor.fillStyle = towerPalette.mapBase;
+          brickColor.fillRect(0, 0, size, size);
+          brickColor.globalCompositeOperation = "soft-light";
+          brickColor.globalAlpha = STONE_DETAIL_SETTINGS.colorStrength;
+          brickColor.drawImage(sources.color, 0, 0);
+          brickRoughness.fillStyle = "#ffffff";
+          brickRoughness.fillRect(0, 0, size, size);
+          brickRoughness.globalAlpha = STONE_DETAIL_SETTINGS.roughnessStrength;
+          brickRoughness.drawImage(sources.roughness, 0, 0);
+          brickMaps = {
+            colorMap: makeTexture(THREE, brickColorCanvas, (tex) => {
+              tex.colorSpace = THREE.SRGBColorSpace;
+              tex.anisotropy = aniso;
+            }),
+          };
+          brickMaps.roughnessMap = makeTexture(THREE, brickRoughnessCanvas, (tex) => {
+            tex.anisotropy = aniso;
+          });
+        }
+        paintTower(sources);
+        textures.colorMap.needsUpdate = true;
+        roughnessMap.needsUpdate = true;
+        onDetailChange({ colorMap: textures.colorMap, roughnessMap, brickMaps });
+      },
+      reset({ disposing }) {
+        if (!disposing) {
+          paintTower();
+          textures.colorMap.needsUpdate = true;
+        }
+        onDetailChange({ colorMap: textures.colorMap, roughnessMap: null, brickMaps: null });
+        brickMaps?.colorMap?.dispose();
+        brickMaps?.roughnessMap?.dispose();
+        brickMaps = null;
+        roughnessMap?.dispose();
+        roughnessMap = null;
+        roughnessCanvas = null;
+        roughnessCtx = null;
+      },
+    });
+    return {
+      ...textures,
+      lifecycleOrder: detail.lifecycleOrder,
+      applyQuality: detail.applyQuality,
+      dispose: detail.dispose,
     };
   };
 })();
