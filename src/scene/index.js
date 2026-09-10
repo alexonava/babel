@@ -2447,7 +2447,10 @@ function setSrgbTexture(texture) {
       includeBrickDetail: !brickDetailDisabled,
       onDetailStatus(status) {
         if (qualityDebug) qualityDebug.stone = status;
-        if (status.status === "fallback") brickDetail?.setDetailMaps(null);
+        if (status.status === "fallback") {
+          latestBrickMaps = null;
+          brickDetail?.setDetailMaps(null);
+        }
       },
       onDetailChange({ colorMap, roughnessMap, brickMaps }) {
         // Restore detached originals before rebinding or disposing their wall maps.
@@ -2460,7 +2463,8 @@ function setSrgbTexture(texture) {
             material.needsUpdate = true;
           });
         });
-        brickDetail?.setDetailMaps(brickMaps);
+        latestBrickMaps = brickMaps;
+        brickDetail?.setDetailMaps(latestBrickMaps);
         frameScheduler?.invalidate();
       },
     });
@@ -3124,6 +3128,7 @@ function setSrgbTexture(texture) {
         if (qualityDebug) qualityDebug.bricks = status;
       },
     });
+    brickDetail.setDetailMaps(latestBrickMaps);
     subsystemRegistry.register(brickDetail);
     const tmpV74 = state.lowPower ? 12 : 26;
     for (let num452 = 0; num452 < tmpV74; num452 += 1) {
