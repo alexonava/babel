@@ -1,8 +1,11 @@
 import { LoadingManager } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-const TOWER_ROLES = ["stairs", "wall", "base", "crown"];
-const ROLES = [...TOWER_ROLES, "tree"];
+const TOWER_ROLES = Object.freeze({
+  assembled: ["stairs", "wall", "base", "crown"],
+  complete: ["tower"],
+});
+const ROLES = [...TOWER_ROLES.assembled, "tower", "tree"];
 export const ARCHITECTURE_ASSET_BUDGETS = Object.freeze({
   high: 6 * 1024 * 1024,
   balanced: 3 * 1024 * 1024,
@@ -138,6 +141,7 @@ function collectResources(asset, extraTextures = []) {
 
 export function createArchitectureAssetController({
   disabled = false,
+  towerModel = "assembled",
   loadAsset = loadArchitectureAsset,
   urls = ARCHITECTURE_ASSET_URLS,
   onTowerReady = () => {},
@@ -146,6 +150,9 @@ export function createArchitectureAssetController({
   onRestoreTree = () => {},
   onStatus = () => {},
 } = {}) {
+  if (!Object.hasOwn(TOWER_ROLES, towerModel)) {
+    throw new Error("Invalid architecture tower model");
+  }
   let disposed = false;
   let currentProfile = {};
   let live = false;
@@ -154,7 +161,7 @@ export function createArchitectureAssetController({
   const resourceReferences = new Map();
   const freedResources = new WeakSet();
   const channels = [
-    { kind: "tower", roles: TOWER_ROLES, ready: onTowerReady, restore: onRestoreTower },
+    { kind: "tower", roles: TOWER_ROLES[towerModel], ready: onTowerReady, restore: onRestoreTower },
     { kind: "tree", roles: ["tree"], ready: onTreeReady, restore: onRestoreTree },
   ].map((channel) => ({ ...channel, run: null, leases: [], active: false, cleanup: null }));
 

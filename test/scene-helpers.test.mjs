@@ -86,7 +86,10 @@ test("smoothstep01 is clamped, monotonic, and passes the Hermite fixed points", 
 
 test("groundHeight is deterministic and stays inside its analytic bound", async () => {
   const scene = await loadHelpers();
-  const limit = 1.8 + 1.35 + 0.9 + 0.55;
+  // The tower and tree knolls never overlap (their centers are ~66 units
+  // apart against ~15-unit radii), so the worst case anywhere is the dune
+  // ceiling plus whichever single knoll amplitude is larger.
+  const limit = 1.8 + 1.35 + 0.9 + 0.55 + 1.0;
   const probes = [
     [0, 0],
     [12, -7],
@@ -100,7 +103,55 @@ test("groundHeight is deterministic and stays inside its analytic bound", async 
     assert.equal(a, b);
     assert.ok(Math.abs(a) <= limit + 1e-12, `groundHeight(${x}, ${y}) = ${a} exceeded ${limit}`);
   }
-  assert.notEqual(scene.groundHeight(0, 0), scene.groundHeight(5, 0));
+  assert.notEqual(scene.groundHeight(0, 0), scene.groundHeight(25, 0));
+});
+
+test("groundHeight terraces flat under the tower and tree footprints, then blends back to the dune field", async () => {
+  const scene = await loadHelpers();
+  const dune = (x, y) =>
+    1.8 * Math.sin(0.055 * x) +
+    1.35 * Math.cos(0.052 * y) +
+    0.9 * Math.sin(0.031 * (x + y)) +
+    0.55 * Math.cos(0.018 * (x - y));
+
+  // Flat terrace: every point within flatRadius sits at the exact same
+  // height (the anchor's dune value plus the terrace amplitude), regardless
+  // of the dune field's own local slope there. This is what removes the
+  // floating-footing problem an additive-only bump left behind.
+  const towerFlat = dune(0, 0) + 1.0;
+  for (const [x, y] of [
+    [0, 0],
+    [6, 0],
+    [0, -8],
+    [5, 5],
+  ]) {
+    assert.ok(
+      Math.abs(scene.groundHeight(x, y) - towerFlat) < 1e-9,
+      `tower terrace should be perfectly flat at (${x}, ${y})`,
+    );
+  }
+  const treeFlat = dune(55.1, 36.1) + 0.75;
+  for (const [x, y] of [
+    [55.1, 36.1],
+    [55.1 + 5, 36.1],
+    [55.1, 36.1 - 5],
+  ]) {
+    assert.ok(
+      Math.abs(scene.groundHeight(x, y) - treeFlat) < 1e-9,
+      `tree terrace should be perfectly flat at (${x}, ${y})`,
+    );
+  }
+
+  // Falloff: well outside each terrace's outer radius, it's exactly the
+  // plain dune field again.
+  assert.ok(
+    Math.abs(scene.groundHeight(30, 0) - dune(30, 0)) < 1e-9,
+    "tower terrace should have fully blended away by (30, 0)",
+  );
+  assert.ok(
+    Math.abs(scene.groundHeight(55.1 + 25, 36.1) - dune(55.1 + 25, 36.1)) < 1e-9,
+    "tree terrace should have fully blended away 25 units from its anchor",
+  );
 });
 
 test("supportsWebGL detects standard, experimental-only, and missing contexts", async () => {

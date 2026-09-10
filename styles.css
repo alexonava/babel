@@ -1491,3 +1491,30 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
     border: 1px solid CanvasText;
   }
 }
+
+
+/* Optional local camera-review controls, shown only with ?tour=3 or ?tour=5. */
+.scene-tour {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  max-width: 310px;
+  font: 400 12px/1.4 "Instrument Sans", sans-serif;
+  color: #d8d4ca;
+}
+.scene-tour-label { flex-basis: 100%; }
+.scene-tour button,
+.scene-tour select {
+  border: 1px solid #686d77;
+  border-radius: 4px;
+  background: #17202b;
+  color: #eee8db;
+  font: inherit;
+  padding: 7px 9px;
+}
+.scene-tour button { cursor: pointer; }
+.scene-tour button:disabled { opacity: 0.55; cursor: default; }
+.scene-tour button:focus-visible,
+.scene-tour select:focus-visible { outline: 2px solid #e8c998; outline-offset: 3px; }

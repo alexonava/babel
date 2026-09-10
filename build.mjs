@@ -66,7 +66,7 @@ async function architectureAssetManifest() {
   const files = [];
   for (const tier of ["high", "balanced"]) {
     urls[tier] = {};
-    for (const role of ["stairs", "wall", "base", "crown", "tree"]) {
+    for (const role of ["stairs", "wall", "base", "crown", "tower", "tree"]) {
       const name = role + "-" + tier + ".glb";
       const bytes = await readFile(join(__dirname, "images", "architecture", name));
       const hashedName = name.replace(".glb", "." + sha8(bytes) + ".glb");
@@ -80,7 +80,9 @@ async function architectureAssetManifest() {
 async function buildScriptBundle(entry) {
   const options = scriptBuildOptions(entry);
   if (entry === SCENE_ENTRY) {
-    options.define = { __BABEL_ARCHITECTURE_URLS__: JSON.stringify((await architectureAssetManifest()).urls) };
+    options.define = {
+      __BABEL_ARCHITECTURE_URLS__: JSON.stringify((await architectureAssetManifest()).urls),
+    };
   }
   const result = await build(options);
   const out = result.outputFiles?.[0];

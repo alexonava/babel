@@ -5,6 +5,7 @@ import {
   BoxGeometry,
   BufferAttribute,
   BufferGeometry,
+  Color,
   Float32BufferAttribute,
   Group,
   Matrix4,
@@ -48,6 +49,8 @@ test("wall deformation follows the tapered shell with finite unit normals", () =
 test("measured walking levels create equal risers and contiguous flight joins", () => {
   const levels = [0, 0.145, 0.282, 0.418, 0.558, 0.708, 0.858, 1];
   const rise = (ARCHITECTURE.stairEnd - ARCHITECTURE.stairStart) / 8;
+  assert.equal(ARCHITECTURE.stairStart, 0.7);
+  assert.equal(ARCHITECTURE.stairEnd, 33.5);
   for (let flight = 0; flight < 8; flight++) {
     for (let step = 0; step < levels.length; step++) {
       const geometry = new BoxGeometry(1, 1, 1);
@@ -56,7 +59,7 @@ test("measured walking levels create equal risers and contiguous flight joins", 
         position.setXYZ(i, 0.5, levels[step], step === 7 ? 0.5 : -0.5);
       bendFlight(geometry, flight, 0.32 * Math.PI, { levels });
       const point = new Vector3().fromBufferAttribute(position, 0);
-      assert.ok(Math.abs(point.y - (1.7 + (flight + step / 7) * rise)) < 1e-5);
+      assert.ok(Math.abs(point.y - (ARCHITECTURE.stairStart + (flight + step / 7) * rise)) < 1e-5);
       if (step === 7 && flight < 7) {
         const next = new BoxGeometry(1, 1, 1);
         const nextPosition = next.attributes.position;
@@ -98,7 +101,47 @@ test("tower assembly instances walls and merges flights without mutating borrowe
     "stairs",
     "wall",
   ]);
+  const wall = tower.root.getObjectByName("masonry-tier-0");
+  const stairs = tower.root.getObjectByName("eight-solid-stair-flights");
+  const support = tower.root.getObjectByName("spiral-masonry-support");
+  const crown = tower.root.getObjectByName("bastion-breach");
+  const base = tower.root.getObjectByName("ruined-base-masonry");
+  stairs.geometry.computeBoundingBox();
+  support.geometry.computeBoundingBox();
+  assert.ok(Math.abs(stairs.geometry.boundingBox.min.y - ARCHITECTURE.stairStart) < 1e-5);
+  assert.ok(Math.abs(stairs.geometry.boundingBox.max.y - ARCHITECTURE.stairEnd) < 1e-5);
+  assert.ok(Math.abs(support.geometry.boundingBox.min.y - 0.1) < 1e-5);
+  const structure = tower.root.userData.architecture.stairSupports;
+  assert.equal(structure.closedCore, true);
+  assert.equal(structure.flights.length, 8);
+  assert.ok(structure.triangles <= structure.maxTriangles);
+  assert.equal(support.material, wall.material);
+  assert.equal(support.castShadow, true);
+  assert.equal(support.receiveShadow, true);
+  assert.equal(tower.root.getObjectByName("stair-meshy-wall-apron"), undefined);
+  assert.equal(tower.root.getObjectByName("stair-meshy-base-corbel-supports"), undefined);
+  for (const flight of structure.flights) {
+    assert.ok(flight.topY > flight.stairBottomY);
+    assert.ok(flight.topY < flight.firstTreadY);
+  }
+  assert.equal(wall.material.color.getHex(), 0xe4ded0);
+  assert.deepEqual(wall.material.normalScale.toArray(), [0.36, 0.36]);
+  assert.equal(wall.instanceColor.count, 16);
+  const firstWallTone = new Color();
+  const secondWallTone = new Color();
+  wall.getColorAt(0, firstWallTone);
+  wall.getColorAt(1, secondWallTone);
+  assert.notDeepEqual(firstWallTone.toArray(), secondWallTone.toArray());
+  assert.ok(firstWallTone.r > 0.9 && firstWallTone.g > 0.9 && firstWallTone.b > 0.85);
+  assert.equal(stairs.material.color.getHex(), 0xe2ddd1);
+  assert.deepEqual(stairs.material.normalScale.toArray(), [0.4, 0.4]);
+  assert.equal(crown.material.color.getHex(), 0xddd8cf);
+  assert.deepEqual(crown.material.normalScale.toArray(), [0.32, 0.32]);
+  assert.equal(base.material.color.getHex(), 0xd9d0be);
+  assert.deepEqual(base.material.normalScale.toArray(), [0.38, 0.38]);
   let borrowedDisposals = 0;
+  let supportDisposals = 0;
+  support.geometry.addEventListener("dispose", () => supportDisposals++);
   Object.values(assets).forEach((item, index) => {
     const mesh = item.scene.children[0];
     assert.deepEqual([...mesh.geometry.attributes.position.array], sourceArrays[index]);
@@ -107,6 +150,7 @@ test("tower assembly instances walls and merges flights without mutating borrowe
   });
   tower.dispose();
   tower.dispose();
+  assert.equal(supportDisposals, 1);
   assert.equal(borrowedDisposals, 0);
 });
 
@@ -117,9 +161,25 @@ test("tree retains its anchor and height with a quality-scaled non-shadow lanter
   const tree = replacement.root.getObjectByName("meshy-tree");
   tree.geometry.computeBoundingBox();
   assert.ok(Math.abs(tree.geometry.boundingBox.max.y - 22) < 1e-5);
+  assert.equal(tree.material.color.getHex(), 0xffffff);
+  assert.equal(tree.material.emissive.getHex(), 0x26351f);
+  assert.equal(tree.material.emissiveIntensity, 0.22);
+  assert.deepEqual(tree.material.normalScale.toArray(), [0.46, 0.46]);
   assert.equal(replacement.light.castShadow, false);
+  assert.equal(replacement.light.distance, 23);
+  assert.equal(replacement.fillLight.name, "tree-fill-light");
+  assert.deepEqual(replacement.fillLight.position.toArray(), [-3.8, 9.24, -2.5]);
+  assert.equal(replacement.fillLight.castShadow, false);
+  assert.equal(replacement.fillLight.distance, 30);
   replacement.applyQuality({ lighting: { practicalIntensityScale: 0.5 } });
-  assert.equal(replacement.light.intensity, 1.4);
+  assert.equal(replacement.light.intensity, 2);
+  assert.equal(replacement.fillLight.intensity, 1.2);
+  replacement.light.distance=39; // A previously applied prop-scale range.
+  replacement.setFilmTreatment(true);replacement.applyQuality({lighting:{practicalIntensityScale:1}});
+  assert.equal(replacement.light.intensity,3.4);assert.equal(replacement.light.distance,13.2);
+  assert.equal(replacement.fillLight.intensity,.96);assert.equal(replacement.fillLight.color.getHex(),0xd9e2f2);assert.equal(tree.material.emissiveIntensity,.04);
+  replacement.setFilmTreatment(false);assert.equal(replacement.light.distance,39);assert.equal(tree.material.emissiveIntensity,.22);
+  replacement.applyQuality({lighting:{practicalIntensityScale:.5}});assert.equal(replacement.light.distance,39);
   assert.equal(replacement.dispose(), true);
   assert.equal(replacement.dispose(), false);
 });

@@ -1,5 +1,8 @@
 import {
   BoxGeometry,
+  Color,
+  CylinderGeometry,
+  DoubleSide,
   Float32BufferAttribute,
   Group,
   InstancedMesh,
@@ -7,9 +10,12 @@ import {
   Mesh,
   MeshStandardMaterial,
   PointLight,
+  SphereGeometry,
+  TorusGeometry,
   Vector3,
 } from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { createSpiralSupportGeometry } from "./spiral-support.js";
 
 export const ARCHITECTURE = Object.freeze({
   sectors: 16,
@@ -19,11 +25,73 @@ export const ARCHITECTURE = Object.freeze({
   bottomRadius: 12.2,
   topRadius: 8.8,
   stairWidth: 3.6,
-  stairStart: 1.7,
+  stairStart: 0.7,
   stairEnd: 33.5,
   flights: 8,
   treeHeight: 22,
 });
+
+const MATERIAL_PROFILES = Object.freeze({
+  tower: {
+    color: 0xe5e0d6,
+    normalScale: 0.35,
+    roughnessFloor: 0.9,
+    saturation: 0.94,
+    highlights: 0.18,
+  },
+  wall: { color: 0xe4ded0, normalScale: 0.36, roughnessFloor: 0.86 },
+  stairs: {
+    color: 0xe2ddd1,
+    normalScale: 0.4,
+    roughnessFloor: 0.9,
+    saturation: 0.84,
+    highlights: 0.16,
+  },
+  base: { color: 0xd9d0be, normalScale: 0.38, roughnessFloor: 0.88 },
+  crown: {
+    color: 0xddd8cf,
+    normalScale: 0.32,
+    roughnessFloor: 0.92,
+    saturation: 0.78,
+    highlights: 0.28,
+  },
+  tree: {
+    color: 0xffffff,
+    emissive: 0x26351f,
+    emissiveIntensity: 0.22,
+    normalScale: 0.46,
+    roughnessFloor: 0.94,
+    highlights: 0.12,
+  },
+});
+
+// Moonlight grade for the supplied maps, which carry baked daylight and
+// ambient occlusion: cooler, less saturated, compressed sunlit highlights and
+// lifted black undersides. Uniform values switch without a shader rebuild.
+const FILM_GRADES = Object.freeze({
+  tower: { saturation: 0.8, highlights: 0.38, tint: [1.0, 0.95, 0.88], lift: 0.14 },
+  tree: { saturation: 0.86, highlights: 0.2, tint: [1.0, 0.96, 0.9], lift: 0.09 },
+});
+export function applyFilmGrade(material, active) {
+  const grade = material?.userData?.babelGrade;
+  if (!grade) return false;
+  const film = active ? FILM_GRADES[grade.role] : null;
+  const profile = MATERIAL_PROFILES[grade.role] || {};
+  grade.uniforms.babelSaturation.value = film?.saturation ?? profile.saturation ?? 1;
+  grade.uniforms.babelHighlights.value = film?.highlights ?? profile.highlights ?? 0;
+  grade.uniforms.babelTint.value.setRGB(...(film?.tint ?? [1, 1, 1]));
+  grade.uniforms.babelLift.value = film?.lift ?? 0;
+  return true;
+}
+
+// The supplied tower is scaled independently of ARCHITECTURE.height, which
+// still governs the classic/assembled procedural tower comparisons.
+const COMPLETE_TOWER_HEIGHT = 39;
+const COMPLETE_TOWER_RADIUS_CAP = 20.4;
+
+const TREE_LANTERN_INTENSITY = 4.0;
+const TREE_FILL_INTENSITY = 2.4;
+const WALL_TONE_BASE = new Color(0xffffff);
 
 export function towerRadius(y) {
   const ratio = Math.max(0, Math.min(1, (y - ARCHITECTURE.bottom) / ARCHITECTURE.height));
@@ -178,15 +246,68 @@ export function bendFlight(geometry, flight, collapseYaw, walking = {}) {
   });
 }
 
-function materialFor(asset, anisotropy) {
+function masonryTone(tier, sector) {
+  const courseShift = tier % 2 ? 0.035 : -0.015;
+  const sectorShift = ((sector * 37 + tier * 17) % 11) * 0.006 - 0.03;
+  const warmShift = ((sector + tier * 3) % 5) * 0.004;
+  return WALL_TONE_BASE.clone().setRGB(
+    0.97 + courseShift + sectorShift + warmShift,
+    0.955 + courseShift + sectorShift * 0.6 + warmShift * 0.7,
+    0.915 + courseShift * 0.55 + sectorShift * 0.45,
+  );
+}
+
+function materialFor(asset, anisotropy, role) {
   const material = sourceMesh(asset).material.clone();
+  const profile = MATERIAL_PROFILES[role] || {};
   try {
+    material.color?.setHex(profile.color ?? 0xffffff);
     material.metalness = 0;
     material.roughness = 0.94;
-    material.emissive.set(0);
+    material.emissive.setHex(profile.emissive ?? 0);
+    material.emissiveIntensity = profile.emissiveIntensity ?? 1;
     material.emissiveMap = null;
     material.vertexColors = false;
-    material.normalScale?.set(0.65, 0.65);
+    // A PBR roughness map multiplies the scalar; it can otherwise make even a
+    // 0.94 material glossy. Keep its variation above a matte per-role floor.
+    // Compress bright baked edge detail in linear color without repainting maps.
+    const roughnessFloor = profile.roughnessFloor ?? 0.86;
+    const uniforms = {
+      babelSaturation: { value: profile.saturation ?? 1 },
+      babelHighlights: { value: profile.highlights ?? 0 },
+      babelTint: { value: new Color(1, 1, 1) },
+      babelLift: { value: 0 },
+    };
+    material.userData.babelGrade = { role, uniforms };
+    material.customProgramCacheKey = () => `babel-limestone-v2-${roughnessFloor}`;
+    material.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, uniforms);
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+          uniform float babelSaturation;
+          uniform float babelHighlights;
+          uniform vec3 babelTint;
+          uniform float babelLift;`,
+        )
+        .replace(
+          "#include <roughnessmap_fragment>",
+          `#include <roughnessmap_fragment>\nroughnessFactor = mix(${roughnessFloor.toFixed(3)}, 1.0, roughnessFactor);`,
+        )
+        .replace(
+          "#include <map_fragment>",
+          `#include <map_fragment>
+          float babelLuma = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+          diffuseColor.rgb = mix(vec3(babelLuma), diffuseColor.rgb, babelSaturation);
+          diffuseColor.rgb *= 1.0 - babelHighlights * smoothstep(0.30, 0.85, babelLuma);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.19, 0.17, 0.15), babelLift * (1.0 - smoothstep(0.02, 0.22, babelLuma)));
+          diffuseColor.rgb *= babelTint;`,
+        );
+    };
+    if (material.normalScale && profile.normalScale) {
+      material.normalScale.set(profile.normalScale, profile.normalScale);
+    }
     for (const value of Object.values(material)) {
       if (value?.isTexture) value.anisotropy = anisotropy;
     }
@@ -215,8 +336,8 @@ export function createTowerArchitecture({
     geometries.add(geometry);
     return geometry;
   };
-  const ownMaterial = (asset) => {
-    const material = materialFor(asset, anisotropy);
+  const ownMaterial = (asset, role) => {
+    const material = materialFor(asset, anisotropy, role);
     materials.add(material);
     return material;
   };
@@ -233,7 +354,7 @@ export function createTowerArchitecture({
     return true;
   };
   try {
-    const wallMaterial = ownMaterial(assets.wall);
+    const wallMaterial = ownMaterial(assets.wall, "wall");
     const sectorArc = (Math.PI * 2) / ARCHITECTURE.sectors;
     let wallCount = 0;
     for (let tier = 0; tier < ARCHITECTURE.tiers; tier += 1) {
@@ -243,27 +364,29 @@ export function createTowerArchitecture({
         height: 4.27,
         arc: sectorArc * 1.008,
       });
-      const angles = [];
+      const sectors = [];
       for (let sector = 0; sector < ARCHITECTURE.sectors; sector += 1) {
         const angle = collapseYaw + (sector + (tier % 2 ? 0 : 0.5)) * sectorArc;
         const separation = Math.abs(
           Math.atan2(Math.sin(angle - collapseYaw), Math.cos(angle - collapseYaw)),
         );
         if (tier === 7 && separation < sectorArc * 1.6) continue;
-        angles.push(angle);
+        sectors.push({ angle, sector });
       }
-      const instances = new InstancedMesh(geometry, wallMaterial, angles.length);
+      const instances = new InstancedMesh(geometry, wallMaterial, sectors.length);
       instanceMeshes.add(instances);
       instances.name = `masonry-tier-${tier}`;
-      angles.forEach((angle, index) =>
-        instances.setMatrixAt(index, new Matrix4().makeRotationY(-angle)),
-      );
+      sectors.forEach(({ angle, sector }, index) => {
+        instances.setMatrixAt(index, new Matrix4().makeRotationY(-angle));
+        instances.setColorAt(index, masonryTone(tier, sector));
+      });
       instances.instanceMatrix.needsUpdate = true;
+      instances.instanceColor.needsUpdate = true;
       instances.computeBoundingBox();
       instances.computeBoundingSphere();
       instances.castShadow = instances.receiveShadow = true;
       root.add(instances);
-      wallCount += angles.length;
+      wallCount += sectors.length;
     }
     const crownGeometry = ownGeometry(normalizedGeometry(assets.crown));
     bendWall(crownGeometry, {
@@ -272,14 +395,17 @@ export function createTowerArchitecture({
       arc: sectorArc * 3.08,
       depth: 1.0,
     });
-    const crown = new Mesh(crownGeometry, ownMaterial(assets.crown));
+    const crown = new Mesh(crownGeometry, ownMaterial(assets.crown, "crown"));
     crown.name = "bastion-breach";
     crown.rotation.y = -collapseYaw;
     crown.castShadow = crown.receiveShadow = true;
     root.add(crown);
 
-    const stairMaterial = ownMaterial(assets.stairs);
+    const stairMaterial = ownMaterial(assets.stairs, "stairs");
+    const baseGeometry = ownGeometry(normalizedGeometry(assets.base));
+    const baseMaterial = ownMaterial(assets.base, "base");
     const flightGeometries = [];
+    let supportMetadata;
     try {
       for (let flight = 0; flight < ARCHITECTURE.flights; flight += 1) {
         const geometry = normalizedGeometry(assets.stairs);
@@ -297,12 +423,31 @@ export function createTowerArchitecture({
       stairs.name = "eight-solid-stair-flights";
       stairs.castShadow = stairs.receiveShadow = true;
       root.add(stairs);
+      const supportSources = [];
+      try {
+        const wallGeometry = normalizedGeometry(assets.wall);
+        supportSources.push(wallGeometry);
+        const stairsGeometry = normalizedGeometry(assets.stairs);
+        supportSources.push(stairsGeometry);
+        const support = createSpiralSupportGeometry({
+          wallGeometry,
+          stairsGeometry,
+          walking: assets.stairs.userData?.walking || sourceMesh(assets.stairs).userData?.walking,
+          architecture: ARCHITECTURE,
+          collapseYaw,
+        });
+        const masonry = new Mesh(ownGeometry(support.geometry), wallMaterial);
+        masonry.name = "spiral-masonry-support";
+        masonry.castShadow = masonry.receiveShadow = true;
+        root.add(masonry);
+        supportMetadata = support.metadata;
+      } finally {
+        supportSources.forEach((geometry) => geometry.dispose());
+      }
     } finally {
       flightGeometries.forEach((geometry) => geometry.dispose());
     }
 
-    const baseGeometry = ownGeometry(normalizedGeometry(assets.base));
-    const baseMaterial = ownMaterial(assets.base);
     const instances = new InstancedMesh(baseGeometry, baseMaterial, baseRecords.length);
     instanceMeshes.add(instances);
     instances.name = "ruined-base-masonry";
@@ -322,6 +467,7 @@ export function createTowerArchitecture({
     root.userData.architecture = {
       wallCount,
       flights: 8,
+      stairSupports: supportMetadata,
       baseCount: baseRecords.length,
       sourceRoles: ["wall", "stairs", "crown", "base"],
     };
@@ -332,10 +478,93 @@ export function createTowerArchitecture({
   }
 }
 
-export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4 }) {
+// The supplied watchtower is fitted uniformly; its stone, timber, roof, and
+// entrance keep their authored proportions instead of becoming curved modules.
+export function createCompleteTowerArchitecture({
+  asset,
+  groundY = 0,
+  yaw = Math.PI / 4,
+  footingOffset = 1.64,
+  anisotropy = 4,
+}) {
+  const root = new Group();
+  root.name = "supplied-meshy-tower";
+  let geometry;
+  let material;
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return false;
+    disposed = true;
+    root.removeFromParent();
+    geometry?.dispose();
+    material?.dispose();
+    return true;
+  };
+  try {
+    if (![groundY, yaw, footingOffset].every(Number.isFinite))
+      throw new Error("Invalid complete tower placement.");
+    const source = sourceMesh(asset);
+    geometry = editableGeometry(source.geometry).applyMatrix4(source.matrixWorld);
+    geometry.computeBoundingBox();
+    const { min, max } = geometry.boundingBox;
+    const dimensions = new Vector3().subVectors(max, min);
+    if (
+      ![dimensions.x, dimensions.y, dimensions.z].every(
+        (value) => Number.isFinite(value) && value > 0,
+      )
+    ) {
+      throw new Error("Complete tower asset has empty bounds.");
+    }
+    geometry.translate(-(min.x + max.x) / 2, -min.y, -(min.z + max.z) / 2);
+    const position = geometry.attributes.position;
+    let radius = 0;
+    for (let i = 0; i < position.count; i += 1) {
+      const x = position.getX(i),
+        y = position.getY(i),
+        z = position.getZ(i);
+      if (![x, y, z].every(Number.isFinite))
+        throw new Error("Complete tower positions must be finite.");
+      radius = Math.max(radius, Math.hypot(x, z));
+    }
+    const scale = Math.min(COMPLETE_TOWER_HEIGHT / dimensions.y, COMPLETE_TOWER_RADIUS_CAP / radius);
+    geometry.scale(scale, scale, scale);
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    material = materialFor(asset, anisotropy, "tower");
+    const tower = new Mesh(geometry, material);
+    tower.name = "complete-meshy-tower";
+    tower.castShadow = tower.receiveShadow = true;
+    root.add(tower);
+    // Upper plinth peaks near 1.7. A small overlap avoids a daylight gap beneath
+    // the irregular source footing without burying the entrance threshold.
+    root.position.y = groundY + footingOffset;
+    root.rotation.y = yaw;
+    root.userData.architecture = {
+      mode: "complete",
+      sourceRoles: ["tower"],
+      uniformScale: scale,
+      height: dimensions.y * scale,
+      radius: radius * scale,
+      entranceAxis: "+Z",
+    };
+    return {
+      root,
+      dispose,
+      setFilmTreatment(active) {
+        if (!disposed) applyFilmGrade(material, active);
+      },
+    };
+  } catch (error) {
+    dispose();
+    throw error;
+  }
+}
+
+export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4, anchor = [58, 38] }) {
   const root = new Group();
   root.name = "supplied-meshy-tree";
-  root.position.set(58, groundHeight(58, 38), 38);
+  const [treeX, treeZ] = anchor;
+  root.position.set(treeX, groundHeight(treeX, treeZ), treeZ);
   const geometries = new Set();
   const materials = new Set();
   const ownGeometry = (geometry) => {
@@ -369,63 +598,133 @@ export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4 }) 
     geometry.translate(0, -bounds.min.y, 0);
     geometry.scale(scale, scale, scale);
     geometry.computeBoundingSphere();
-    const material = ownMaterial(materialFor(asset, anisotropy));
+    const material = ownMaterial(materialFor(asset, anisotropy, "tree"));
     const tree = new Mesh(geometry, material);
     tree.name = "meshy-tree";
     tree.castShadow = tree.receiveShadow = true;
     root.add(tree);
     const lantern = new Group();
     lantern.name = "tree-lantern";
-    const direction = new Vector3(-58, 0, -38).normalize();
+    const direction = new Vector3(-treeX, 0, -treeZ).normalize();
     lantern.position.copy(direction.multiplyScalar(2.4));
     lantern.position.y =
-      groundHeight(58 + lantern.position.x, 38 + lantern.position.z) - root.position.y;
+      groundHeight(treeX + lantern.position.x, treeZ + lantern.position.z) - root.position.y;
+    // Iron post lantern, authored 2.48 units tall: foot, post, tray, four
+    // stiles, top plate, pyramid cap and finial ring merge into one frame. The
+    // candle flame is the emitter, seen through four tinted glass panes.
     const frameMaterial = ownMaterial(
-      new MeshStandardMaterial({ color: 0x584332, roughness: 0.8, metalness: 0.45 }),
+      new MeshStandardMaterial({ color: 0x2f2825, roughness: 0.68, metalness: 0.55 }),
     );
     const frameParts = [];
     let frameGeometry;
     try {
-      const part = (x, y, z, sx, sy, sz) => {
-        const shape = new BoxGeometry(sx, sy, sz);
+      const part = (shape, x, y, z, yaw = 0) => {
+        shape.rotateY(yaw);
         shape.translate(x, y, z);
         frameParts.push(shape);
       };
-      part(0, 0.7, 0, 0.13, 1.4, 0.13);
-      part(0, 1.5, 0, 0.78, 0.12, 0.78);
-      part(0, 2.4, 0, 0.86, 0.16, 0.86);
-      for (const x of [-0.32, 0.32])
-        for (const z of [-0.32, 0.32]) part(x, 1.96, z, 0.075, 0.85, 0.075);
+      part(new CylinderGeometry(0.17, 0.21, 0.08, 10), 0, 0.04, 0);
+      part(new CylinderGeometry(0.05, 0.07, 1.2, 8), 0, 0.64, 0);
+      part(new BoxGeometry(0.74, 0.07, 0.74), 0, 1.265, 0);
+      for (const x of [-0.31, 0.31])
+        for (const z of [-0.31, 0.31]) part(new BoxGeometry(0.055, 0.7, 0.055), x, 1.65, z);
+      part(new BoxGeometry(0.78, 0.05, 0.78), 0, 2.025, 0);
+      part(new CylinderGeometry(0.03, 0.5, 0.27, 4), 0, 2.185, 0, Math.PI / 4);
+      part(new TorusGeometry(0.06, 0.016, 6, 12), 0, 2.4, 0);
       frameGeometry = mergeGeometries(frameParts, false);
       if (!frameGeometry) throw new Error("Lantern frame cannot be merged.");
       ownGeometry(frameGeometry);
     } finally {
       frameParts.forEach((item) => item.dispose());
     }
-    lantern.add(new Mesh(frameGeometry, frameMaterial));
-    const glowGeometry = ownGeometry(new BoxGeometry(0.3, 0.56, 0.3));
+    const frame = new Mesh(frameGeometry, frameMaterial);
+    frame.name = "lantern-frame";
+    lantern.add(frame);
+    const glassMaterial = ownMaterial(
+      new MeshStandardMaterial({
+        color: 0xffe2b0,
+        emissive: 0xffb562,
+        emissiveIntensity: 0.3,
+        roughness: 0.3,
+        metalness: 0,
+        transparent: true,
+        opacity: 0.18,
+        depthWrite: false,
+        side: DoubleSide,
+      }),
+    );
+    const paneGeometry = ownGeometry(new BoxGeometry(0.6, 0.66, 0.02));
+    for (const [x, z, yaw] of [
+      [0, 0.31, 0],
+      [0, -0.31, 0],
+      [0.31, 0, Math.PI / 2],
+      [-0.31, 0, Math.PI / 2],
+    ]) {
+      const pane = new Mesh(paneGeometry, glassMaterial);
+      pane.name = "lantern-glass";
+      pane.position.set(x, 1.65, z);
+      pane.rotation.y = yaw;
+      lantern.add(pane);
+    }
+    const candle = new Mesh(
+      ownGeometry(new CylinderGeometry(0.06, 0.065, 0.3, 8)),
+      ownMaterial(new MeshStandardMaterial({ color: 0xe9dcbc, roughness: 0.85 })),
+    );
+    candle.name = "lantern-candle";
+    candle.position.y = 1.45;
+    lantern.add(candle);
+    const glowGeometry = ownGeometry(new SphereGeometry(0.075, 8, 8));
     const glowMaterial = ownMaterial(
       new MeshStandardMaterial({
         color: 0xffcf82,
         emissive: 0xffa640,
-        emissiveIntensity: 1.4,
+        emissiveIntensity: 2.0,
         roughness: 1,
       }),
     );
     const glow = new Mesh(glowGeometry, glowMaterial);
-    glow.position.y = 1.94;
+    glow.name = "lantern-flame";
+    glow.scale.set(1.25, 2.4, 1.25);
+    glow.position.y = 1.7;
     lantern.add(glow);
-    const light = new PointLight(0xffbe72, 2.8, 19, 1.5);
+    const light = new PointLight(0xffbe72, TREE_LANTERN_INTENSITY, 23, 1.45);
     light.name = "tree-lantern-light";
-    light.position.y = 2.05;
+    light.position.y = 1.7;
     light.castShadow = false;
     lantern.add(light);
     root.add(lantern);
+    const fillLight = new PointLight(0xffd49a, TREE_FILL_INTENSITY, 30, 1.25);
+    fillLight.name = "tree-fill-light";
+    fillLight.position.set(-3.8, ARCHITECTURE.treeHeight * 0.42, -2.5);
+    fillLight.castShadow = false;
+    root.add(fillLight);
+    let film = false, currentProfile = {}, savedDistance = light.distance, savedDecay = light.decay;
+    const originalFillColor = fillLight.color.clone(), originalEmission = material.emissiveIntensity;
+    function applyTreeLighting() {
+      const intensityScale = currentProfile.lighting?.practicalIntensityScale ?? 1;
+      light.intensity = (film ? 3.4 : TREE_LANTERN_INTENSITY) * intensityScale;
+      fillLight.intensity = TREE_FILL_INTENSITY * (film ? .4 : 1) * intensityScale;
+      fillLight.color.copy(originalFillColor);
+      if (film) fillLight.color.setHex(0xd9e2f2);
+      glowMaterial.emissiveIntensity = film ? 2.8 : 2;
+      glassMaterial.emissiveIntensity = film ? 0.38 : 0.3;
+      material.emissiveIntensity = film ? .04 : originalEmission;
+      applyFilmGrade(material, film);
+      if (film) { light.distance = 13.2; light.decay = 0.9; }
+    }
     return {
       root,
       light,
+      fillLight,
+      setFilmTreatment(active) {
+        const next = Boolean(active); if (disposed || next === film) return;
+        if (next) { savedDistance = light.distance; savedDecay = light.decay; }
+        film = next;
+        if (!film) { light.distance = savedDistance; light.decay = savedDecay; }
+        applyTreeLighting();
+      },
       applyQuality(profile = {}) {
-        light.intensity = 2.8 * (profile.lighting?.practicalIntensityScale ?? 1);
+        currentProfile = profile; applyTreeLighting();
       },
       dispose,
     };

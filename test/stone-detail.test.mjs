@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createStoneDetailController,
+  groundMaterialUrl,
+  GROUND_DETAIL_SETTINGS,
   paintStoneCell,
   STONE_DETAIL_SETTINGS,
 } from "../src/scene/stone-detail.js";
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
-function harness({ tier = "high", disabled = false, failApply = false } = {}) {
+function harness({ tier = "high", disabled = false, failApply = false, kinds, urlFor } = {}) {
   const requests = [],
     applied = [],
     resets = [],
@@ -15,6 +17,8 @@ function harness({ tier = "high", disabled = false, failApply = false } = {}) {
   const controller = createStoneDetailController({
     profile: { tier },
     disabled,
+    kinds,
+    urlFor,
     apply(sources) {
       applied.push(sources);
       if (failApply) throw new Error("canvas upload failed");
@@ -188,4 +192,58 @@ test("brick detail uses matching source crops within the stone cell and leaves c
       kind === "color" ? ["save", "draw", "restore"] : ["save", "scale", "draw", "restore"],
     );
   }
+});
+
+test("ground material reuses the loader with color and normal kinds keyed by name", async () => {
+  const h = harness({ kinds: ["color", "normal"], urlFor: groundMaterialUrl });
+  assert.deepEqual(
+    h.requests.map((r) => r.url),
+    ["/images/materials/ground-color-1024.webp", "/images/materials/ground-normal-1024.webp"],
+  );
+  const color = h.image(),
+    normal = h.image();
+  h.requests[0].resolve(color);
+  h.requests[1].resolve(normal);
+  await flush();
+  assert.equal(h.applied.length, 1);
+  assert.equal(h.applied[0].color, color);
+  assert.equal(h.applied[0].normal, normal);
+  assert.equal("roughness" in h.applied[0], false);
+  assert.equal(h.statuses.at(-1).status, "ready");
+  assert.equal(h.controller.applyQuality({ tier: "balanced" }), true);
+  assert.deepEqual(h.resets, [{ disposing: false }]);
+  assert.equal(h.requests.at(-1).url, "/images/materials/ground-normal-512.webp");
+  h.controller.dispose();
+});
+
+test("ground material keeps the procedural pair when the normal map fails", async () => {
+  const h = harness({ kinds: ["color", "normal"], urlFor: groundMaterialUrl });
+  const color = h.image();
+  h.requests[0].resolve(color);
+  h.requests[1].reject(new Error("404"));
+  await flush();
+  assert.equal(h.applied.length, 0);
+  assert.equal(color.closed, 1);
+  assert.equal(h.statuses.at(-1).status, "fallback");
+  h.controller.dispose();
+});
+
+test("ground detail settings stay restrained", () => {
+  assert.ok(GROUND_DETAIL_SETTINGS.repeat >= 4 && GROUND_DETAIL_SETTINGS.repeat <= 8);
+  assert.ok(GROUND_DETAIL_SETTINGS.normalScale > 0 && GROUND_DETAIL_SETTINGS.normalScale <= 1);
+});
+
+
+test("ground map preparation releases a completed color map if normal preparation fails", async () => {
+  const { createGroundDetailMaps } = await import("../src/scene/stone-detail.js");
+  let disposed = 0;
+  const color = { dispose() { disposed++; } };
+  assert.throws(() => createGroundDetailMaps({}, (_, kind) => {
+    if (kind === "normal") throw new Error("canvas unavailable");
+    return color;
+  }), /canvas unavailable/);
+  assert.equal(disposed, 1);
+  const normal = { dispose() { throw new Error("premature disposal"); } };
+  assert.deepEqual(createGroundDetailMaps({ color, normal }, source => source), { color, normal });
+  assert.equal(disposed, 1);
 });

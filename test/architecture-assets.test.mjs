@@ -111,6 +111,121 @@ test("architecture requests require live high/balanced quality and repeated stat
   }
 });
 
+test("complete mode requests only the selected tower and independent tree after the live gate", async () => {
+  const h = harness({ towerModel: "complete" });
+  h.controller.setQuality({ tier: "high" });
+  h.controller.setQuality({ tier: "low" }, true);
+  assert.equal(h.requests.length, 0);
+  h.controller.setQuality({ tier: "high" }, true);
+  assert.deepEqual(
+    h.requests.map(({ role }) => role),
+    ["tower", "tree"],
+  );
+  assert.deepEqual(
+    h.requests.map(({ url }) => url),
+    [ARCHITECTURE_ASSET_URLS.high.tower, ARCHITECTURE_ASSET_URLS.high.tree],
+  );
+  h.controller.applyQuality({ tier: "high" });
+  h.controller.setLive(true);
+  assert.equal(h.requests.length, 2);
+  const [tree] = complete(h, ["tree"]);
+  await flush();
+  assert.equal(h.treeReady.length, 1);
+  assert.equal(h.towerReady.length, 0);
+  const [tower] = complete(h, ["tower"]);
+  await flush();
+  assert.deepEqual(Object.keys(h.towerReady[0].assets), ["tower"]);
+  assert.equal(h.towerReady[0].assets.tower, tower);
+  assert.equal(h.towerReady[0].context.tier, "high");
+  assertReleased(tree, 0);
+  assertReleased(tower, 0);
+  h.controller.applyQuality({ tier: "low" });
+  for (const role of ["tower", "tree"]) {
+    assert.ok(h.events.indexOf(`${role}:restore`) < h.events.indexOf(`${role}:cleanup`));
+    assert.ok(h.events.indexOf(`${role}:cleanup`) < h.events.indexOf(`high-${role}:geometry`));
+  }
+  assertReleased(tower);
+  assertReleased(tree);
+  assert.equal(h.controller.dispose(), true);
+  assert.equal(h.controller.dispose(), false);
+});
+
+test("complete mode ignores stale parses after a quality change and keeps current assets alive", async () => {
+  const h = harness({ towerModel: "complete" });
+  h.controller.setQuality({ tier: "high" }, true);
+  const highRequests = h.requests.slice();
+  h.controller.applyQuality({ tier: "balanced" });
+  assert.ok(highRequests.every(({ signal }) => signal.aborted));
+  assert.deepEqual(
+    h.requests.map(({ tier, role }) => [tier, role]),
+    [
+      ["high", "tower"],
+      ["high", "tree"],
+      ["balanced", "tower"],
+      ["balanced", "tree"],
+    ],
+  );
+  const current = complete(h, ["tower", "tree"], "balanced");
+  await flush();
+  const stale = complete(h, ["tower", "tree"]);
+  await flush();
+  stale.forEach((parsed) => assertReleased(parsed));
+  current.forEach((parsed) => assertReleased(parsed, 0));
+  assert.equal(h.towerReady.length, 1);
+  assert.equal(h.towerReady[0].context.tier, "balanced");
+  assert.equal(h.treeReady.length, 1);
+  h.controller.dispose();
+  current.forEach((parsed) => assertReleased(parsed));
+});
+
+test("complete mode retains fallback on tower download or assembly failure without interrupting the tree", async () => {
+  for (const failTowerReady of [false, true]) {
+    const h = harness({ towerModel: "complete", failTowerReady });
+    h.controller.setQuality({ tier: "high" }, true);
+    const [tree] = complete(h, ["tree"]);
+    let tower;
+    if (failTowerReady) [tower] = complete(h, ["tower"]);
+    else request(h, "tower").reject(new Error("tower unavailable"));
+    await flush();
+    assert.equal(h.statuses.findLast((status) => status.kind === "tower").status, "fallback");
+    assert.equal(h.treeReady.length, 1);
+    assertReleased(tree, 0);
+    if (tower) assertReleased(tower);
+    assert.equal(request(h, "tower").signal.aborted, true);
+    assert.equal(request(h, "tree").signal.aborted, false);
+    h.controller.applyQuality({ tier: "high" });
+    h.controller.setLive(true);
+    assert.equal(h.requests.length, 2, "failed loads do not retry every frame");
+    h.controller.dispose();
+    assertReleased(tree);
+    if (tower) assertReleased(tower);
+  }
+});
+
+test("complete mode releases late tower parses after low quality, gate closure, or teardown", async () => {
+  for (const action of ["low", "gate", "dispose"]) {
+    const h = harness({ towerModel: "complete" });
+    h.controller.setQuality({ tier: "high" }, true);
+    const [tree] = complete(h, ["tree"]);
+    await flush();
+    if (action === "low") h.controller.applyQuality({ tier: "low" });
+    else if (action === "gate") h.controller.setLive(false);
+    else h.controller.dispose();
+    assert.equal(request(h, "tower").signal.aborted, true);
+    const [lateTower] = complete(h, ["tower"]);
+    await flush();
+    assertReleased(tree);
+    assertReleased(lateTower);
+    assert.equal(h.towerReady.length, 0);
+    h.controller.dispose();
+    assertReleased(lateTower);
+  }
+});
+
+test("an unknown tower model cannot silently select a different asset set", () => {
+  assert.throws(() => createArchitectureAssetController({ towerModel: "unknown" }), /tower model/);
+});
+
 test("four tower roles commit atomically while the tree can become ready independently", async () => {
   const h = harness();
   h.controller.setQuality({ tier: "high" }, true);

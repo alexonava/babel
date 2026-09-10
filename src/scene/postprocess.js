@@ -18,6 +18,7 @@ const GRADING_SHADER = {
   uniforms: {
     tDiffuse: { value: null },
     uCelMix: { value: 0.24 },
+    uInkMix: { value: 0.14 },
     uContrast: { value: 1.1 },
     uHighlightWarmMix: { value: 0.2 },
     uShadowCoolMix: { value: 0.34 },
@@ -27,6 +28,7 @@ const GRADING_SHADER = {
   fragmentShader: `
 uniform sampler2D tDiffuse;
 uniform float uCelMix;
+uniform float uInkMix;
 uniform float uContrast;
 uniform float uHighlightWarmMix;
 uniform float uShadowCoolMix;
@@ -71,7 +73,7 @@ void main() {
   float horizontalEdge = abs(luminanceAt(vec2(uTexelSize.x, 0.0)) - luminanceAt(vec2(-uTexelSize.x, 0.0)));
   float verticalEdge = abs(luminanceAt(vec2(0.0, uTexelSize.y)) - luminanceAt(vec2(0.0, -uTexelSize.y)));
   float inkContour = smoothstep(0.2, 0.48, max(horizontalEdge, verticalEdge));
-  color = mix(color, vec3(0.035, 0.055, 0.095), inkContour * 0.14);
+  color = mix(color, vec3(0.035, 0.055, 0.095), inkContour * uInkMix);
 
   gl_FragColor = vec4(clamp(color, 0.0, 1.0), texel.a);
 }
@@ -86,6 +88,9 @@ const VIGNETTE_GRAIN_SHADER = {
     uVignetteStrength: { value: 0.12 },
     uGrainEnabled: { value: 1 },
     uGrainStrength: { value: 0.018 },
+    uTextProtection: { value: 0 },
+    uTextBottom: { value: 0.25 },
+    uFade: { value: 0 },
   },
   vertexShader: PASS_VERTEX_SHADER,
   fragmentShader: `
@@ -94,6 +99,9 @@ uniform int uVignetteEnabled;
 uniform float uVignetteStrength;
 uniform int uGrainEnabled;
 uniform float uGrainStrength;
+uniform float uTextProtection;
+uniform float uTextBottom;
+uniform float uFade;
 varying vec2 vUv;
 
 float hash(vec2 p) {
@@ -115,6 +123,9 @@ void main() {
     color += grain * uGrainStrength;
   }
 
+  float textShade = smoothstep(1.0 - uTextBottom - .12, 1.0 - uTextBottom + .10, vUv.y);
+  color *= 1.0 - .28 * uTextProtection * textShade;
+  color *= 1.0 - uFade;
   gl_FragColor = vec4(clamp(color, 0.0, 1.0), texel.a);
 }
 `,
@@ -144,9 +155,24 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
   composer.addPass(vignetteGrainPass);
 
   let reducedTransparency = Boolean(transparencyQuery?.matches);
+  let film = false,
+    textProtection = false,
+    fade = 0;
 
   function applyProfile(profile = {}) {
-    const settings = profile.postprocessSettings || {};
+    const baseline = profile.postprocessSettings || {};
+    const settings = film
+      ? {
+          ...baseline,
+          bloomStrength: 0.2,
+          celMix: 0.16,
+          contrast: 0.99,
+          grainStrength: 0.014,
+          highlightWarmMix: 0.2,
+          shadowCoolMix: 0.1,
+          vignetteStrength: 0.14,
+        }
+      : baseline;
     const gradingEnabled = profile.postprocessGrading !== false;
     const bloomEnabled = profile.postprocessBloom === true;
     const vignetteEnabled = profile.postprocessVignette === true && !reducedTransparency;
@@ -156,10 +182,12 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
     bloomPass.strength = settings.bloomStrength ?? 0.18;
     gradingPass.enabled = gradingEnabled;
     gradingPass.uniforms.uCelMix.value = settings.celMix ?? 0.24;
+    gradingPass.uniforms.uInkMix.value = film ? 0 : 0.14;
     gradingPass.uniforms.uContrast.value = settings.contrast ?? 1.06;
     gradingPass.uniforms.uHighlightWarmMix.value = settings.highlightWarmMix ?? 0.14;
     gradingPass.uniforms.uShadowCoolMix.value = settings.shadowCoolMix ?? 0.25;
-    vignetteGrainPass.enabled = vignetteEnabled || grainEnabled;
+    vignetteGrainPass.enabled =
+      vignetteEnabled || grainEnabled || (film && textProtection) || fade > 0;
     vignetteGrainPass.uniforms.uVignetteEnabled.value = vignetteEnabled ? 1 : 0;
     vignetteGrainPass.uniforms.uVignetteStrength.value = settings.vignetteStrength ?? 0.08;
     vignetteGrainPass.uniforms.uGrainEnabled.value = grainEnabled ? 1 : 0;
@@ -207,6 +235,32 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
         if (typeof pass.dispose === "function") pass.dispose();
       }
       if (typeof composer.dispose === "function") composer.dispose();
+    },
+    setFilmTreatment(active) {
+      film = Boolean(active);
+      if (!film) {
+        textProtection = false;
+        vignetteGrainPass.uniforms.uTextProtection.value = 0;
+      }
+      applyProfile(currentProfile);
+    },
+    // Tour cuts dip to black through the existing final pass; no added pass.
+    setFade(value = 0) {
+      const next = Math.max(0, Math.min(1, Number(value) || 0));
+      if (next === fade) return;
+      const toggled = next > 0 !== fade > 0;
+      fade = next;
+      vignetteGrainPass.uniforms.uFade.value = fade;
+      if (toggled) applyProfile(currentProfile);
+    },
+    setTextProtection(active, bottom = 0.25) {
+      const enabled = film && Boolean(active);
+      if (textProtection !== enabled) {
+        textProtection = enabled;
+        applyProfile(currentProfile);
+      }
+      vignetteGrainPass.uniforms.uTextProtection.value = enabled ? 1 : 0;
+      vignetteGrainPass.uniforms.uTextBottom.value = bottom;
     },
     setQualityProfile(profile = {}) {
       currentProfile = profile;

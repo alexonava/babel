@@ -98,6 +98,45 @@ test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", 
   assert.equal(rendering.ensureOutlinePass(), outline);
   rendering.applyQuality(profile, { pixelRatio: 1.5 });
   assert.equal(rendering.lights.fill.intensity, 0.31);
+  rendering.setGroundedLighting(true);
+  assert.equal(rendering.lights.sun.color.getHex(), 0xd9e2f2);
+  assert.equal(rendering.lights.sun.intensity, 2.9 * 0.8);
+  assert.equal(rendering.lights.fill.intensity, 0.31 * 1.5);
+  rendering.applyQuality(profile);
+  assert.equal(rendering.lights.sun.intensity, 2.9 * 0.8);
+  assert.equal(rendering.lights.fill.intensity, 0.31 * 1.5);
+  rendering.applyQuality({
+    ...profile,
+    lighting: { ...profile.lighting, directionalIntensity: 2, fillIntensity: 0.2 },
+  });
+  assert.equal(rendering.lights.sun.intensity, 1.6);
+  assert.equal(rendering.lights.fill.intensity, 0.2 * 1.5);
+  rendering.setGroundedLighting(false);
+  assert.equal(rendering.lights.sun.intensity, 2);
+  assert.equal(rendering.lights.fill.intensity, 0.2);
+  rendering.applyQuality(profile);
+  assert.equal(rendering.lights.sun.color.getHex(), 0xffffff);
+  assert.equal(rendering.lights.sun.intensity, 2.9);
+  assert.equal(rendering.lights.fill.intensity, 0.31);
+  const beforePosition = rendering.lights.sun.position.clone(),
+    beforeTarget = rendering.lights.sun.target.position.clone();
+  const direction = beforePosition.clone().sub(beforeTarget);
+  rendering.setFilmTreatment(true);
+  rendering.focusFilmShadow(new beforeTarget.constructor(55, 8, 36), 12);
+  assert.ok(
+    rendering.lights.sun.position
+      .clone()
+      .sub(rendering.lights.sun.target.position)
+      .distanceTo(direction) < 1e-6,
+  );
+  assert.equal(rendering.lights.sun.shadow.camera.left, -32);
+  rendering.applyQuality(profile);
+  assert.equal(rendering.lights.fill.intensity, 0.31 * 1.1);
+  rendering.setFilmTreatment(false);
+  assert.deepEqual(rendering.lights.sun.position.toArray(), beforePosition.toArray());
+  assert.deepEqual(rendering.lights.sun.target.position.toArray(), beforeTarget.toArray());
+  assert.equal(rendering.lights.sun.shadow.camera.left, -34);
+
   rendering.applyQuality({
     ...profile,
     lighting: {

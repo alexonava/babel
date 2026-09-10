@@ -125,7 +125,7 @@
       },
       shadows: {
         enabled: true,
-        mapSize: 1024,
+        mapSize: 2048,
       },
       postprocessGrading: true,
       postprocessBloom: true,
