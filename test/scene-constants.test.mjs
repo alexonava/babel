@@ -26,7 +26,7 @@ test("WORLD constants are frozen and expose the documented orbit geometry", asyn
   assert.ok(Object.isFrozen(w));
   assert.ok(Object.isFrozen(w.SUN_DIRECTION));
   assert.ok(Object.isFrozen(w.FILL_LIGHT_POSITION));
-  assert.ok(Object.isFrozen(w.MOON_POSITION));
+  assert.ok(Object.isFrozen(w.SUN_POSITION));
 
   assert.equal(w.FLOOR_Y, 0);
   assert.ok(w.GROUND_OVERLAY_RADIUS > 0);

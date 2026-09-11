@@ -56,7 +56,13 @@ Models load after the first rendered scene frame. Complete mode downloads only t
 
 The total optional model and embedded-texture budgets remain 6 MiB high and 3 MiB balanced per selected mode. The build fingerprints all twelve GLBs under `images/architecture/`. The installed Three.js GLTFLoader needs no external decoder or new dependency. Embedded image decoding uses local blob URLs; the content policy allows these for images and connections while retaining same-origin network restrictions.
 
-This local pilot is pending visual acceptance. Existing posters and the protected publication workflow remain unchanged.
+The complete watchtower and the original sun are deployed. The subsequent solar and starfield refinement described below remains local; existing posters and the protected publication workflow remain unchanged.
+
+## Solar and starfield refinement
+
+The current branch replaces the released solar sprite swarm with an internally owned spherical photosphere, rooted plasma loops, and a compact asymmetric corona. A seeded point field replaces the grid-based stars. The apparent disc size and anchor, tower, cameras, page layout, night palette, and lighting remain preserved. Quality tiers control surface detail, loop counts, and star counts; all resources follow the existing subsystem lifecycle.
+
+This refinement is local and awaits visual acceptance. See [SOLAR-QA.md](SOLAR-QA.md) for the release baseline, comparison evidence, performance measurements, and the outstanding local Lighthouse gate. Refresh the fallback posters only after visual acceptance.
 
 ## Authored ground material
 

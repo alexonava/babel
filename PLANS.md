@@ -32,7 +32,7 @@ Anyone (human or agent) can propose additions. Keep entries to one line. Size is
 
 ## Active task
 
-_No active task. Pick one from the backlog or fill in the template below when starting new work._
+Solar and starfield refinement is implemented on `codex/solar-detail`, pending visual acceptance. PR #95 and its original sun are released. The upgrade preserves scene composition, uses four celestial draws, and passes 272 tests. See [SOLAR-QA.md](SOLAR-QA.md) for measured comparisons and the local Lighthouse performance limitation. After acceptance, refresh posters and satisfy the existing release gates before publication.
 
 <!-- When starting a task, replace the line above with a filled-in copy of the template below. -->
 
