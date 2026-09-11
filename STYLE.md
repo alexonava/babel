@@ -41,3 +41,13 @@ The page should feel intentional and still. It can be atmospheric, but it should
 - Preserve the current overall alignment and composition unless the task explicitly calls for a layout change.
 - Don't add frameworks, extra font payload, or decorative assets without approval.
 - Prefer atmospheric depth from gradients, lighting, and procedural texture instead of piling on UI chrome.
+
+## Cinematic UI baseline
+
+- Use the loaded 500-weight Cormorant face for the hero and parchment headings; avoid synthetic bold. Keep the existing title scale, line heights, and copy.
+- Foreground hierarchy is warm parchment, muted stone, then metadata. UI controls use the shared surface/line/focus tokens; avoid bright blue chrome or glossy buttons.
+- Camera-review controls stay compact with quiet lower rules and explicit focus outlines. They remain opt-in preview controls.
+- Keep model icons at 80% brightness. Labels stay visible and independent of the image; hover lift remains restrained.
+- About and Contact share subdued parchment, dark ink, and a dim scene backdrop. Contact uses a small matte wax impression; the close control is flat and legible.
+- Preserve hero/navigation bounds because scene framing uses those DOM rectangles. Recheck phone and desktop framing whenever text metrics or spacing change.
+- Panel motion is a short 12px settle. Reduced motion removes the settle and close-button movement; maintain keyboard focus trapping/restoration.

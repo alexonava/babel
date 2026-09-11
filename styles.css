@@ -63,16 +63,20 @@
      be the clear focal word. One notch brighter than --text-muted-accent
      so it holds hero-level presence. */
   --calm-prefix: #ebe4d4;
-  --text: #f7f1ea;
-  --muted: #d0c4ba;
+  --text: #e5dfd3;
+  --muted: #bdb6aa;
   --text-primary: var(--text);
   --text-secondary: var(--muted);
-  --text-meta: #cbc0b3;
+  --text-meta: #b9b1a4;
   --text-accent: var(--text-muted-accent);
   --text-meta-shadow: 0 2px 8px rgba(7, 10, 14, 0.42), 0 0 10px rgba(198, 208, 202, 0.08);
   --shadow-deep: 0 30px 84px rgba(0, 0, 0, 0.38);
   --shadow-panel: 0 18px 48px rgba(7, 10, 20, 0.24);
   --border-soft: rgba(241, 229, 212, 0.16);
+  --ui-surface: #161719;
+  --ui-line: #6d6559;
+  --ui-focus: #d3b689;
+  --ui-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --border-strong: rgba(210, 218, 212, 0.34);
   --panel-surface: linear-gradient(180deg, rgba(85, 85, 82, 0.88) 0%, rgba(38, 40, 44, 0.82) 100%);
   --panel-sheen: linear-gradient(
@@ -172,7 +176,7 @@ main:focus {
 }
 
 :focus-visible {
-  outline: 3px solid rgba(214, 224, 218, 0.9);
+  outline: 3px solid var(--ui-focus);
   outline-offset: 4px;
 }
 
@@ -540,6 +544,7 @@ main:focus {
 }
 
 .hero-intro {
+  text-shadow: 0 2px 12px rgba(4, 7, 12, 0.65);
   max-width: 30ch;
   margin: 18px 0 0;
   color: var(--text-secondary);
@@ -569,13 +574,14 @@ main:focus {
 }
 
 .hero h1 {
+  font-weight: 500;
   font-size: clamp(48px, 8vw, 104px);
   max-width: 8ch;
   overflow-wrap: anywhere;
   /* Whisper of warm halo only — enough to feel lit-from-within without
      announcing itself. The muted palette does the work of keeping the
      type inside the scene. */
-  text-shadow: 0 0 44px rgba(198, 208, 202, 0.1);
+  text-shadow: 0 2px 22px rgba(4, 7, 12, 0.4);
 }
 
 .hero h1 .hero-word {
@@ -781,6 +787,7 @@ main:focus {
 }
 
 .btn-icon {
+  filter: brightness(0.8);
   object-fit: contain;
   width: 100%;
   height: 100%;
@@ -789,6 +796,7 @@ main:focus {
 }
 
 .btn-icon-label {
+  color: var(--text-secondary);
   position: absolute;
   left: 50%;
   bottom: calc(100% + 8px);
@@ -797,7 +805,6 @@ main:focus {
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--text-primary);
   opacity: 1;
   transform: translate(-50%, 0);
   pointer-events: none;
@@ -842,7 +849,7 @@ main:focus {
   -webkit-overflow-scrolling: touch;
   background:
     radial-gradient(circle at 50% 88%, rgba(188, 198, 190, 0.12) 0%, rgba(188, 198, 190, 0) 26%),
-    rgba(10, 11, 22, 0.44);
+    rgba(8, 10, 16, 0.64);
   opacity: 0;
   pointer-events: none;
   transition: opacity 280ms ease;
@@ -899,8 +906,8 @@ main:focus {
 
 .panel-surface {
   position: relative;
-  transform: translateY(22px);
-  transition: transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translateY(12px);
+  transition: transform 280ms var(--ui-ease);
 }
 
 .panel-overlay.open .panel-surface {
@@ -930,9 +937,9 @@ main:focus {
   overflow: hidden;
   color: #332d25;
   font-family: var(--font-body);
-  background-color: #d8cfbd;
+  background-color: #bfb39b;
   background-image:
-    radial-gradient(circle at 18% 18%, rgba(255, 248, 229, 0.34) 0%, rgba(255, 248, 229, 0) 42%),
+    radial-gradient(circle at 18% 18%, rgba(255, 248, 229, 0.16) 0%, rgba(255, 248, 229, 0) 42%),
     radial-gradient(circle at 86% 78%, rgba(96, 74, 48, 0.13) 0%, rgba(96, 74, 48, 0) 44%),
     repeating-linear-gradient(
       180deg,
@@ -941,7 +948,7 @@ main:focus {
       rgba(69, 58, 43, 0.1) calc(1.78em - 1px),
       rgba(69, 58, 43, 0.1) 1.78em
     ),
-    linear-gradient(180deg, #ded4c0 0%, #c8bea9 100%);
+    linear-gradient(180deg, #cbbfa7 0%, #b7aa92 100%);
   background-position:
     0 0,
     0 0,
@@ -970,6 +977,7 @@ main:focus {
 }
 
 .panel-parchment__sheet h2 {
+  font-weight: 500;
   max-width: 11ch;
   margin: 0;
   color: #29241e;
@@ -982,7 +990,7 @@ main:focus {
 .panel-parchment__sheet .panel-body {
   max-width: 38ch;
   margin: clamp(18px, 2.2vw, 26px) 0 0;
-  color: rgba(59, 51, 42, 0.82);
+  color: #393229;
   font-size: clamp(15px, 1.25vw, 17px);
   line-height: 1.66;
 }
@@ -1032,25 +1040,38 @@ main:focus {
   user-select: none;
 }
 
-/* Neutral seal in the lower-right of the Contact sheet. Pure CSS:
-   radial highlight + muted gradient + inner shadow for the rim. */
+/* Matte wax and a pressed initial tie Contact to the leather/paper icons. */
 .panel-parchment__seal {
   position: absolute;
   right: clamp(28px, 4vw, 56px);
   bottom: clamp(28px, 4vw, 56px);
   z-index: 1;
-  width: clamp(76px, 9vw, 108px);
-  height: clamp(76px, 9vw, 108px);
+  width: clamp(64px, 7vw, 88px);
+  height: clamp(64px, 7vw, 88px);
   border-radius: 50%;
   background:
-    radial-gradient(circle at 32% 28%, rgba(239, 236, 224, 0.68), rgba(239, 236, 224, 0) 38%),
+    radial-gradient(circle at 32% 28%, rgba(239, 220, 183, 0.15), rgba(239, 220, 183, 0) 62%),
     radial-gradient(circle at 70% 78%, rgba(58, 52, 44, 0.46), rgba(58, 52, 44, 0) 60%),
-    linear-gradient(155deg, #b9afa2 0%, #91897f 58%, #615b55 100%);
+    linear-gradient(155deg, #857052 0%, #705c43 58%, #564633 100%);
   box-shadow:
-    0 12px 22px rgba(28, 25, 22, 0.28),
-    inset 0 2px 0 rgba(246, 243, 232, 0.34),
-    inset 0 -8px 14px rgba(32, 29, 26, 0.3);
+    0 4px 10px rgba(28, 25, 22, 0.2),
+    inset 0 1px 0 rgba(246, 223, 180, 0.18),
+    inset 0 -3px 6px rgba(32, 29, 26, 0.2);
   pointer-events: none;
+}
+
+.panel-parchment__seal::after {
+  content: "A";
+  position: absolute;
+  inset: 14%;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(43, 32, 21, 0.4);
+  border-radius: 50%;
+  color: #443521;
+  font: 500 30px/1 var(--font-display);
+  text-shadow: 0 1px 0 rgba(229, 203, 155, 0.2);
+  box-shadow: 0 1px 0 rgba(229, 203, 155, 0.16);
 }
 
 @media (max-width: 640px) {
@@ -1084,8 +1105,8 @@ main:focus {
   }
 
   .panel-parchment__seal {
-    width: clamp(64px, 16vw, 84px);
-    height: clamp(64px, 16vw, 84px);
+    width: clamp(52px, 14vw, 64px);
+    height: clamp(52px, 14vw, 64px);
     right: clamp(20px, 6vw, 32px);
     bottom: clamp(20px, 6vw, 32px);
   }
@@ -1112,27 +1133,28 @@ main:focus {
   place-items: center;
   border: 1px solid rgba(64, 47, 30, 0.22);
   border-radius: 999px;
-  background: linear-gradient(135deg, rgba(238, 239, 232, 0.48), rgba(137, 132, 121, 0.3)), #b6afa3;
+  background: rgba(88, 72, 50, 0.08);
   color: #3b2c1e;
   font-size: 21px;
   line-height: 1;
   box-shadow:
-    0 10px 18px rgba(36, 24, 12, 0.22),
-    inset 0 1px 0 rgba(249, 247, 237, 0.5),
-    inset 0 -7px 10px rgba(72, 46, 24, 0.22);
-  transform: rotate(5deg);
+    inset 0 1px 0 rgba(249, 247, 237, 0.14);
+  transform: none;
   transition:
     transform 160ms ease,
     background 160ms ease,
     color 160ms ease;
 }
 
+.panel-parchment :focus-visible {
+  outline-color: #59472f;
+}
+
 .panel-close:hover,
 .panel-close:focus-visible {
-  background:
-    linear-gradient(135deg, rgba(248, 248, 240, 0.58), rgba(148, 144, 132, 0.34)), #c8c1b3;
+  background: rgba(88, 72, 50, 0.16);
   color: #241910;
-  transform: translateY(-1px) rotate(5deg);
+  transform: translateY(-1px);
 }
 
 @media (max-width: 820px) {
@@ -1269,6 +1291,7 @@ main:focus {
   .bottom-btn,
   .btn-icon-label,
   .panel-overlay,
+  .panel-close,
   .panel-card,
   .panel-surface,
   .panel-parchment__sheet,
@@ -1292,7 +1315,9 @@ main:focus {
 
   .bottom-btn--icon:hover,
   .bottom-btn--icon:focus-visible,
-  .bottom-btn--icon[aria-expanded="true"] {
+  .bottom-btn--icon[aria-expanded="true"],
+  .panel-close:hover,
+  .panel-close:focus-visible {
     transform: none;
   }
 
@@ -1505,17 +1530,29 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
   font: 400 12px/1.4 "Instrument Sans", sans-serif;
   color: #d8d4ca;
 }
-.scene-tour-label { flex-basis: 100%; }
+.scene-tour-label {
+  flex-basis: 100%;
+  color: var(--text-meta);
+  letter-spacing: 0.08em;
+  text-shadow: 0 2px 8px rgba(4, 7, 12, 0.7);
+}
 .scene-tour button,
 .scene-tour select {
-  border: 1px solid #686d77;
-  border-radius: 4px;
-  background: #17202b;
-  color: #eee8db;
+  border: 1px solid transparent;
+  border-bottom-color: var(--ui-line);
+  border-radius: 0;
+  background: var(--ui-surface);
+  color: var(--text-secondary);
   font: inherit;
   padding: 7px 9px;
 }
 .scene-tour button { cursor: pointer; }
+.scene-tour button:hover:not(:disabled),
+.scene-tour select:hover {
+  border-bottom-color: var(--ui-focus);
+  color: var(--text-primary);
+  background: #22211f;
+}
 .scene-tour button:disabled { opacity: 0.55; cursor: default; }
 .scene-tour button:focus-visible,
-.scene-tour select:focus-visible { outline: 2px solid #e8c998; outline-offset: 3px; }
+.scene-tour select:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 3px; }
