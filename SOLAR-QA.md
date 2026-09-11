@@ -1,6 +1,6 @@
 # Solar and starfield review
 
-Status: implemented locally on `codex/solar-detail`, awaiting visual acceptance. The upgraded renderer has not been pushed or deployed. Fallback posters remain the accepted production assets.
+Status: solar treatment accepted; the follow-up three-shot framing is implemented locally on `codex/solar-detail` for review. The upgraded renderer has not been pushed or deployed. Fallback posters remain the accepted production assets.
 
 ## Released baseline
 
@@ -15,9 +15,9 @@ The release used the existing authenticated GitHub browser and connector session
 - `src/scene/solar-body.js` owns the spherical photosphere, surface-rooted prominence ribbons, and asymmetric corona. Layered convection, evolving granulation, sparse sunspot regions, faculae, limb darkening, and slow rotation replace the sprite swarm. Local emission compression preserves highlight detail under the existing scene grading.
 - `src/scene/starfield.js` owns one seeded point field with mostly faint stars, restrained color variation, horizon extinction, and independent low-amplitude twinkling.
 - Both use the existing update, quality, resize, and disposal registry. No new project dependencies, asset downloads, lights, or public controls.
-- The solar anchor stays [-85, 55, -29]. The physical radius is derived from the released opaque disc: 6.5 × 1.15 × 0.81 ÷ 2. The former MOON_POSITION internal constant is now SUN_POSITION.
+- The original renderer upgrade retained [-85, 55, -29]; the framing follow-up below changes only its fixed position. The physical radius is derived from the released opaque disc: 6.5 × 1.15 × 0.81 ÷ 2. The former MOON_POSITION internal constant is now SUN_POSITION.
 - High/balanced/low use 12/6/0 loops and 4,200/2,600/1,200 stars. Surface shader detail also scales by tier. The loop material uses a single transparent pass.
-- Downstream terrain/cloud random-number consumption is preserved. Tower geometry, cameras, lighting, palette, and page layout were not changed.
+- Downstream terrain/cloud random-number consumption is preserved. The original renderer upgrade did not change tower geometry, cameras, lighting, palette, or page layout. The framing follow-up below adjusts three shot configurations.
 
 The appearance is informed by [NASA's solar structure reference](https://science.nasa.gov/sun/facts/). It is a restrained artistic rendering for the existing night scene, not a physical solar simulation.
 
@@ -83,3 +83,13 @@ Ignored local evidence lives in `.tmp-preview-review/`:
 - `lighthouse-{baseline,upgrade}-results.json`; full latest reports in `.lighthouseci/`
 
 After visual acceptance: refresh the fallback posters, rerun release checks including Lighthouse, then use the protected production workflow. Do not publish the upgraded visuals before acceptance.
+
+## Three-shot solar framing follow-up
+
+The sun now has one fixed anchor, **[-85, 55, -14]**, for Arrival, The watch, and Gallery detail. Radius, shaders, lighting, and all renderer code are unchanged. Arrival retains its reference eye/angle/FOV, with the slow sweep reduced from 4 to 3 degrees for narrow-phone edge clearance. The watch turns from -40 to -4 degrees. Gallery turns from -26 to -5 degrees, lowers its eye from 0.70 to 0.62 of tower height, widens FOV from 30 to 31 degrees, and extends its upper fit region from 0.84 to 0.96 to leave sky below phone tour controls. Its bracket/railing lower region remains 0.60. The other six shot configurations are unchanged.
+
+Validation: **274 tests pass**, including actual high/balanced tower-mesh projection and raycast tests for all three solar shots in six desktop/phone layouts (1600x900, 450x800, 390x844, with and without controls). Nine sweep samples and five tour/dolly samples per configuration keep the radius-4.2 corona envelope inside the viewport, clear of text, and unoccluded by the actual roof mesh. The physical disc remains radius 3.027375.
+
+All nine compositions were captured on desktop and phone at center and both sweep extremes. Final selected-shot captures were refreshed after tuning; contact sheets and camera comparisons are retained in ignored local QA files under `.tmp-preview-review/captures/framed-*`. The six untouched shots retain their compositions (small capture-time/font-layout differences are recorded in `framing-comparison.json`). Final Gallery review confirms the roof, railing and timber supports remain visible. Chrome background throttling interrupted some captures; bringing the QA tab to the foreground restored capture timing.
+
+`npm run verify`, `npm test`, `npm run build:dist`, and `git diff --check` pass. Final scene: **scene.6754847f.js**, **802.9 KiB** against the 810 KiB ceiling. UI/CSS hashes remain unchanged. The prior Lighthouse observations above still apply; this framing-only pass does not claim a new Lighthouse run. Production and fallback posters are unchanged. Review at [local preview](http://127.0.0.1:4175/?quality=high&view=tower&angle=1&tour=5).

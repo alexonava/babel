@@ -13,9 +13,10 @@ export function wantsFilmTreatment(search = "") {
 export const DIRECTED_SHOTS = {
   tower: [
     // Arrival: the full tower and footing from a slightly lower eye, so it looms.
-    { name: "Arrival", region: [0, 1], fov: 38, azimuth: -6, height: 0.34, arc: 4 },
-    // The watch: camera just below the gallery, looking up at balcony and roof.
-    { name: "The watch", region: [0.55, 1], fov: 32, azimuth: -40, height: 0.66, arc: 2 },
+    // A three-degree sweep retains corona clearance on narrow phones.
+    { name: "Arrival", region: [0, 1], fov: 38, azimuth: -6, height: 0.34, arc: 3 },
+    // The watch: below the gallery, with the fixed sun beside the roof.
+    { name: "The watch", region: [0.55, 1], fov: 32, azimuth: -4, height: 0.66, arc: 2 },
     // Threshold: low and close at the entrance; buttresses and earth contact.
     { name: "Threshold", region: [0, 0.45], fov: 36, azimuth: 72, height: 0.12, arc: 2 },
     // Masonry study: an eye-level section of the wall, framed as a person
@@ -23,8 +24,10 @@ export const DIRECTED_SHOTS = {
     // scale and joints without reading as a texture swatch.
     { name: "Masonry study", region: [0.22, 0.58], fov: 32, azimuth: 44, height: 0.42, arc: 1, margin: 0.96 },
     // Gallery detail: the timber brackets and balcony rail in a human-scale
-    // view. The small arc preserves the roofline and shadow rhythm.
-    { name: "Gallery detail", region: [0.6, 0.84], fov: 30, azimuth: -26, height: 0.7, arc: 1, margin: 0.96 },
+    // view. A lower eye keeps the fixed sun above the roof while retaining
+    // the brackets and railing. Extra upper framing leaves room for the corona
+    // below phone tour controls; the small arc preserves the shadow rhythm.
+    { name: "Gallery detail", region: [0.6, 0.96], fov: 31, azimuth: -5, height: 0.62, arc: 1, margin: 0.96 },
   ],
   // Tree shots use a tighter 0.93 fit margin (vs. the 0.85 default) so the
   // tree reads closer and more intimate in frame; tower shots keep the
