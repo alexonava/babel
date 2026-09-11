@@ -1,254 +1,285 @@
 <!doctype html>
+
 <html lang="en">
+
   <head>
+
     <meta charset="UTF-8" />
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
     <title>Alex Nava</title>
+
     <meta name="description" content="Alex Nava’s personal website" />
+
     <meta property="og:title" content="Alex Nava" />
+
     <meta property="og:description" content="Alex Nava’s personal website" />
+
     <meta property="og:type" content="website" />
+
     <meta property="og:url" content="https://alexnava.me/" />
+
     <meta property="og:image" content="https://alexnava.me/og.png" />
+
     <meta property="og:image:width" content="1200" />
+
     <meta property="og:image:height" content="630" />
+
     <meta property="og:image:alt" content="Alex Nava." />
+
     <meta name="twitter:card" content="summary_large_image" />
+
     <meta name="twitter:title" content="Alex Nava" />
+
     <meta name="twitter:description" content="Alex Nava’s personal website" />
+
     <meta name="twitter:image" content="https://alexnava.me/og.png" />
+
     <meta name="twitter:image:alt" content="Alex Nava." />
+
     <meta name="theme-color" content="#0b1020" />
+
     <meta name="mobile-web-app-capable" content="yes" />
+
     <meta name="apple-mobile-web-app-capable" content="yes" />
+
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
     <meta name="apple-mobile-web-app-title" content="Alex Nava" />
+
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
     <link rel="apple-touch-icon" href="/icon.svg" />
+
     <link rel="manifest" href="/manifest.webmanifest" />
+
     <link rel="canonical" href="https://alexnava.me/" />
+
     <link rel="alternate" type="text/markdown" href="/index.md" />
+
     <script type="application/ld+json">
+
       {
+
         "@context": "https://schema.org",
+
         "@type": "ProfilePage",
+
         "mainEntity": {
+
           "@type": "Person",
+
           "name": "Alex Nava",
+
           "description": "Alex Nava’s personal website",
+
           "url": "https://alexnava.me/"
+
         },
+
         "headline": "Alex Nava",
+
         "description": "Alex Nava’s personal website",
+
         "url": "https://alexnava.me/",
+
         "dateModified": "2026-09-08"
+
       }
+
     </script>
+
     <link rel="stylesheet" href="/styles.css?v=648" />
+
     <link rel="preload" href="/scripts/app.js?v=648" as="script" />
-    <meta name="babel:scene-script" content="/scripts/scene.js?v=648" data-scene-script />
+
     <link
+
       rel="preload"
+
       href="/fonts/instrument-sans-400.woff2"
+
       as="font"
+
       type="font/woff2"
+
       crossorigin
+
     />
+
     <link
+
       rel="preload"
+
       href="/fonts/instrument-sans-600.woff2"
+
       as="font"
+
       type="font/woff2"
+
       crossorigin
+
     />
+
     <link
+
       rel="preload"
+
       href="/fonts/cormorant-garamond-500.woff2"
+
       as="font"
+
       type="font/woff2"
+
       crossorigin
+
     />
+
   </head>
-  <body>
+
+  <body class="estate-home">
+
     <a class="skip-link" href="#main">Skip to main content</a>
 
-    <div class="loading-ritual" aria-hidden="true">
-      <div class="loading-ritual__content">
-        <svg
-          class="loading-ritual__seal"
-          viewBox="0 0 240 240"
-          role="presentation"
-          focusable="false"
-        >
-          <circle
-            class="loading-ritual__ring loading-ritual__ring--outer"
-            cx="120"
-            cy="120"
-            r="92"
-          />
-          <circle
-            class="loading-ritual__ring loading-ritual__ring--inner"
-            cx="120"
-            cy="120"
-            r="76"
-          />
+    <main id="main" class="estate-main" tabindex="-1">
 
-          <g class="loading-ritual__tower">
-            <path d="M89 176h62"></path>
-            <path d="M96 176V98l9-11V68l15-17 15 17v19l9 11v78"></path>
-            <path d="M120 51V34"></path>
-            <path d="M108 112h24"></path>
-            <path d="M105 87h30"></path>
-            <path d="M109 176v-42h22v42"></path>
-            <path d="M115 72h10v13h-10z"></path>
-            <path d="M115 116h10v12h-10z"></path>
-            <path d="M103 105h8v12h-8z"></path>
-            <path d="M129 105h8v12h-8z"></path>
-          </g>
-        </svg>
+      <header class="estate-identity" id="home">
 
-        <div class="loading-ritual__identity">
-          <p class="loading-ritual__motto">Alex Nava</p>
+        <h1>Alex Nava</h1>
+
+        <p>A little about me and what I’m working on.</p>
+
+      </header>
+
+      <section class="estate-home-map" aria-label="Explore the estate">
+
+        <div class="estate-map">
+
+          <nav class="estate-destinations" aria-label="Site categories" hidden>
+
+            <button class="bottom-btn estate-destination estate-profile" data-panel="profile" aria-label="Profile" aria-expanded="false" aria-controls="panel-profile"><span>Profile</span></button>
+
+            <button class="bottom-btn estate-destination estate-experience" data-panel="experience" aria-label="Experience" aria-expanded="false" aria-controls="panel-experience"><span>Experience</span></button>
+
+            <button class="bottom-btn estate-destination estate-contact" data-panel="contact" aria-label="Contact" aria-expanded="false" aria-controls="panel-contact"><span>Contact</span></button>
+
+          </nav>
+
         </div>
-      </div>
-    </div>
 
-    <div class="scene-shell" aria-hidden="true">
-      <div id="home-scene" class="scene-canvas"></div>
-      <picture class="scene-poster" aria-hidden="true">
-        <source
-          media="(orientation: portrait)"
-          srcset="/images/scene-poster-portrait.webp"
-          width="900"
-          height="1600"
-        />
-        <img
-          src="/images/scene-poster-landscape.webp"
-          alt=""
-          width="1600"
-          height="900"
-          loading="eager"
-          fetchpriority="high"
-          decoding="async"
-        />
-      </picture>
-      <div class="scene-vignette"></div>
-    </div>
-    <div class="site-shell" aria-hidden="true"></div>
-
-    <main id="main" tabindex="-1">
-      <section id="home" class="hero section">
-        <div class="hero-minimal" id="hero-minimal">
-          <h1>
-            <span class="hero-word">Alex</span>
-            <span class="hero-word">Nava</span>
-          </h1>
-          <p class="hero-intro">A little about me and what I’m working on.</p>
-        </div>
       </section>
 
       <noscript>
-        <section class="section story-shell story-shell--noscript">
-          <p class="eyebrow">About</p>
-          <h2>A little about me.</h2>
-          <p class="story-text">
-            My background is in analytics, reporting, remediation, and controls, across banking and
-            health analytics. This is my personal corner of the web.
-          </p>
-          <p class="story-text">
-            <a href="mailto:alexonava@gmail.com">alexonava@gmail.com</a>
-          </p>
-        </section>
-      </noscript>
-    </main>
 
-    <!-- Bottom bar with expandable panels -->
-    <nav class="bottom-bar" aria-label="Site sections">
-      <button
-        class="bottom-btn bottom-btn--icon"
-        data-panel="about"
-        aria-expanded="false"
-        aria-controls="panel-about"
-        aria-label="About"
-      >
-        <canvas id="btn-icon-about" class="btn-icon" aria-hidden="true"></canvas>
-        <span class="btn-icon-label">About</span>
-      </button>
-      <button
-        class="bottom-btn bottom-btn--icon"
-        data-panel="contact"
-        aria-expanded="false"
-        aria-controls="panel-contact"
-        aria-label="Contact"
-      >
-        <canvas id="btn-icon-contact" class="btn-icon" aria-hidden="true"></canvas>
-        <span class="btn-icon-label">Contact</span>
-      </button>
-    </nav>
+
+
+        <nav class="estate-text-nav" aria-label="Categories"><a href="#profile-text">Profile</a> &middot; <a href="#experience-text">Experience</a> &middot; <a href="#contact-text">Contact</a></nav>
+
+        <section class="estate-text-section" id="profile-text"><h2>Profile</h2><p>This is my personal corner of the web. A little about me and what I’m working on.</p></section>
+
+        <section class="estate-text-section" id="experience-text"><h2>Experience</h2><p>My background is in analytics, reporting, remediation, and controls, across banking and health analytics.</p></section>
+
+        <section class="estate-text-section" id="contact-text"><h2>Contact</h2><a href="mailto:alexonava@gmail.com">alexonava@gmail.com</a></section>
+
+      </noscript>
+
+    </main>
 
     <p class="site-copyright">&copy; 2026 Alex Nava</p>
 
     <div
-      class="panel-overlay"
-      id="panel-about"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="panel-about-title"
-      hidden
-    >
-      <div class="panel-parchment panel-surface" tabindex="-1">
-        <button class="panel-close" aria-label="Close">&times;</button>
-        <div class="panel-parchment__sheet">
-          <span class="panel-parchment__watermark" aria-hidden="true">A</span>
-          <div class="panel-parchment__content">
-            <p class="eyebrow">About</p>
-            <h2 id="panel-about-title">A little about me.</h2>
-            <p class="panel-body">
-              My background is in analytics, reporting, remediation, and controls, across banking
-              and health analytics. This is my personal corner of the web.
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <div
       class="panel-overlay"
+
       id="panel-contact"
+
       role="dialog"
+
       aria-modal="true"
+
       aria-labelledby="panel-contact-title"
+
       hidden
+
     >
+
       <div class="panel-parchment panel-surface" tabindex="-1">
+
         <button class="panel-close" aria-label="Close">&times;</button>
+
         <div class="panel-parchment__sheet">
+
           <div class="panel-parchment__content">
+
             <p class="eyebrow">Contact</p>
+
             <h2 id="panel-contact-title">Say hello.</h2>
+
             <p class="panel-body">
+
               You can reach me at<br />
+
               <a href="mailto:alexonava@gmail.com">alexonava@gmail.com</a>
+
             </p>
+
           </div>
-          <span class="panel-parchment__seal" aria-hidden="true"></span>
+
         </div>
+
       </div>
+
     </div>
 
-    <aside class="dev-mode-hud" id="dev-mode-hud" hidden aria-hidden="true">
-      <div class="dev-mode-hud__row"><span>pos</span><span data-field="pos">0, 0, 0</span></div>
-      <div class="dev-mode-hud__row"><span>vel</span><span data-field="vel">0, 0, 0</span></div>
-      <div class="dev-mode-hud__row"><span>speed</span><span data-field="speed">0</span></div>
-      <div class="dev-mode-hud__row"><span>yaw</span><span data-field="yaw">0&deg;</span></div>
-      <div class="dev-mode-hud__row"><span>mode</span><span data-field="mode">idle</span></div>
-      <div class="dev-mode-hud__row">
-        <span>grounded</span><span data-field="grounded">yes</span>
+
+
+    <div class="panel-overlay" id="panel-profile" role="dialog" aria-modal="true" aria-labelledby="panel-profile-title" hidden>
+
+      <div class="panel-parchment panel-surface" tabindex="-1">
+
+        <button class="panel-close" aria-label="Close">&times;</button>
+
+        <div class="panel-parchment__sheet"><div class="panel-parchment__content">
+
+          <p class="eyebrow">Profile</p>
+
+          <h2 id="panel-profile-title">A little about me.</h2>
+
+          <p class="panel-body">This is my personal corner of the web. A little about me and what I’m working on.</p>
+
+        </div></div>
+
       </div>
-      <div class="dev-mode-hud__row"><span>autoRun</span><span data-field="autoRun">off</span></div>
-      <div class="dev-mode-hud__row"><span>ground</span><span data-field="ground">0</span></div>
-    </aside>
+
+    </div>
+
+
+
+    <div class="panel-overlay" id="panel-experience" role="dialog" aria-modal="true" aria-labelledby="panel-experience-title" hidden>
+
+      <div class="panel-parchment panel-surface" tabindex="-1">
+
+        <button class="panel-close" aria-label="Close">&times;</button>
+
+        <div class="panel-parchment__sheet"><div class="panel-parchment__content">
+
+          <p class="eyebrow">Experience</p>
+
+          <h2 id="panel-experience-title">My background.</h2>
+
+          <p class="panel-body">My background is in analytics, reporting, remediation, and controls, across banking and health analytics.</p>
+
+        </div></div>
+
+      </div>
+
+    </div>
+
+
 
     <script defer src="/scripts/app.js?v=648"></script>
+
   </body>
+
 </html>

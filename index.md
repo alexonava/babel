@@ -2,17 +2,21 @@
 title: Alex Nava
 description: Alex Nava’s personal website
 url: https://alexnava.me/
-dateModified: 2026-09-08
+dateModified: 2026-09-11
 ---
 
 # Alex Nava
 
 A little about me and what I’m working on.
 
-## A little about me.
+## Profile
 
-My background is in analytics, reporting, remediation, and controls, across banking and health analytics. This is my personal corner of the web.
+This is my personal corner of the web. A little about me and what I’m working on.
 
-## Say hello.
+## Experience
+
+My background is in analytics, reporting, remediation, and controls, across banking and health analytics.
+
+## Contact
 
 You can reach me at [alexonava@gmail.com](mailto:alexonava@gmail.com).

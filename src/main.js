@@ -9,7 +9,6 @@
     const ui = site.ui || {};
     if (typeof ui.initHeroChrome === "function") ui.initHeroChrome();
     if (typeof ui.initPanels === "function") ui.initPanels();
-    if (typeof ui.initBottomNavIcons === "function") ui.initBottomNavIcons();
   }
 
   function initScene() {

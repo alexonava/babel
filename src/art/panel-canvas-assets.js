@@ -1,14 +1,14 @@
 // PARKED — not currently imported anywhere, so esbuild won't bundle it.
 //
 // 2D canvas paintings of a hardcover notebook (About) and a folded letter
-// (Contact), rendered with the same PSX-dither vocabulary as the live
-// bottom-bar icons in src/ui/icons.js. Originally invoked through a size
+// (Contact), rendered with the same PSX-dither vocabulary as the former
+// procedural bottom-bar icons. Originally invoked through a size
 // guard inside drawNotebook / drawEnvelope (`if (width > 140)`) — the
 // guard never triggered because the bottom-bar canvases are fixed at 88px,
 // so this art shipped without ever being seen.
 //
 // Helpers (fillPoly, strokePolyline, hexToRgb, applyPsxDither, DITHER_4X4)
-// are intentionally duplicated from src/ui/icons.js so this module is
+// were copied from the former procedural icons so this module is
 // self-contained and trivially relocatable.
 //
 // To use: import this file once at boot, then call

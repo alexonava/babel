@@ -69,8 +69,8 @@ test("all directed framing regions fit desktop and phone through both movement e
         controller.setStatus({ kind: "tower", status: "ready" });
         controller.setSubject("tree", root);
         controller.setStatus({ kind: "tree", status: "ready" });
-        const shot = DIRECTED_SHOTS[subject][angle],
-          measured = measureShot(root, shot);
+        const shot = DIRECTED_SHOTS[subject][angle];
+        const measured = measureShot(root, shot);
         let frame;
         for (const t of [0, 12, 36, 48]) {
           assert.equal(controller.apply({ width: w, height: h, elapsedSeconds: t }), true);

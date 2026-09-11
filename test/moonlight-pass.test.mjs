@@ -68,7 +68,7 @@ test("tour shots open from black, dip to black before each cut, and hold clear w
   f.render(5 - TOUR_FADE.out / 2);
   close(f.tour.fade, 0.5);
   f.render(5.01);
-  assert.equal(f.controller.shot.name, "The watch");
+  assert.equal(f.controller.shot.name, "Threshold");
   assert.ok(f.tour.fade > 0.9);
   f.render(6);
   f.tour.toggle();
@@ -217,12 +217,11 @@ test("the lantern is an iron post lantern with glass, candle and flame, authored
   assert.equal(disposed, geometries.size + materials.size);
 });
 
-test("the nine directed shots keep their names and distinct viewpoints", () => {
+test("the eight directed shots keep their names and distinct viewpoints", () => {
   const all = [...DIRECTED_SHOTS.tower, ...DIRECTED_SHOTS.tree];
   assert.deepEqual(
     all.map((s) => s.name),
     [
-      "Arrival",
       "The watch",
       "Threshold",
       "Masonry study",
@@ -234,7 +233,7 @@ test("the nine directed shots keep their names and distinct viewpoints", () => {
     ],
   );
   const keys = new Set(all.map((s) => `${s.azimuth}/${s.height}/${s.region.join()}`));
-  assert.equal(keys.size, 9);
+  assert.equal(keys.size, 8);
   for (const shot of all) {
     assert.ok(shot.height >= 0.1 && shot.height <= 0.7);
     assert.ok(shot.fov >= 30 && shot.fov <= 46);

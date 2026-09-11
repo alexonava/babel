@@ -33,12 +33,18 @@
 
     let restoreFocusTarget = null;
     let activePanel = null;
+    const pendingHides = new Map();
+    const panelHistory = [];
+
+    function cancelHide(panel) {
+      pendingHides.get(panel)?.cancel();
+    }
 
     function setExpandedState(activePanelId = null) {
       buttons.forEach((button) => {
         button.setAttribute(
           "aria-expanded",
-          button.dataset.panel === activePanelId ? "true" : "false",
+          button.dataset.panel === activePanelId || panelHistory.some((entry) => entry.panel.id === `panel-${button.dataset.panel}`) ? "true" : "false",
         );
       });
     }
@@ -73,29 +79,39 @@
       panel.inert = true;
       panel.classList.remove("open");
 
-      const finishHide = () => {
-        if (!panel.classList.contains("open")) {
-          panel.hidden = true;
-        }
-      };
-
+      cancelHide(panel);
       if (reduceMotion?.matches) {
-        finishHide();
+        panel.hidden = true;
         return;
       }
 
+      // Every closing cycle owns its callbacks; reopening cancels that cycle.
+      const cycle = {};
+      const finishHide = () => {
+        if (pendingHides.get(panel) !== cycle) return;
+        cycle.cancel();
+        if (!panel.classList.contains("open")) panel.hidden = true;
+      };
       const onTransitionEnd = (event) => {
-        if (event.target !== panel) return;
-        panel.removeEventListener("transitionend", onTransitionEnd);
+        if (event.target !== panel || (event.propertyName && event.propertyName !== "opacity")) return;
         finishHide();
       };
-
-      panel.addEventListener("transitionend", onTransitionEnd);
-      window.setTimeout(() => {
+      cycle.cancel = () => {
+        window.clearTimeout(cycle.timer);
         panel.removeEventListener("transitionend", onTransitionEnd);
-        finishHide();
-      }, 420);
+        pendingHides.delete(panel);
+      };
+      cycle.finish = finishHide;
+      pendingHides.set(panel, cycle);
+      panel.addEventListener("transitionend", onTransitionEnd);
+      cycle.timer = window.setTimeout(finishHide, 320);
     }
+
+    reduceMotion?.addEventListener?.("change", () => {
+      if (reduceMotion.matches) {
+        for (const cycle of pendingHides.values()) cycle.finish();
+      }
+    });
 
     function focusPanel(panel) {
       const card = getPanelCard(panel);
@@ -105,6 +121,12 @@
     }
 
     function closePanel({ restoreFocus = true } = {}) {
+      if (restoreFocus && panelHistory.length) {
+        const entry = panelHistory.pop();
+        openPanel(entry.panel.id.replace("panel-", ""), entry.rootTrigger);
+        focusElement(entry.childTrigger);
+        return;
+      }
       if (activePanel) {
         hidePanel(activePanel);
         activePanel = null;
@@ -126,9 +148,12 @@
       const panel = document.getElementById(`panel-${panelId}`);
       if (!panel) return;
 
+      const parent = activePanel && activePanel.contains(trigger) ? activePanel : null;
+      if (parent) panelHistory.push({ panel: parent, rootTrigger: restoreFocusTarget, childTrigger: trigger });
       closePanel({ restoreFocus: false });
       restoreFocusTarget = trigger;
       activePanel = panel;
+      cancelHide(panel);
       panel.hidden = false;
       panel.inert = false;
       panel.removeAttribute("aria-hidden");

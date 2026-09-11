@@ -39,6 +39,8 @@ const STATIC_FILES = [
 const STATIC_FILE_ALIASES = [{ source: "site-agents.md", destination: "AGENTS.md" }];
 const STATIC_DIRS = ["fonts", "images"];
 const FINGERPRINTED_POSTERS = ["scene-poster-landscape.webp", "scene-poster-portrait.webp"];
+const FINGERPRINTED_PAPER = ["paper-grain.webp", "paper-edge.webp", "estate-map-desktop.webp", "estate-map-portrait.webp"];
+const FINGERPRINTED_ICONS = [];
 const DIST_DIR = join(__dirname, "dist");
 const DIST_SCRIPTS_DIR = join(DIST_DIR, "scripts");
 const DIST_CSS_DIR = join(DIST_DIR, "css");
@@ -131,7 +133,11 @@ async function buildDist() {
     console.log(`bundled ${entry} -> scripts/${scriptHashedName} (${scriptKb} kB)`);
   }
 
-  const cssSrc = await readFile(join(__dirname, "styles.css"));
+  let cssSrc = await readFile(join(__dirname, "styles.css"), "utf8");
+  for (const name of FINGERPRINTED_PAPER) {
+    const bytes = await readFile(join(__dirname, "images", name));
+    cssSrc = cssSrc.replaceAll(`/images/${name}`, `/images/${name.replace(/\.webp$/, `.${sha8(bytes)}.webp`)}`);
+  }
   const cssHash = sha8(cssSrc);
   const cssHashedName = `styles.${cssHash}.css`;
   const cssHashedUrl = `/css/${cssHashedName}`;
@@ -155,9 +161,9 @@ async function buildDist() {
   }
 
   // Keep the stable copies for older HTML while new pages receive a fresh URL
-  // whenever poster bytes change, independent of the browser's image cache.
+  // whenever poster or navigation icon bytes change, independent of the browser's image cache.
   const posterPaths = {};
-  for (const name of FINGERPRINTED_POSTERS) {
+  for (const name of [...FINGERPRINTED_POSTERS, ...FINGERPRINTED_ICONS, ...FINGERPRINTED_PAPER]) {
     const bytes = await readFile(join(__dirname, "images", name));
     const hashedName = name.replace(/\.webp$/, `.${sha8(bytes)}.webp`);
     await writeFile(join(DIST_DIR, "images", hashedName), bytes);

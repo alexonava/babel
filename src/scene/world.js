@@ -8,7 +8,7 @@
 // Vector-valued constants are stored as `[x, y, z]` arrays (not THREE.Vector3)
 // because the scene IIFEs execute at page load — before three.min.js is
 // injected by main.js. Callers construct the Vector3 at use time with
-// `new THREE.Vector3(...scene.WORLD.MOON_POSITION)`.
+// `new THREE.Vector3(...scene.WORLD.SUN_POSITION)`.
 (() => {
   const site = (window.BabelSite = window.BabelSite || {});
   const scene = (site.scene = site.scene || {});
@@ -34,7 +34,8 @@
     // Placed in open sky on the tower side of the field, clear of both the
     // tower silhouette and the tree canopy, so the directed shots that look
     // this way frame it against empty night rather than behind geometry.
-    MOON_POSITION: Object.freeze([-85, 55, -29]),
+    // Shared by The watch and Gallery detail; never moved per shot.
+    SUN_POSITION: Object.freeze([-85, 55, -14]),
 
     // --- Main camera (PerspectiveCamera) ---
     CAMERA_FOV: 45,

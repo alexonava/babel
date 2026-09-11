@@ -1,12 +1,13 @@
 # babel
 
-Source for [alexnava.me](https://alexnava.me/), a static portfolio site built with plain HTML, CSS, vanilla JavaScript, and a small Three.js scene.
+Source for [alexnava.me](https://alexnava.me/), a static portfolio site built with plain HTML, CSS, and vanilla JavaScript. The homepage is an illustrated estate with accessible Profile, Experience, and Contact dialogs. The previous Three.js scene remains in source for rollback and is not loaded by the homepage.
 
 ## Stack
 
 - Plain HTML, CSS, and vanilla JavaScript
-- Three.js r160 imported from `three`, bundled into a deferred `dist/scripts/scene.HASH.js`, and tree-shaken by esbuild
-- Responsive WebP tower posters under `images/` for first paint and the intentional static scene path
+- Illustrated desktop and portrait estate artwork with transparent, content-hashed WebP assets
+- Three.js r160 retained in a separate, unused rollback bundle
+- Preserved tower posters and model assets for rollback; never requested by the estate homepage
 - Instrument Sans + Cormorant Garamond woff2 subsets, self-hosted under `fonts/`
 - Minimal esbuild step: edit readable source in `src/`, generate deploy output into `dist/`
 - Lightweight `node:test` coverage for scene/runtime/UI verification under `test/`
@@ -42,7 +43,11 @@ Asset filenames in `dist/` are content-hashed by `build.mjs` (e.g. `scripts/app.
 
 The build also writes content-hashed landscape and portrait poster copies and rewrites the published `src`/`srcset` URLs. Returning browsers therefore request a new image URL when poster content changes. Stable poster copies remain available for older HTML, and all image URLs retain the existing seven-day revalidation cache policy.
 
-The eager, decorative tower poster is the scene's first visual. Capable hardware, including phones, then loads and crossfades to the live scene. The UI keeps the poster static and does not download the scene bundle when reduced data or reduced motion is requested, WebGL is unavailable, or the WebGL renderer is software-only. `?quality=low|balanced|high` and `?sceneDebug=1` explicitly request the live scene through preference/software gates, but cannot bypass unavailable WebGL.
+## Archived scene implementation
+
+The following notes document retained rollback code and prior visual experiments. These controls and query parameters do not activate the estate homepage. See [ESTATE-HOMEPAGE-QA.md](ESTATE-HOMEPAGE-QA.md) for the active interface.
+
+The eager, decorative tower poster was the scene's first visual. Capable hardware, including phones, then loads and crossfades to the live scene. The UI keeps the poster static and does not download the scene bundle when reduced data or reduced motion is requested, WebGL is unavailable, or the WebGL renderer is software-only. `?quality=low|balanced|high` and `?sceneDebug=1` explicitly request the live scene through preference/software gates, but cannot bypass unavailable WebGL.
 
 ## Supplied Meshy architecture pilot
 
@@ -56,7 +61,13 @@ Models load after the first rendered scene frame. Complete mode downloads only t
 
 The total optional model and embedded-texture budgets remain 6 MiB high and 3 MiB balanced per selected mode. The build fingerprints all twelve GLBs under `images/architecture/`. The installed Three.js GLTFLoader needs no external decoder or new dependency. Embedded image decoding uses local blob URLs; the content policy allows these for images and connections while retaining same-origin network restrictions.
 
-This local pilot is pending visual acceptance. Existing posters and the protected publication workflow remain unchanged.
+The complete watchtower and the original sun are deployed. The subsequent solar and starfield refinement described below remains local; existing posters and the protected publication workflow remain unchanged.
+
+## Solar and starfield refinement
+
+The current branch replaces the released solar sprite swarm with an internally owned spherical photosphere, rooted plasma loops, and a compact asymmetric corona. A seeded point field replaces the grid-based stars. The apparent disc size and anchor, tower, cameras, page layout, night palette, and lighting remain preserved. Quality tiers control surface detail, loop counts, and star counts; all resources follow the existing subsystem lifecycle.
+
+This refinement is local and awaits visual acceptance. See [SOLAR-QA.md](SOLAR-QA.md) for the release baseline, comparison evidence, performance measurements, and the outstanding local Lighthouse gate. Refresh the fallback posters only after visual acceptance.
 
 ## Authored ground material
 

@@ -323,7 +323,7 @@ function createSiteDom({ reduceMotion = true } = {}) {
   );
   append(
     aboutButton,
-    new FakeElement(document, "canvas", { classNames: ["btn-icon"], id: "btn-icon-about" }),
+    new FakeElement(document, "img", { classNames: ["btn-icon"], id: "btn-icon-about" }),
   );
   append(
     aboutButton,
@@ -544,4 +544,69 @@ test("panel interaction code does not mutate copy with random scramble effects",
 
   assert.doesNotMatch(source, /scramble/i);
   assert.doesNotMatch(source, /Math\.random/);
+});
+
+
+test("reopening cancels an old exit, including stale callbacks during a later exit", async () => {
+  const { window, document, elements: e } = createSiteDom({ reduceMotion: false });
+  const callbacks = [];
+  const cancelled = [];
+  window.setTimeout = (callback) => { callbacks.push(callback); return callbacks.length; };
+  window.clearTimeout = (id) => cancelled.push(id);
+  await loadPanels(window, document);
+  e.aboutButton.dispatchEvent(createEvent("click"));
+  e.aboutClose.dispatchEvent(createEvent("click"));
+  e.aboutButton.dispatchEvent(createEvent("click"));
+  assert.ok(cancelled.includes(1));
+  callbacks[0]();
+  assert.equal(e.aboutOverlay.hidden, false);
+  assert.equal(e.aboutOverlay.inert, false);
+  e.aboutClose.dispatchEvent(createEvent("click"));
+  callbacks[0]();
+  assert.equal(e.aboutOverlay.hidden, false, "a stale callback cannot complete a newer exit");
+  e.aboutOverlay.dispatchEvent(createEvent("transitionend", { target: e.aboutClose }));
+  assert.equal(e.aboutOverlay.hidden, false, "child transitions cannot close the panel");
+  callbacks[1]();
+  assert.equal(e.aboutOverlay.hidden, true, "fallback completes an interrupted transition");
+});
+
+test("switching to reduced motion immediately completes pending exits", async () => {
+  const { window, document, elements: e } = createSiteDom({ reduceMotion: false });
+  let onChange;
+  const query = { matches: false, addEventListener: (_, callback) => { onChange = callback; } };
+  window.matchMedia = () => query;
+  await loadPanels(window, document);
+  e.contactButton.dispatchEvent(createEvent("click"));
+  e.contactClose.dispatchEvent(createEvent("click"));
+  assert.equal(e.contactOverlay.hidden, false);
+  query.matches = true;
+  onChange();
+  assert.equal(e.contactOverlay.hidden, true);
+  e.contactButton.dispatchEvent(createEvent("click"));
+  assert.equal(e.contactOverlay.hidden, false);
+  e.contactClose.dispatchEvent(createEvent("click"));
+  assert.equal(e.contactOverlay.hidden, true);
+});
+
+
+test("nested Contact returns to About before restoring the outer trigger", async () => {
+  const { window, document, elements: e } = createSiteDom();
+  e.bottomBar.children = e.bottomBar.children.filter(child => child !== e.contactButton);
+  e.aboutOverlay.appendChild(e.contactButton);
+  await loadPanels(window, document);
+  e.aboutButton.dispatchEvent(createEvent("click"));
+  e.contactButton.dispatchEvent(createEvent("click"));
+  assert.equal(e.contactOverlay.hidden, false);
+  assert.equal(e.aboutOverlay.inert, true);
+  assert.equal(e.aboutButton.getAttribute("aria-expanded"), "true");
+  document.dispatchEvent(createEvent("keydown", {key: "Escape"}));
+  assert.equal(e.aboutOverlay.hidden, false);
+  assert.equal(e.aboutOverlay.inert, false);
+  assert.equal(e.contactOverlay.hidden, true);
+  assert.equal(document.activeElement, e.contactButton);
+  assert.equal(e.bottomBar.inert, true);
+  document.dispatchEvent(createEvent("keydown", {key: "Escape"}));
+  assert.equal(e.aboutOverlay.hidden, true);
+  assert.equal(document.activeElement, e.aboutButton);
+  assert.equal(e.bottomBar.inert, false);
 });

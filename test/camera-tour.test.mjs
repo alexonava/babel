@@ -64,7 +64,7 @@ test("tour defaults to five seconds even when a link chooses its opening composi
   assert.equal(readTourInterval("?tour=20"), 20);
   assert.equal(readTourInterval("?view=tower&tour=5"), 5);
 });
-test("all nine views cycle at the selected interval with small drift and cached repeat framing", () => {
+test("all eight views cycle at the selected interval with small drift and cached repeat framing", () => {
   for (const interval of [3, 5]) {
     const f = setup(interval);
     f.render(0);
@@ -74,12 +74,11 @@ test("all nine views cycle at the selected interval with small drift and cached 
     assert.ok(f.camera.position.distanceTo(firstPosition) > 0.1);
     assert.equal(f.camera.position.y, firstPosition.y);
     const names = [f.controller.shot.name];
-    for (let i = 1; i <= 9; i++) {
+    for (let i = 1; i <= 8; i++) {
       f.render(interval * i);
       names.push(f.controller.shot.name);
     }
     assert.deepEqual(names, [
-      "Arrival",
       "The watch",
       "Threshold",
       "Masonry study",
@@ -88,7 +87,7 @@ test("all nine views cycle at the selected interval with small drift and cached 
       "Lantern study",
       "Close-up",
       "Root and lantern",
-      "Arrival",
+      "The watch",
     ]);
     assert.equal(f.controller.frame, firstFit);
     f.dispose();
@@ -106,7 +105,7 @@ test("pause, panels, reduced motion and developer control hold the tour without 
     assert.equal(f.controller.selected, "tower");
     assert.equal(f.controller.angle, 0);
     f.render(54);
-    assert.equal(f.controller.shot.name, "The watch");
+    assert.equal(f.controller.shot.name, "Threshold");
     f.dispose();
   }
   const f = setup();
@@ -119,11 +118,11 @@ test("pause, panels, reduced motion and developer control hold the tour without 
   assert.deepEqual(f.camera.position.toArray(), held.toArray());
   f.tour.next();
   f.render(31);
-  assert.equal(f.controller.shot.name, "The watch");
+  assert.equal(f.controller.shot.name, "Threshold");
   f.tour.toggle();
   f.render(32);
   f.render(37);
-  assert.equal(f.controller.shot.name, "Threshold");
+  assert.equal(f.controller.shot.name, "Masonry study");
   f.dispose();
 });
 
@@ -138,12 +137,12 @@ test("the 20-second mode dwells long by default with an occasional 5-second wild
   assert.equal(f.tour.state.dwell, 20); // first roll (0.5) is not a wildcard
   f.render(0);
   f.render(19.99);
-  assert.equal(f.controller.shot.name, "Arrival");
-  f.render(20.01); // crosses into "The watch"; next roll (0.05) is a wildcard
   assert.equal(f.controller.shot.name, "The watch");
+  f.render(20.01); // crosses into "Threshold"; next roll (0.05) is a wildcard
+  assert.equal(f.controller.shot.name, "Threshold");
   assert.equal(f.tour.state.dwell, 5);
   f.render(25.02); // 5s wildcard dwell elapses; next roll (0.9) is not
-  assert.equal(f.controller.shot.name, "Threshold");
+  assert.equal(f.controller.shot.name, "Masonry study");
   assert.equal(f.tour.state.dwell, 20);
   f.dispose();
 });
@@ -163,17 +162,17 @@ test("unavailable subjects are skipped, loading holds, and disposal blocks later
   const f = setup();
   f.controller.setSubject("tree", null);
   f.controller.setStatus({ kind: "tree", status: "fallback" });
-  for (const t of [0, 5, 10, 15, 20, 25]) f.render(t);
-  assert.equal(f.controller.shot.name, "Arrival");
+  for (const t of [0, 5, 10, 15, 20]) f.render(t);
+  assert.equal(f.controller.shot.name, "The watch");
   f.controller.setStatus({ kind: "tower", status: "loading" });
   f.render(16);
   f.render(50);
   f.controller.setStatus({ kind: "tower", status: "ready" });
   f.render(51);
-  assert.equal(f.controller.shot.name, "Arrival");
+  assert.equal(f.controller.shot.name, "The watch");
   f.tour.dispose();
   f.tour.next();
   f.render(99);
-  assert.equal(f.controller.shot.name, "Arrival");
+  assert.equal(f.controller.shot.name, "The watch");
   f.dispose();
 });
