@@ -9,3 +9,11 @@ Browser checks: desktop,390x844 DPR2,844x390 landscape,200% CSS zoom. All catego
 Network inspection with legacy view=tower&angle=1&tour=5 parameters: stylesheet, fonts, small app bundle, manifest, estate artwork, and site icons only. No scene bundle, models or scene textures. Full suite285 passing; build and bundle verification pass. Estate direction visually accepted; release verification is recorded in the pull request.
 
 Release preparation: production smoke checks cover estate app/CSS parity and reject scene boot; rollback still accepts prior scene releases. All 285 tests, compile verification, build/bundle checks, and dependency audit pass (zero vulnerabilities). GitHub Lighthouse and protected preview checks remain required before merging.
+
+## Reliability release
+
+The blocked-script gap is addressed with map-aligned links and inline copy outside noscript. Enhancement swaps controls only after repeat-safe panel initialization succeeds. A partial listener-registration failure rolls back so retry cannot double-bind. Late enhancement preserves a focused fallback link or section. Fallback/dialog copy is checked for drift.
+
+CSS normalizes line endings before hashing and emission. An isolated build fixture verifies LF/CRLF parity, genuine edit invalidation, and unchanged binary artwork. Homepage structured modification metadata matches the public Markdown date.
+
+Validation: all 311 tests pass; dependency audit reports zero vulnerabilities; compile/build and bundle budgets pass (UI 3.8 KiB). Browser checks pass for desktop, phone DPR2, short landscape, 200% CSS zoom, forced colors, blocked/disabled scripts, failed initialization, delayed loading before/after fallback focus, missing/slow paper assets, and reduced motion. All three destinations retain keyboard access, reachable close controls, focus restoration, backdrop/Escape dismissal, and safe rapid reopening. No scene/model/material downloads were observed with legacy query parameters. Independent review found no additional issues. Protected preview, CodeQL, Lighthouse, and production verification remain release gates.

@@ -84,7 +84,7 @@
 
         "url": "https://alexnava.me/",
 
-        "dateModified": "2026-09-08"
+        "dateModified": "2026-09-11"
 
       }
 
@@ -156,6 +156,12 @@
 
         <div class="estate-map">
 
+          <nav class="estate-fallback-nav" aria-label="Site categories" data-estate-fallback>
+            <a class="estate-destination estate-profile" href="#profile-text"><span>Profile</span></a>
+            <a class="estate-destination estate-experience" href="#experience-text"><span>Experience</span></a>
+            <a class="estate-destination estate-contact" href="#contact-text"><span>Contact</span></a>
+          </nav>
+
           <nav class="estate-destinations" aria-label="Site categories" hidden>
 
             <button class="bottom-btn estate-destination estate-profile" data-panel="profile" aria-label="Profile" aria-expanded="false" aria-controls="panel-profile"><span>Profile</span></button>
@@ -170,19 +176,19 @@
 
       </section>
 
-      <noscript>
+      <div class="estate-fallback-content" data-estate-fallback>
 
 
 
         <nav class="estate-text-nav" aria-label="Categories"><a href="#profile-text">Profile</a> &middot; <a href="#experience-text">Experience</a> &middot; <a href="#contact-text">Contact</a></nav>
 
-        <section class="estate-text-section" id="profile-text"><h2>Profile</h2><p>This is my personal corner of the web. A little about me and what I’m working on.</p></section>
+        <section class="estate-text-section" tabindex="-1" id="profile-text"><h2>Profile</h2><p>This is my personal corner of the web. A little about me and what I’m working on.</p></section>
 
-        <section class="estate-text-section" id="experience-text"><h2>Experience</h2><p>My background is in analytics, reporting, remediation, and controls, across banking and health analytics.</p></section>
+        <section class="estate-text-section" tabindex="-1" id="experience-text"><h2>Experience</h2><p>My background is in analytics, reporting, remediation, and controls, across banking and health analytics.</p></section>
 
-        <section class="estate-text-section" id="contact-text"><h2>Contact</h2><a href="mailto:alexonava@gmail.com">alexonava@gmail.com</a></section>
+        <section class="estate-text-section" tabindex="-1" id="contact-text"><h2>Contact</h2><p>You can reach me at <a href="mailto:alexonava@gmail.com">alexonava@gmail.com</a></p></section>
 
-      </noscript>
+      </div>
 
     </main>
 

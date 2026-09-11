@@ -133,7 +133,9 @@ async function buildDist() {
     console.log(`bundled ${entry} -> scripts/${scriptHashedName} (${scriptKb} kB)`);
   }
 
-  let cssSrc = await readFile(join(__dirname, "styles.css"), "utf8");
+  // Git checkouts can use CRLF on Windows; hash and publish the same LF bytes
+  // everywhere so a release has one asset URL independent of the build host.
+  let cssSrc = (await readFile(join(__dirname, "styles.css"), "utf8")).replace(/\r\n?/g, "\n");
   for (const name of FINGERPRINTED_PAPER) {
     const bytes = await readFile(join(__dirname, "images", name));
     cssSrc = cssSrc.replaceAll(`/images/${name}`, `/images/${name.replace(/\.webp$/, `.${sha8(bytes)}.webp`)}`);
