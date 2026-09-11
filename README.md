@@ -1,15 +1,15 @@
 # babel
 
-Source for [alexnava.me](https://alexnava.me/), a static portfolio site built with plain HTML, CSS, and vanilla JavaScript. The homepage is an illustrated estate with accessible Profile, Experience, and Contact dialogs. The previous Three.js scene remains in source for rollback and is not loaded by the homepage.
+Source for [alexnava.me](https://alexnava.me/), a static portfolio site built with plain HTML, CSS, and vanilla JavaScript. The homepage opens on the cinematic tower and tree scene. About opens the accepted illustrated estate menu; its Profile, Experience, and Contact destinations open simple-paper dialogs within that menu.
 
-The map provides ordinary links and inline category copy before JavaScript succeeds. Successful dialog initialization swaps in the enhanced controls; failed or blocked scripts leave the fallback usable. If a visitor has already focused a fallback link or section during a delayed download, the page keeps that reading state for the visit.
+Before JavaScript succeeds, an ordinary About link leads to readable category copy. Successful panel initialization enables the illustrated menu; delayed, failed, or blocked scripts keep the text fallback usable. A focused fallback link or section retains its reading state. Menu access does not wait for the scene to load, and no loading ritual blocks the page.
 
 ## Stack
 
 - Plain HTML, CSS, and vanilla JavaScript
-- Illustrated desktop and portrait estate artwork with transparent, content-hashed WebP assets
-- Three.js r160 retained in a separate, unused rollback bundle
-- Preserved tower posters and model assets for rollback; never requested by the estate homepage
+- Illustrated desktop and portrait estate menu artwork with transparent, content-hashed WebP assets
+- Three.js r160 in a separate deferred scene bundle, with eight active directed shots
+- Responsive tower posters for first paint and static fallback; optional model assets load after scene activation
 - Instrument Sans + Cormorant Garamond woff2 subsets, self-hosted under `fonts/`
 - Minimal esbuild step: edit readable source in `src/`, generate deploy output into `dist/`
 - Lightweight `node:test` coverage for scene/runtime/UI verification under `test/`
@@ -47,13 +47,15 @@ Asset filenames in `dist/` are content-hashed by `build.mjs` (e.g. `scripts/app.
 
 The build also writes content-hashed landscape and portrait poster copies and rewrites the published `src`/`srcset` URLs. Returning browsers therefore request a new image URL when poster content changes. Stable poster copies remain available for older HTML, and all image URLs retain the existing seven-day revalidation cache policy.
 
-## Archived scene implementation
+## Scene-first homepage and navigation
 
-The following notes document retained rollback code and prior visual experiments. These controls and query parameters do not activate the estate homepage. See [ESTATE-HOMEPAGE-QA.md](ESTATE-HOMEPAGE-QA.md) for the active interface.
+About is the only navigation entry over the scene. Its estate menu keeps the accepted artwork proportions, transparent edges, landmark placement, and crisp HTML labels. Profile, Experience, and Contact open nested simple-paper dialogs. Back, Escape, or backdrop dismissal from a category returns to the estate and restores its destination focus; dismissing About returns to the scene and its entry button. Background inertness, focus trapping, reduced motion, and rapid reopening apply at both levels. Missing map artwork leaves readable destination labels.
 
-The eager, decorative tower poster was the scene's first visual. Capable hardware, including phones, then loads and crossfades to the live scene. The UI keeps the poster static and does not download the scene bundle when reduced data or reduced motion is requested, WebGL is unavailable, or the WebGL renderer is software-only. `?quality=low|balanced|high` and `?sceneDebug=1` explicitly request the live scene through preference/software gates, but cannot bypass unavailable WebGL.
+The existing eight-shot source is active: four tower and four tree compositions. Arrival remains removed; Threshold keeps its raised framing away from the footing seam. The default tour is five seconds, with the existing pause, next-view, and timing controls. Source and artwork are preserved rather than regenerated. See [SCENE-HOMEPAGE-QA.md](SCENE-HOMEPAGE-QA.md) for this release's validation checklist. [ESTATE-HOMEPAGE-QA.md](ESTATE-HOMEPAGE-QA.md) records the earlier direct-estate release.
 
-## Supplied Meshy architecture pilot
+The eager, decorative tower poster is the scene's first visual. Capable hardware, including phones, then loads and crossfades to the live scene. The UI keeps the poster static and does not download the scene bundle when reduced data or reduced motion is requested, WebGL is unavailable, or the WebGL renderer is software-only. `?quality=low|balanced|high` and `?sceneDebug=1` explicitly request the live scene through preference/software gates, but cannot bypass unavailable WebGL.
+
+## Supplied Meshy architecture
 
 The default high and balanced live scene uses the supplied complete watchtower, with its stone walls, timber balcony, tiled roof, and entrance preserved. It is uniformly fitted to a 39-unit height and seated directly into the earth by default, with its entrance facing the opening camera. `setting=plinth` restores the raised platform comparison. The replacement tree retains its distant position, warm lantern, and restrained canopy fill.
 
@@ -65,13 +67,13 @@ Models load after the first rendered scene frame. Complete mode downloads only t
 
 The total optional model and embedded-texture budgets remain 6 MiB high and 3 MiB balanced per selected mode. The build fingerprints all twelve GLBs under `images/architecture/`. The installed Three.js GLTFLoader needs no external decoder or new dependency. Embedded image decoding uses local blob URLs; the content policy allows these for images and connections while retaining same-origin network restrictions.
 
-The complete watchtower and the original sun are deployed. The subsequent solar and starfield refinement described below remains local; existing posters and the protected publication workflow remain unchanged.
+Historical release sequence: the complete watchtower and original sun preceded the solar and starfield refinement below. Those earlier deployment notes do not establish the status of this scene-first release; its preview and production evidence belongs in the current release record. Existing posters and the protected publication workflow remain preserved.
 
 ## Solar and starfield refinement
 
-The current branch replaces the released solar sprite swarm with an internally owned spherical photosphere, rooted plasma loops, and a compact asymmetric corona. A seeded point field replaces the grid-based stars. The apparent disc size and anchor, tower, cameras, page layout, night palette, and lighting remain preserved. Quality tiers control surface detail, loop counts, and star counts; all resources follow the existing subsystem lifecycle.
+The active scene uses an internally owned spherical photosphere, rooted plasma loops, and a compact asymmetric corona in place of the earlier solar sprite swarm. A seeded point field replaces the grid-based stars. This homepage pass preserves the current solar anchor, disc size, tower, cameras, night palette, and lighting. Quality tiers control surface detail, loop counts, and star counts; all resources follow the existing subsystem lifecycle.
 
-This refinement is local and awaits visual acceptance. See [SOLAR-QA.md](SOLAR-QA.md) for the release baseline, comparison evidence, performance measurements, and the outstanding local Lighthouse gate. Refresh the fallback posters only after visual acceptance.
+See [SOLAR-QA.md](SOLAR-QA.md) for historical baseline comparisons and performance measurements. Its pending-review statements describe that earlier pass. The scene-first restoration retains the accepted visual source and existing fallback posters; fresh release checks are recorded separately.
 
 ## Authored ground material
 
@@ -91,7 +93,7 @@ The brick and stone direction was visually reviewed before integration. High and
 
 The brick begins as the original box while its optional geometry loads. A failed request or invalid binary keeps those boxes, and low quality makes no brick request. High and balanced share the same geometry; switching to low or disposing the scene aborts pending work, restores the original geometry and materials, and releases owned resources. Late requests cannot mutate a disposed scene. Material requests and their quality-specific reset remain independent of the geometry request.
 
-The construction pilot adds limestone stair treads and reuses the accepted brick geometry on selected crown blocks. It is local and pending visual acceptance; the existing posters still show the accepted raised-brick and texture pass. High and balanced tiers request one additional shared `images/materials/stone-tread.bin` geometry with 180 triangles in 8,648 bytes, below its 200-triangle and 9,608-byte limits. Both geometry sets use the existing Firefly/Meshy stone maps, with no new image downloads. Crown blocks share the existing brick request and decoded geometry. Low and static paths retain the original scene without requesting either binary.
+The retained construction comparison adds limestone stair treads and reuses the accepted brick geometry on selected crown blocks. Its original local review was pending acceptance; the existing posters preserve the accepted raised-brick and texture pass. High and balanced tiers request one additional shared `images/materials/stone-tread.bin` geometry with 180 triangles in 8,648 bytes, below its 200-triangle and 9,608-byte limits. Both geometry sets use the existing Firefly/Meshy stone maps, with no new image downloads. Crown blocks share the existing brick request and decoded geometry. Low and static paths retain the original scene without requesting either binary.
 
 Use `?quality=high&sceneDebug=1&architecture=classic&construction=baseline` to compare against the accepted raised-brick scene, leaving the original crown and stairs in place. `&brick=boxes` or `&stone=procedural` also disables construction changes. `window.BabelSite.sceneDebug.treads` reports tread readiness alongside `sceneDebug.bricks` and `sceneDebug.stone`. Tread loading and failures remain independent of the shared brick request; both controllers restore their originals before shared material maps are reset or released. Each authored mesh uses cached bounds that account for its current scale and parent transforms, keeping thin treads from adding off-screen draw calls. Original bounds are restored with the original geometry.
 
@@ -124,7 +126,7 @@ GitHub CodeQL default setup is enabled as the repository's code scanner, avoidin
 | `src/`                    | Authoritative JavaScript source for UI and scene bundles |
 | `dist/`                   | Generated publish directory for Cloudflare Pages         |
 | `fonts/*.woff2`           | Self-hosted font subsets                                 |
-| `images/*.webp`           | Responsive static tower posters                          |
+| `images/*.webp`           | Tower posters, estate menu, paper surfaces, and navigation icons |
 | `images/architecture/` | Optional textured architecture and tree GLBs |
 | `images/materials/`       | Optional stone and ground WebP maps and shared BRK1 brick geometry |
 | `404.html`                | Not-found page                                           |
@@ -162,7 +164,7 @@ This project is released under the MIT License. See [LICENSE](LICENSE).
 
 Ground refinement uses eight repeats and a restrained 0.45 normal strength to keep dry-earth detail subordinate to the tower. Partial map preparation releases completed textures before retaining the procedural fallback.
 
-### Damp earth and prop scale (local comparison)
+### Historical damp earth and prop-scale comparison
 Complete-tower mode uses deterministic mud color, normal and roughness maps after the tower loads. The existing downloaded ground pair supplies subtle source detail; no extra downloads are made. The tile spans 10.56 world units at both resolutions, with normal strength 0.22 and roughness from 0.55 to 0.9. `ground=desert` retains the dry authored surface and `ground=procedural` retains the original ground. `scale=baseline` independently restores original prop sizes.
 
 Scale reference D is 6.6 units: a centreline ray scan of the high tower at yaw zero found the arch front beginning near y=8.24 above its y=1.64 footing. Tree, torches, lantern, stones, rubble and plants use the approved D ratios. Plinth footprint and entrance height remain fixed; its existing 0.5-unit seam is already below the 0.528-unit trim cap. Generated maps and prop transforms restore on fallback or teardown. Posters and publication remain unchanged.
@@ -197,9 +199,9 @@ uses the tower shot; tower failure and low quality retain the procedural fallbac
 No release posters or publication state were changed for this local comparison.
 
 
-### Directed moonlit scene (local visual review)
+### Active directed moonlit scene
 
-Default complete-tower mode uses nine curated shots: five for the tower and four for the
+Default complete-tower mode uses eight curated shots: four for the tower and four for the
 tree. `cinematography=baseline` restores the prior six-angle presentation. Selection occurs
 once per document; resizing, font loading, quality changes and panel interaction do not
 reroll it. Tower and tree have equal subject probability, and the shot within a subject is
@@ -207,18 +209,17 @@ equally likely.
 
 | Preview | Shot | Vertical region | FOV | Azimuth | Initial camera height |
 | --- | --- | --- | --- | --- | --- |
-| `view=tower&angle=1` | Arrival | Full tower | 38 | -6 | 34% |
-| `view=tower&angle=2` | The watch | Upper 45% | 32 | -40 | 66% |
-| `view=tower&angle=3` | Threshold | Lower 45% | 36 | 72 | 12% |
-| `view=tower&angle=4` | Masonry study | Middle wall | 32 | 44 | 42% |
-| `view=tower&angle=5` | Gallery detail | Balcony and roof | 30 | -26 | 70% |
+| `view=tower&angle=1` | The watch | Upper 45% | 32 | -4 | 66% |
+| `view=tower&angle=2` | Threshold | Upper entrance wall and balcony | 36 | 82 | 36% |
+| `view=tower&angle=3` | Masonry study | Middle wall | 32 | 44 | 42% |
+| `view=tower&angle=4` | Gallery detail | Balcony and roof | 31 | -5 | 62% |
 | `view=tree&angle=1` | Portrait | Full tree | 36 | -77 | 24% |
 | `view=tree&angle=2` | Lantern study | Lower half | 34 | -115 | 15% |
 | `view=tree&angle=3` | Close-up | Trunk fork and lower canopy | 30 | -40 | 50% |
 | `view=tree&angle=4` | Root and lantern | Roots, trunk and lantern | 32 | -98 | 17% |
 
-Arrival provides the broad desktop hero. The watch, Masonry study and Gallery detail keep
-close tower views tied to the watchtower's actual construction. Portrait supplies the full
+Arrival was removed during the accepted framing pass. The watch, Threshold, Masonry study
+and Gallery detail keep tower views tied to the watchtower's actual construction. Portrait supplies the full
 tree view; Lantern study and Root and lantern make the warm light legible, while Close-up
 stays on the trunk and lower canopy.
 
@@ -257,7 +258,7 @@ is in CREDITS.md and the local artwork archive. First paint and the static fallb
 released watchtower poster.
 
 For an automatic local review, add `tour=5`, `tour=3`, or `tour=20` to a
-directed-view URL. The tour cuts through all nine loaded cameras with a gentle
+directed-view URL. The tour cuts through all eight loaded cameras with a gentle
 horizontal drift and slow dolly-in within each shot. Cuts dip to black: the
 outgoing view darkens over the last 0.3 s of its dwell and the next opens over
 0.45 s through the existing final pass, with no added pass. `tour=5` and `tour=3`

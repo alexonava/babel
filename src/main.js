@@ -8,7 +8,8 @@
   function initUi() {
     const ui = site.ui || {};
     if (typeof ui.initHeroChrome === "function") ui.initHeroChrome();
-    if (typeof ui.initPanels === "function") ui.initPanels();
+    if (typeof ui.initSceneMenu === "function") ui.initSceneMenu();
+    else if (typeof ui.initPanels === "function") ui.initPanels();
   }
 
   function initScene() {

@@ -40,7 +40,7 @@ test("CSS asset URLs and bytes are portable across checkout line endings", async
     }
     for (const name of [
       "scene-poster-landscape", "scene-poster-portrait", "paper-grain", "paper-edge",
-      "estate-map-desktop", "estate-map-portrait",
+      "estate-map-desktop", "estate-map-portrait", "nav-about", "nav-about-active",
     ]) {
       await writeFile(path.join(fixture, "images", `${name}.webp`), paper);
     }

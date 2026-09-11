@@ -147,7 +147,7 @@ test("published responsive posters use content hashes and retain intact compatib
     const hash = createHash("sha256").update(source).digest("hex").slice(0, 8);
     const hashedName = `scene-poster-${orientation}.${hash}.webp`;
     expectedNames.push(hashedName);
-    assert.ok(!html.includes(hashedName), "retained posters are not requested by the estate");
+    assert.ok(html.includes(`${attribute}="/images/${hashedName}"`), "first paint references the current responsive poster hash");
     assert.deepEqual(await readFile(path.join(distDir, "images", hashedName)), source);
     assert.deepEqual(await readFile(path.join(distDir, "images", stableName)), source);
   }
@@ -287,10 +287,32 @@ test("grass color/mask maps are deferred and fit both their own and the complete
   }
 });
 
- test("homepage bundle excludes scene boot and model loading", async () => {
- const html=await readFile(path.join(distDir,"index.html"),"utf8");const app=await readFile(await findHashedScript("app"),"utf8");
- assert.doesNotMatch(html,/data-scene-script|scene-poster|nav-about/);
- assert.doesNotMatch(app,/WebGL|initHomeScene|loadAndInitScene|sceneDebug|readSceneQualityControls/);
+test("homepage discovers the deferred scene while its UI excludes the renderer and model loading", async () => {
+  const html = await readFile(path.join(distDir, "index.html"), "utf8");
+  const app = await readFile(await findHashedScript("app"), "utf8");
+  const sceneName = path.basename(await findHashedScript("scene"));
+  assert.ok(html.includes(`content="/scripts/${sceneName}" data-scene-script`));
+  assert.doesNotMatch(html, /<script[^>]*src="[^\"]*scene[.]/);
+  assert.match(app, /ensureSceneReady|initHomeScene/);
+  assert.match(app, /getWebGLCapabilities/);
+  assert.match(app, /initSceneMenu/);
+  assert.doesNotMatch(app, /gl_Position|WebGLRenderer|GLTFLoader|images\/architecture\//);
+});
+
+test("About model icon states are fingerprinted and emitted intact", async () => {
+  const html = await readFile(path.join(distDir, "index.html"), "utf8");
+  let total = 0;
+  for (const name of ["nav-about", "nav-about-active"]) {
+    const bytes = await readFile(path.join(projectRoot, "images", `${name}.webp`));
+    const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
+    total += bytes.length;
+    const hashedName = `${name}.${hash}.webp`;
+    assert.ok(html.includes(`src="/images/${hashedName}"`));
+    assert.ok(!html.includes(`src="/images/${name}.webp"`));
+    assert.deepEqual(await readFile(path.join(distDir, "images", hashedName)), bytes);
+  }
+  assert.ok(total <= 80 * 1024);
+  assert.doesNotMatch(html, /nav-contact|Leather_Envelope|Stylized_3D/);
 });
 
 test("paper textures are fingerprinted in CSS and stay under 200 KiB combined", async () => {

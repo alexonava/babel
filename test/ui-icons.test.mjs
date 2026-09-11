@@ -3,10 +3,23 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
-test("estate homepage exposes categories directly without the old icon entry", async () => {
- const html=await readFile(new URL("index.html",root),"utf8");
- assert.doesNotMatch(html,/data-panel="about"|nav-about|nav-contact/);
- for(const name of ["profile","experience","contact"]) assert.ok(html.includes(`aria-controls="panel-${name}"`));
+test("the scene opens About through the labeled model icon and keeps Contact inside the estate", async () => {
+  const html = await readFile(new URL("index.html", root), "utf8");
+  const entry = html.match(/<button[^>]*class="[^"]*scene-entry"[\s\S]*?<\/button>/)[0];
+  assert.match(entry, /data-panel="about"/);
+  assert.match(entry, /aria-controls="panel-about"/);
+  assert.match(entry, /aria-label="About"/);
+  assert.match(entry, / hidden>/);
+  assert.match(entry, /<span class="btn-icon-label">About<\/span>/);
+  for (const file of ["nav-about", "nav-about-active"]) {
+    assert.ok(entry.includes(`src="/images/${file}.webp"`));
+  }
+  assert.equal((entry.match(/alt="" width="256" height="256"/g) || []).length, 2);
+  const primary = html.match(/<nav class="bottom-bar"[\s\S]*?<\/nav>/)[0];
+  assert.doesNotMatch(primary, /data-panel="contact"|nav-contact/);
+  for (const name of ["profile", "experience", "contact"]) {
+    assert.ok(html.includes(`aria-controls="panel-${name}"`));
+  }
 });
 
 test("navigation model renders have 256px alpha canvases and fit the combined transfer budget", async () => {
