@@ -48,7 +48,7 @@ test("the skip-link points at an id that exists on the page", async () => {
   assert.match(html, new RegExp(`id="${skipMatch[1]}"`));
 });
 
-test("bottom-bar buttons have accessible names and are labeled or wrapped with aria-label", async () => {
+test("estate buttons have accessible names and reference their dialogs", async () => {
   const html = await readIndexHtml();
   const buttonBlocks = html.match(/<button[^>]*class="bottom-btn[^"]*"[^>]*>/g) || [];
   assert.ok(buttonBlocks.length >= 2, "expected at least two bottom-bar buttons");
@@ -79,7 +79,7 @@ test("modal overlays declare dialog semantics and start hidden", async () => {
   }
 });
 
-test("about and contact panels share the parchment frame without decorative monograms or seals", async () => {
+test("all estate panels share the parchment frame without decorative monograms or seals", async () => {
   const html = await readIndexHtml();
   const sharedFrames =
     html.match(/class="[^"]*\bpanel-parchment\b[^"]*\bpanel-surface\b[^"]*"/g) || [];
@@ -104,20 +104,26 @@ test("about and contact panels share the parchment frame without decorative mono
 });
 
 test("estate navigation is the reachable main content without a scene host", async () => {
- const html = await readIndexHtml();
- assert.match(html, /<main[^>]*id="main"[^>]*tabindex="-1"/);
- assert.match(html, /class="estate-destinations"/);
- assert.doesNotMatch(html, /id="home-scene"|class="scene-shell"|class="site-shell"|id="panel-about"/);
+  const html = await readIndexHtml();
+  assert.match(html, /<main[^>]*id="main"[^>]*tabindex="-1"/);
+  assert.match(html, /class="estate-destinations"/);
+  assert.doesNotMatch(
+    html,
+    /id="home-scene"|class="scene-shell"|class="site-shell"|id="panel-about"/,
+  );
 });
 
 test("homepage has no loading ritual or camera controls", async () => {
- const html=await readIndexHtml();assert.doesNotMatch(html,/loading-ritual|dev-mode-hud|scene-tour/);
+  const html = await readIndexHtml();
+  assert.doesNotMatch(html, /loading-ritual|dev-mode-hud|scene-tour/);
 });
 
 test("estate layers preserve artwork proportions without masking labels", async () => {
- const css=await readStyles();assert.match(css,/aspect-ratio: 3 \/ 2/);assert.match(css,/aspect-ratio: 2 \/ 3/);
- assert.match(css,/\.estate-home-map \.estate-map::before/);
- assert.doesNotMatch(await readIndexHtml(),/scene-poster/);
+  const css = await readStyles();
+  assert.match(css, /aspect-ratio: 3 \/ 2/);
+  assert.match(css, /aspect-ratio: 2 \/ 3/);
+  assert.match(css, /\.estate-home-map \.estate-map::before/);
+  assert.doesNotMatch(await readIndexHtml(), /scene-poster/);
 });
 
 test("external links that open in a new tab declare rel=noopener", async () => {
@@ -128,10 +134,41 @@ test("external links that open in a new tab declare rel=noopener", async () => {
   }
 });
 
-test("identity and category copy remain present with a no-script equivalent", async () => {
- const html=await readIndexHtml();assert.match(html,/<h1>Alex Nava<\/h1>/);
- assert.match(html,/A little about me and what/);assert.match(html,/<noscript>[\s\S]*id="profile-text"[\s\S]*id="experience-text"[\s\S]*id="contact-text"/);
- assert.doesNotMatch(html,/data-scramble|Wells Fargo|CVS Health/);
+test("fallback map links and matching copy remain usable before app boot", async () => {
+  const html = await readIndexHtml();
+  assert.match(html, /<h1>Alex Nava<\/h1>/);
+  assert.doesNotMatch(html, /<noscript>|data-scramble|Wells Fargo|CVS Health/);
+  const fallbackNav = html.match(/<nav class="estate-fallback-nav"[^>]*>([\s\S]*?)<\/nav>/)[1];
+  assert.deepEqual(
+    [...fallbackNav.matchAll(/href="#([^"]+)"/g)].map((m) => m[1]),
+    ["profile-text", "experience-text", "contact-text"],
+  );
+  assert.match(html, /<nav class="estate-destinations"[^>]* hidden>/);
+  assert.doesNotMatch(html.match(/<div class="estate-fallback-content"[^>]*>/)[0], / hidden/);
+  const text = (value) =>
+    value
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  for (const category of ["profile", "experience", "contact"]) {
+    const inline = html.match(
+      new RegExp(`id="${category}-text"[^>]*>[\\s\\S]*?<p>([\\s\\S]*?)</p>`),
+    )[1];
+    const dialog = html.match(
+      new RegExp(`id="panel-${category}"[\\s\\S]*?<p class="panel-body">([\\s\\S]*?)</p>`),
+    )[1];
+    assert.equal(text(inline), text(dialog), `${category} fallback wording drifted`);
+    assert.ok(fallbackNav.includes(`estate-${category}`), "fallback shares landmark coordinates");
+  }
+});
+
+test("homepage modification metadata matches its public Markdown equivalent", async () => {
+  const html = await readIndexHtml();
+  const markdown = await readFile(path.join(projectRoot, "index.md"), "utf8");
+  assert.equal(
+    html.match(/"dateModified": "([^"]+)"/)[1],
+    markdown.match(/dateModified: (\S+)/)[1],
+  );
 });
 
 test("personal metadata stays consistent and scene discovery uses inert metadata", async () => {

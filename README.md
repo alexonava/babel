@@ -2,6 +2,8 @@
 
 Source for [alexnava.me](https://alexnava.me/), a static portfolio site built with plain HTML, CSS, and vanilla JavaScript. The homepage is an illustrated estate with accessible Profile, Experience, and Contact dialogs. The previous Three.js scene remains in source for rollback and is not loaded by the homepage.
 
+The map provides ordinary links and inline category copy before JavaScript succeeds. Successful dialog initialization swaps in the enhanced controls; failed or blocked scripts leave the fallback usable. If a visitor has already focused a fallback link or section during a delayed download, the page keeps that reading state for the visit.
+
 ## Stack
 
 - Plain HTML, CSS, and vanilla JavaScript
@@ -38,6 +40,8 @@ npm test            # run the node:test suite in test/
 npm run watch       # watch src/ and rebuild dist/scripts
 npm run format      # prettier-format src/, *.html, *.css, *.md
 ```
+
+CSS line endings normalize to LF before hashing and emission, so Windows and Linux produce matching stylesheet bytes and URLs. Binary artwork is copied unchanged.
 
 Asset filenames in `dist/` are content-hashed by `build.mjs` (e.g. `scripts/app.HASH.js`, `scripts/scene.HASH.js`, `css/styles.HASH.css`); the UI boot script and deferred Three.js scene script are separate bundles, so rerun `npm run build:dist` after changes — the hash moves automatically and cached HTML revalidates against the new path.
 

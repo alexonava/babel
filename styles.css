@@ -1578,7 +1578,7 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
   text-align: center; font: 600 clamp(22px, 3vw, 34px)/1.1 var(--font-display);
   letter-spacing: .08em;
 }
-.estate-destinations { position: absolute; inset: 0; }
+.estate-destinations, .estate-fallback-nav { position: absolute; inset: 0; }
 .estate-destination {
   position: absolute; width: 24%; min-width: 44px; min-height: 44px;
   height: 48%; margin: 0; padding: 0; background: transparent; border: 0;
@@ -1663,4 +1663,4 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
 }
 
 /* Keep nonfunctional dialog buttons out of the no-JavaScript fallback. */
-.estate-destinations[hidden] { display: none; }
+.estate-destinations[hidden], [data-estate-fallback][hidden] { display: none; }

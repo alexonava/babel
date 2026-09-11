@@ -21,10 +21,20 @@
     }
   }
 
+  let initialized = false;
+
   ui.initPanels = function initPanels() {
+    if (initialized) return true;
     const buttons = Array.from(document.querySelectorAll(".bottom-btn[data-panel]"));
     const panels = Array.from(document.querySelectorAll(".panel-overlay"));
-    if (!buttons.length || !panels.length) return;
+    if (!buttons.length || !panels.length) return false;
+    if (
+      buttons.some(
+        (button) => !panels.includes(document.getElementById(`panel-${button.dataset.panel}`)),
+      ) ||
+      panels.some((panel) => !getPanelCard(panel) || !panel.querySelector(".panel-close"))
+    )
+      return false;
 
     const reduceMotion = site.shared.reducedMotionQuery();
     const backgroundNodes = BACKGROUND_SELECTORS.map((selector) =>
@@ -44,7 +54,10 @@
       buttons.forEach((button) => {
         button.setAttribute(
           "aria-expanded",
-          button.dataset.panel === activePanelId || panelHistory.some((entry) => entry.panel.id === `panel-${button.dataset.panel}`) ? "true" : "false",
+          button.dataset.panel === activePanelId ||
+            panelHistory.some((entry) => entry.panel.id === `panel-${button.dataset.panel}`)
+            ? "true"
+            : "false",
         );
       });
     }
@@ -93,7 +106,8 @@
         if (!panel.classList.contains("open")) panel.hidden = true;
       };
       const onTransitionEnd = (event) => {
-        if (event.target !== panel || (event.propertyName && event.propertyName !== "opacity")) return;
+        if (event.target !== panel || (event.propertyName && event.propertyName !== "opacity"))
+          return;
         finishHide();
       };
       cycle.cancel = () => {
@@ -106,12 +120,6 @@
       panel.addEventListener("transitionend", onTransitionEnd);
       cycle.timer = window.setTimeout(finishHide, 320);
     }
-
-    reduceMotion?.addEventListener?.("change", () => {
-      if (reduceMotion.matches) {
-        for (const cycle of pendingHides.values()) cycle.finish();
-      }
-    });
 
     function focusPanel(panel) {
       const card = getPanelCard(panel);
@@ -149,7 +157,12 @@
       if (!panel) return;
 
       const parent = activePanel && activePanel.contains(trigger) ? activePanel : null;
-      if (parent) panelHistory.push({ panel: parent, rootTrigger: restoreFocusTarget, childTrigger: trigger });
+      if (parent)
+        panelHistory.push({
+          panel: parent,
+          rootTrigger: restoreFocusTarget,
+          childTrigger: trigger,
+        });
       closePanel({ restoreFocus: false });
       restoreFocusTarget = trigger;
       activePanel = panel;
@@ -188,41 +201,61 @@
       }
     }
 
-    buttons.forEach((button) => {
-      button.addEventListener("click", () => {
-        const panelId = button.dataset.panel;
-        if (!panelId) return;
+    const removers = [];
+    function listen(target, type, handler) {
+      target.addEventListener(type, handler);
+      removers.push(() => target.removeEventListener(type, handler));
+    }
+    try {
+      if (reduceMotion?.addEventListener) {
+        listen(reduceMotion, "change", () => {
+          if (reduceMotion.matches) {
+            for (const cycle of pendingHides.values()) cycle.finish();
+          }
+        });
+      }
+      buttons.forEach((button) => {
+        listen(button, "click", () => {
+          const panelId = button.dataset.panel;
+          if (!panelId) return;
 
-        if (button.getAttribute("aria-expanded") === "true") {
-          closePanel();
+          if (button.getAttribute("aria-expanded") === "true") {
+            closePanel();
+            return;
+          }
+
+          openPanel(panelId, button);
+        });
+      });
+
+      document.querySelectorAll(".panel-close").forEach((button) => {
+        listen(button, "click", () => closePanel());
+      });
+
+      panels.forEach((panel) => {
+        listen(panel, "click", (event) => {
+          if (event.target === panel) {
+            closePanel();
+          }
+        });
+      });
+
+      listen(document, "keydown", (event) => {
+        if (event.key === "Escape") {
+          if (activePanel) {
+            closePanel();
+          }
           return;
         }
 
-        openPanel(panelId, button);
+        trapFocus(event);
       });
-    });
-
-    document.querySelectorAll(".panel-close").forEach((button) => {
-      button.addEventListener("click", () => closePanel());
-    });
-
-    panels.forEach((panel) => {
-      panel.addEventListener("click", (event) => {
-        if (event.target === panel) {
-          closePanel();
-        }
-      });
-    });
-
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        if (activePanel) {
-          closePanel();
-        }
-        return;
-      }
-
-      trapFocus(event);
-    });
+      initialized = true;
+      return true;
+    } catch {
+      // A retry must never inherit a half-bound controller.
+      removers.reverse().forEach((remove) => remove());
+      return false;
+    }
   };
 })();
