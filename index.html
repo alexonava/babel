@@ -90,6 +90,7 @@
 
     </script>
 
+    <meta name="babel:scene-script" content="/scripts/scene.js" data-scene-script />
     <link rel="stylesheet" href="/styles.css?v=648" />
 
     <link rel="preload" href="/scripts/app.js?v=648" as="script" />
@@ -138,48 +139,48 @@
 
   </head>
 
-  <body class="estate-home">
-
+  <body class="scene-home">
     <a class="skip-link" href="#main">Skip to main content</a>
 
-    <main id="main" class="estate-main" tabindex="-1">
+    <div class="scene-shell" aria-hidden="true">
+      <div id="home-scene" class="scene-canvas"></div>
+      <picture class="scene-poster" aria-hidden="true">
+        <source
+          media="(orientation: portrait)"
+          srcset="/images/scene-poster-portrait.webp"
+          width="900"
+          height="1600"
+        />
+        <img
+          src="/images/scene-poster-landscape.webp"
+          alt=""
+          width="1600"
+          height="900"
+          loading="eager"
+          fetchpriority="high"
+          decoding="async"
+        />
+      </picture>
+      <div class="scene-vignette"></div>
+    </div>
+    <div class="site-shell" aria-hidden="true"></div>
 
-      <header class="estate-identity" id="home">
-
-        <h1>Alex Nava</h1>
-
-        <p>A little about me and what I’m working on.</p>
-
-      </header>
-
-      <section class="estate-home-map" aria-label="Explore the estate">
-
-        <div class="estate-map">
-
-          <nav class="estate-fallback-nav" aria-label="Site categories" data-estate-fallback>
-            <a class="estate-destination estate-profile" href="#profile-text"><span>Profile</span></a>
-            <a class="estate-destination estate-experience" href="#experience-text"><span>Experience</span></a>
-            <a class="estate-destination estate-contact" href="#contact-text"><span>Contact</span></a>
-          </nav>
-
-          <nav class="estate-destinations" aria-label="Site categories" hidden>
-
-            <button class="bottom-btn estate-destination estate-profile" data-panel="profile" aria-label="Profile" aria-expanded="false" aria-controls="panel-profile"><span>Profile</span></button>
-
-            <button class="bottom-btn estate-destination estate-experience" data-panel="experience" aria-label="Experience" aria-expanded="false" aria-controls="panel-experience"><span>Experience</span></button>
-
-            <button class="bottom-btn estate-destination estate-contact" data-panel="contact" aria-label="Contact" aria-expanded="false" aria-controls="panel-contact"><span>Contact</span></button>
-
-          </nav>
-
+    <main id="main" tabindex="-1">
+      <section id="home" class="hero section">
+        <div class="hero-minimal" id="hero-minimal">
+          <h1>
+            <span class="hero-word">Alex</span>
+            <span class="hero-word">Nava</span>
+          </h1>
+          <p class="hero-intro">A little about me and what I’m working on.</p>
         </div>
-
       </section>
 
-      <div class="estate-fallback-content" data-estate-fallback>
+      <div class="scene-fallback-content" id="about-text" tabindex="-1" data-scene-fallback>
 
 
 
+        <h2>About</h2>
         <nav class="estate-text-nav" aria-label="Categories"><a href="#profile-text">Profile</a> &middot; <a href="#experience-text">Experience</a> &middot; <a href="#contact-text">Contact</a></nav>
 
         <section class="estate-text-section" tabindex="-1" id="profile-text"><h2>Profile</h2><p>This is my personal corner of the web. A little about me and what I’m working on.</p></section>
@@ -192,7 +193,37 @@
 
     </main>
 
+    <nav class="bottom-bar" aria-label="Primary">
+      <a class="bottom-btn bottom-btn--icon" href="#about-text" aria-label="About" data-scene-fallback>
+        <span class="btn-icon-label">About</span>
+        <img class="btn-icon" src="/images/nav-about.webp" alt="" width="256" height="256" />
+      </a>
+      <button class="bottom-btn bottom-btn--icon scene-entry" data-panel="about" aria-label="About" aria-expanded="false" aria-controls="panel-about" hidden>
+        <span class="btn-icon-label">About</span>
+        <img class="btn-icon" src="/images/nav-about.webp" alt="" width="256" height="256" /><img class="btn-icon btn-icon--active" src="/images/nav-about-active.webp" alt="" width="256" height="256" />
+      </button>
+    </nav>
     <p class="site-copyright">&copy; 2026 Alex Nava</p>
+
+    <div class="panel-overlay" id="panel-about" role="dialog" aria-modal="true" aria-labelledby="panel-about-title" hidden>
+      <div class="panel-estate panel-surface" tabindex="-1">
+        <div class="estate-home-map">
+          <div class="estate-map">
+            <h2 class="estate-title" id="panel-about-title">About</h2>
+            <button class="panel-close" aria-label="Close About">&times;</button>
+          <nav class="estate-destinations" aria-label="Site categories">
+
+            <button class="bottom-btn estate-destination estate-profile" data-panel="profile" aria-label="Profile" aria-expanded="false" aria-controls="panel-profile"><span>Profile</span></button>
+
+            <button class="bottom-btn estate-destination estate-experience" data-panel="experience" aria-label="Experience" aria-expanded="false" aria-controls="panel-experience"><span>Experience</span></button>
+
+            <button class="bottom-btn estate-destination estate-contact" data-panel="contact" aria-label="Contact" aria-expanded="false" aria-controls="panel-contact"><span>Contact</span></button>
+
+          </nav>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div
 
@@ -212,7 +243,7 @@
 
       <div class="panel-parchment panel-surface" tabindex="-1">
 
-        <button class="panel-close" aria-label="Close">&times;</button>
+        <button class="panel-close panel-back" aria-label="Back to About">Back</button>
 
         <div class="panel-parchment__sheet">
 
@@ -244,7 +275,7 @@
 
       <div class="panel-parchment panel-surface" tabindex="-1">
 
-        <button class="panel-close" aria-label="Close">&times;</button>
+        <button class="panel-close panel-back" aria-label="Back to About">Back</button>
 
         <div class="panel-parchment__sheet"><div class="panel-parchment__content">
 
@@ -266,7 +297,7 @@
 
       <div class="panel-parchment panel-surface" tabindex="-1">
 
-        <button class="panel-close" aria-label="Close">&times;</button>
+        <button class="panel-close panel-back" aria-label="Back to About">Back</button>
 
         <div class="panel-parchment__sheet"><div class="panel-parchment__content">
 
@@ -284,8 +315,19 @@
 
 
 
-    <script defer src="/scripts/app.js?v=648"></script>
+    <aside class="dev-mode-hud" id="dev-mode-hud" hidden aria-hidden="true">
+      <div class="dev-mode-hud__row"><span>pos</span><span data-field="pos">0, 0, 0</span></div>
+      <div class="dev-mode-hud__row"><span>vel</span><span data-field="vel">0, 0, 0</span></div>
+      <div class="dev-mode-hud__row"><span>speed</span><span data-field="speed">0</span></div>
+      <div class="dev-mode-hud__row"><span>yaw</span><span data-field="yaw">0&deg;</span></div>
+      <div class="dev-mode-hud__row"><span>mode</span><span data-field="mode">idle</span></div>
+      <div class="dev-mode-hud__row">
+        <span>grounded</span><span data-field="grounded">yes</span>
+      </div>
+      <div class="dev-mode-hud__row"><span>autoRun</span><span data-field="autoRun">off</span></div>
+      <div class="dev-mode-hud__row"><span>ground</span><span data-field="ground">0</span></div>
+    </aside>
 
+    <script defer src="/scripts/app.js"></script>
   </body>
-
 </html>

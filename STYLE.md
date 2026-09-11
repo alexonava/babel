@@ -29,19 +29,17 @@ The page should feel intentional and still. It can be atmospheric, but it should
 - Hover/focus responses may brighten or lift slightly, but should never spin or jitter.
 - All motion must respect `prefers-reduced-motion: reduce`.
 
-## Estate homepage
+## Scene-first homepage and estate menu
 
-The illustrated estate is the homepage. Preserve its desktop and portrait proportions, transparent paper boundary, and aligned Profile, Experience, and Contact destinations. Alex Nava uses the preferred 700-weight warm-white serif above the parchment. The introduction and footer stay quiet. Dialogs use simple cotton paper, readable dark ink, 44px close controls, and immediate reduced-motion behavior. No scene, tour, entry icon, scroll curls, or gold UI text is active.
+The cinematic tower and tree scene opens first, with the preferred 700-weight warm-white Alex Nava serif and a quiet introduction. Preserve the existing eight directed compositions, sun, stars, lighting, and scene controls. No loading ritual should delay the identity or About navigation.
 
-## Archived scene interaction
+About opens the accepted illustrated estate as a menu over the dimmed scene. Preserve its desktop and portrait proportions, transparent paper boundary, and aligned Profile, Experience, and Contact landmarks. Keep About's title modest and its close control legible. Category dialogs use simple cotton paper and readable dark ink; Back, Escape, and backdrop dismissal return to the estate before the outer About dialog returns to the scene.
 
-The notes below describe earlier scene and icon treatments retained for rollback; the estate direction above takes precedence.
+Keep the single About case icon readable and straight-on at rest, revealing its right edge while About or a child category is open. Its label and ordinary text fallback remain usable without the icon, map artwork, or JavaScript. Child panels do not restore the old scroll curls, diagram map, separate Contact entry icon, or gold UI text.
 
+## Historical interface treatments
 
-- The homepage can stay sparse as long as core actions remain legible.
-- Bottom nav model icons should keep their flap faces readable, straight-on at rest. While a panel is open its icon reveals the right edge; closing restores the front view.
-- Panels should open quickly, close cleanly, and always remain keyboard-friendly.
-- About and Contact panels share one warm parchment frame system; preserve that pair logic when refining either panel.
+The direct-estate homepage and the earlier pair of About/Contact entry icons remain documented in prior review notes. They record earlier iterations rather than the current navigation contract. Their accepted estate illustration, simple-paper material, and restrained icon shading carry forward into the scene-first menu.
 
 ## Guardrails
 
@@ -53,8 +51,8 @@ The notes below describe earlier scene and icon treatments retained for rollback
 
 - Preserve the preferred original name treatment: Cormorant at 700 weight, #f7f1ea, and its soft halo. Parchment headings retain the refined 500 weight. Keep the existing title scale, line heights, and copy.
 - Foreground hierarchy is the preserved warm-white name, soft off-white intro, pale stone navigation labels, then neutral-gray metadata. Gold belongs to the sun and material details, not secondary UI text. UI controls use the shared surface/line/focus tokens; avoid bright blue chrome or glossy buttons.
-- Camera-review controls stay compact with quiet lower rules and explicit focus outlines. They remain opt-in preview controls.
+- Scene-tour controls stay compact with quiet lower rules and explicit focus outlines. Preserve the existing default five-second tour, pause, next-view, and timing behavior.
 - Keep model icons at 80% brightness, baked into the images without an additional CSS brightness filter. Labels stay visible and independent of the image; hover lift remains restrained.
-- About and Contact share subdued parchment, dark ink, and a dim scene backdrop. Both use quiet cotton fibers, restrained nine-slice paper edges, and crisp selectable ink. No ruled lines, monograms, or wax seals. The 44px close control stays legible. Panels lift into light over 440ms and close over 240ms; reduced motion is immediate.
+- The About estate and its Profile, Experience, and Contact dialogs share dark ink and a dim scene backdrop. Child panels use quiet cotton fibers, restrained paper edges, and crisp selectable ink. No ruled lines, monograms, or wax seals. Close and Back controls have at least 44px targets. Panels lift into light over 440ms and close over 240ms; reduced motion is immediate.
 - Preserve hero/navigation bounds because scene framing uses those DOM rectangles. Recheck phone and desktop framing whenever text metrics or spacing change.
-- Panel motion is a short 12px settle. Reduced motion removes the settle and close-button movement; maintain keyboard focus trapping/restoration.
+- Opening motion rises 18px with a shallow tilt and settles to crisp text. Reduced motion removes that movement; maintain keyboard focus trapping and restoration through child-to-menu and menu-to-scene transitions.

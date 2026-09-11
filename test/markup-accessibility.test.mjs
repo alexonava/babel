@@ -48,10 +48,10 @@ test("the skip-link points at an id that exists on the page", async () => {
   assert.match(html, new RegExp(`id="${skipMatch[1]}"`));
 });
 
-test("estate buttons have accessible names and reference their dialogs", async () => {
+test("About and estate buttons have accessible names and reference their dialogs", async () => {
   const html = await readIndexHtml();
   const buttonBlocks = html.match(/<button[^>]*class="bottom-btn[^"]*"[^>]*>/g) || [];
-  assert.ok(buttonBlocks.length >= 2, "expected at least two bottom-bar buttons");
+  assert.ok(buttonBlocks.length === 4, "About and its three destinations expose dialog buttons");
   for (const block of buttonBlocks) {
     assert.match(block, /aria-label="[^"]+"/, `bottom-bar button is missing aria-label: ${block}`);
     assert.match(
@@ -70,7 +70,7 @@ test("estate buttons have accessible names and reference their dialogs", async (
 test("modal overlays declare dialog semantics and start hidden", async () => {
   const html = await readIndexHtml();
   const overlayBlocks = html.match(/<div[^>]*class="panel-overlay"[\s\S]*?>/g) || [];
-  assert.ok(overlayBlocks.length >= 2, "expected at least two modal overlays");
+  assert.ok(overlayBlocks.length === 4, "About and its three categories each expose a dialog");
   for (const block of overlayBlocks) {
     assert.match(block, /role="dialog"/);
     assert.match(block, /aria-modal="true"/);
@@ -103,19 +103,27 @@ test("all estate panels share the parchment frame without decorative monograms o
   assert.doesNotMatch(html, /panel-letter__quill/);
 });
 
-test("estate navigation is the reachable main content without a scene host", async () => {
+test("the scene is the landing content and the estate starts inside the hidden About dialog", async () => {
   const html = await readIndexHtml();
+  assert.match(html, /<body class="scene-home">/);
   assert.match(html, /<main[^>]*id="main"[^>]*tabindex="-1"/);
-  assert.match(html, /class="estate-destinations"/);
-  assert.doesNotMatch(
-    html,
-    /id="home-scene"|class="scene-shell"|class="site-shell"|id="panel-about"/,
-  );
+  assert.match(html, /<div class="scene-shell" aria-hidden="true">/);
+  assert.match(html, /id="home-scene" class="scene-canvas"/);
+  const main = html.match(/<main[\s\S]*?<\/main>/)[0];
+  assert.match(main, /id="home" class="hero section"/);
+  assert.doesNotMatch(main, /class="estate-map"|class="estate-destinations"/);
+  assert.match(html, /id="panel-about"[^>]* hidden>[\s\S]*?class="estate-destinations"/);
+  assert.match(html, /class="panel-close" aria-label="Close About"/);
+  assert.equal((html.match(/class="panel-close panel-back" aria-label="Back to About"/g) || []).length, 3);
 });
 
-test("homepage has no loading ritual or camera controls", async () => {
+test("responsive scene posters paint before the deferred renderer and developer HUD stays hidden", async () => {
   const html = await readIndexHtml();
-  assert.doesNotMatch(html, /loading-ritual|dev-mode-hud|scene-tour/);
+  assert.match(html, /<picture class="scene-poster" aria-hidden="true">/);
+  assert.match(html, /media="\(orientation: portrait\)"[\s\S]*?srcset="\/images\/scene-poster-portrait\.webp"/);
+  assert.match(html, /src="\/images\/scene-poster-landscape\.webp"[\s\S]*?alt=""[\s\S]*?loading="eager"[\s\S]*?fetchpriority="high"/);
+  assert.match(html, /<aside[^>]*id="dev-mode-hud"[^>]* hidden aria-hidden="true"/);
+  assert.doesNotMatch(html, /loading-ritual/);
 });
 
 test("estate layers preserve artwork proportions without masking labels", async () => {
@@ -123,7 +131,7 @@ test("estate layers preserve artwork proportions without masking labels", async 
   assert.match(css, /aspect-ratio: 3 \/ 2/);
   assert.match(css, /aspect-ratio: 2 \/ 3/);
   assert.match(css, /\.estate-home-map \.estate-map::before/);
-  assert.doesNotMatch(await readIndexHtml(), /scene-poster/);
+  assert.match(css, /\.scene-entry\[hidden\], \[data-scene-fallback\]\[hidden\] \{ display: none; \}/);
 });
 
 test("external links that open in a new tab declare rel=noopener", async () => {
@@ -134,31 +142,29 @@ test("external links that open in a new tab declare rel=noopener", async () => {
   }
 });
 
-test("fallback map links and matching copy remain usable before app boot", async () => {
+test("fallback About link and matching category copy remain usable before scene menu initialization", async () => {
   const html = await readIndexHtml();
-  assert.match(html, /<h1>Alex Nava<\/h1>/);
+  assert.match(html, /<h1>[\s\S]*?class="hero-word">Alex<\/span>[\s\S]*?class="hero-word">Nava<\/span>[\s\S]*?<\/h1>/);
   assert.doesNotMatch(html, /<noscript>|data-scramble|Wells Fargo|CVS Health/);
-  const fallbackNav = html.match(/<nav class="estate-fallback-nav"[^>]*>([\s\S]*?)<\/nav>/)[1];
+  const fallbackLink = html.match(/<a[^>]*href="#about-text"[^>]*>/)[0];
+  assert.match(fallbackLink, /aria-label="About"/);
+  assert.match(fallbackLink, /data-scene-fallback/);
+  assert.doesNotMatch(fallbackLink, / hidden/);
+  const fallbackContent = html.match(/<div class="scene-fallback-content"[^>]*>/)[0];
+  assert.match(fallbackContent, /id="about-text"/);
+  assert.match(fallbackContent, /data-scene-fallback/);
+  assert.doesNotMatch(fallbackContent, / hidden/);
+  const fallbackNav = html.match(/<nav class="estate-text-nav"[^>]*>([\s\S]*?)<\/nav>/)[1];
   assert.deepEqual(
     [...fallbackNav.matchAll(/href="#([^"]+)"/g)].map((m) => m[1]),
     ["profile-text", "experience-text", "contact-text"],
   );
-  assert.match(html, /<nav class="estate-destinations"[^>]* hidden>/);
-  assert.doesNotMatch(html.match(/<div class="estate-fallback-content"[^>]*>/)[0], / hidden/);
-  const text = (value) =>
-    value
-      .replace(/<[^>]*>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  assert.match(html, /<button[^>]*class="[^"]*scene-entry"[^>]* hidden>/);
+  const text = (value) => value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   for (const category of ["profile", "experience", "contact"]) {
-    const inline = html.match(
-      new RegExp(`id="${category}-text"[^>]*>[\\s\\S]*?<p>([\\s\\S]*?)</p>`),
-    )[1];
-    const dialog = html.match(
-      new RegExp(`id="panel-${category}"[\\s\\S]*?<p class="panel-body">([\\s\\S]*?)</p>`),
-    )[1];
+    const inline = html.match(new RegExp(`id="${category}-text"[^>]*>[\\s\\S]*?<p>([\\s\\S]*?)</p>`))[1];
+    const dialog = html.match(new RegExp(`id="panel-${category}"[\\s\\S]*?<p class="panel-body">([\\s\\S]*?)</p>`))[1];
     assert.equal(text(inline), text(dialog), `${category} fallback wording drifted`);
-    assert.ok(fallbackNav.includes(`estate-${category}`), "fallback shares landmark coordinates");
   }
 });
 
@@ -182,8 +188,8 @@ test("personal metadata stays consistent and scene discovery uses inert metadata
   );
 
   assert.match(html, /<title>Alex Nava<\/title>/);
-  assert.equal(sceneMeta, "");
-  assert.doesNotMatch(html, /data-scene-script/);
+  assert.match(sceneMeta, /content="\/scripts\/scene\.js" data-scene-script/);
+  assert.doesNotMatch(html, /<script[^>]*src="\/scripts\/scene\.js"/);
   assert.doesNotMatch(html, /<link[^>]*data-scene-script/);
   assert.doesNotMatch(html, /rel="prefetch"[^>]*scene\.js/);
 });

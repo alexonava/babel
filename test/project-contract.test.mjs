@@ -27,8 +27,8 @@ test("repo contract reflects the current preview workflow and test suite", async
     assert.match(workflow, /node-version:\s*22/);
   }
   assert.match(packageJson.scripts.preview, /wrangler pages dev dist/);
-  assert.doesNotMatch(indexHtml, /data-scene-script/);
-  assert.doesNotMatch(indexHtml, /\/scripts\/scene\.js/);
+  assert.match(indexHtml, /data-scene-script/);
+  assert.match(indexHtml, /\/scripts\/scene\.js/);
   assert.match(buildScript, /SCENE_ENTRY/);
   assert.match(buildScript, /scenePath/);
   assert.match(readme, /npm run preview/);

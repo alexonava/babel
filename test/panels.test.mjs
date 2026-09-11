@@ -615,7 +615,7 @@ test("nested Contact returns to About before restoring the outer trigger", async
   assert.equal(e.bottomBar.inert, false);
 });
 
-// Current homepage fixture: three sibling destinations in main, with no About menu.
+// Retained direct-estate fixture for the previous homepage and controller compatibility.
 function createEstateDom({ reduceMotion = true } = {}) {
   const document = new FakeDocument();
   const media = new FakeElement(document, "media-query");
@@ -821,4 +821,203 @@ test("a late binding failure rolls back all earlier registrations and allows a c
   assert.equal(item.panel.hidden, false);
   item.close.dispatchEvent(createEvent("click"));
   assert.equal(dom.document.activeElement, item.button);
+});
+// Current homepage: the scene's About entry opens an estate whose destinations
+// open sibling category overlays; panel history returns through the estate.
+function createSceneEstateDom(options = {}) {
+  const dom = createEstateDom(options);
+  const { document, main, navigation, destinations } = dom;
+  document.body.classList.add("scene-home");
+  const sceneShell = append(document.body, new FakeElement(document, "div", {
+    classNames: ["scene-shell"],
+  }));
+  append(sceneShell, new FakeElement(document, "div", { id: "home-scene" }));
+  const siteShell = append(document.body, new FakeElement(document, "div", {
+    classNames: ["site-shell"],
+  }));
+  const bottomBar = append(document.body, new FakeElement(document, "nav", {
+    classNames: ["bottom-bar"], attributes: { "aria-label": "Primary" },
+  }));
+  const entry = append(bottomBar, new FakeElement(document, "button", {
+    classNames: ["bottom-btn", "bottom-btn--icon", "scene-entry"],
+    dataset: { panel: "about" },
+    attributes: { "aria-label": "About", "aria-controls": "panel-about", "aria-expanded": "false" },
+  }));
+  const panel = append(document.body, new FakeElement(document, "div", {
+    id: "panel-about", classNames: ["panel-overlay"], hidden: true,
+    attributes: { role: "dialog", "aria-modal": "true", "aria-labelledby": "panel-about-title" },
+  }));
+  const card = append(panel, new FakeElement(document, "div", {
+    classNames: ["panel-estate", "panel-surface"], attributes: { tabindex: "-1" },
+  }));
+  const map = append(card, new FakeElement(document, "div", { classNames: ["estate-map"] }));
+  append(map, new FakeElement(document, "h2", { id: "panel-about-title", textContent: "About" }));
+  const close = append(map, new FakeElement(document, "button", {
+    classNames: ["panel-close"], attributes: { "aria-label": "Close About" },
+  }));
+  main.children = main.children.filter((element) => element !== navigation);
+  navigation.classList.add("estate-destinations");
+  append(map, navigation);
+  for (const [name, destination] of Object.entries(destinations)) {
+    destination.button.classList.add(`estate-${name}`);
+    destination.close.classList.add("panel-back");
+    destination.close.setAttribute("aria-label", "Back to About");
+    destination.panel.setAttribute("role", "dialog");
+    destination.panel.setAttribute("aria-modal", "true");
+  }
+  return {
+    ...dom, sceneShell, siteShell, bottomBar,
+    about: { entry, panel, card, map, close },
+    backgrounds: [dom.skipLink, sceneShell, siteShell, main, bottomBar, dom.copyright],
+  };
+}
+
+function dismissPanel(document, panel, close, method) {
+  if (method === "button") close.dispatchEvent(createEvent("click"));
+  else if (method === "backdrop") panel.dispatchEvent(createEvent("click"));
+  else document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
+}
+
+test("scene About opens the map first and each category returns through its destination to the scene entry", async () => {
+  const dom = createSceneEstateDom();
+  const { document, about, destinations } = dom;
+  assert.equal(await loadPanels(dom.window, document), true);
+  for (const item of Object.values(destinations)) {
+    for (const method of ["button", "backdrop", "Escape"]) {
+      about.entry.focus();
+      about.entry.dispatchEvent(createEvent("click"));
+      assert.equal(about.panel.hidden, false);
+      assert.equal(document.activeElement, about.close);
+      assert.equal(about.entry.getAttribute("aria-expanded"), "true");
+      for (const destination of Object.values(destinations)) assert.equal(destination.panel.hidden, true);
+      item.button.focus();
+      item.button.dispatchEvent(createEvent("click"));
+      assert.equal(about.panel.hidden, true);
+      assert.equal(about.panel.inert, true);
+      assert.equal(about.panel.getAttribute("aria-hidden"), "true");
+      assert.equal(about.entry.getAttribute("aria-expanded"), "true", "About remains expanded while its child is active");
+      assert.equal(item.button.getAttribute("aria-expanded"), "true");
+      assert.equal(item.panel.hidden, false);
+      assert.equal(document.activeElement, item.close);
+      for (const node of dom.backgrounds) assert.equal(node.inert, true);
+      item.panel.dispatchEvent(createEvent("click", { target: item.copy }));
+      assert.equal(item.panel.hidden, false, "selecting category copy is not a backdrop dismissal");
+
+      dismissPanel(document, item.panel, item.close, method);
+      assert.equal(item.panel.hidden, true);
+      assert.equal(item.panel.inert, true);
+      assert.equal(item.button.getAttribute("aria-expanded"), "false");
+      assert.equal(about.panel.hidden, false);
+      assert.equal(about.panel.inert, false);
+      assert.equal(about.panel.getAttribute("aria-hidden"), null);
+      assert.equal(document.activeElement, item.button, "return focuses the selected map destination");
+      assert.equal(document.body.getAttribute("data-panel-open"), "true");
+      for (const node of dom.backgrounds) assert.equal(node.inert, true, "returning to About keeps the scene inert");
+
+      dismissPanel(document, about.panel, about.close, method);
+      assert.equal(about.panel.hidden, true);
+      assert.equal(about.entry.getAttribute("aria-expanded"), "false");
+      assert.equal(document.activeElement, about.entry, "leaving About restores the scene icon");
+      assert.equal(document.body.getAttribute("data-panel-open"), null);
+      for (const node of dom.backgrounds) assert.equal(node.inert, false);
+    }
+  }
+});
+
+test("the nested estate traps keyboard focus among Close and its three destinations", async () => {
+  const dom = createSceneEstateDom();
+  const { document, about, destinations } = dom;
+  await loadPanels(dom.window, document);
+  about.entry.dispatchEvent(createEvent("click"));
+  const reverse = createEvent("keydown", { key: "Tab", shiftKey: true });
+  document.dispatchEvent(reverse);
+  assert.equal(reverse.defaultPrevented, true);
+  assert.equal(document.activeElement, destinations.contact.button);
+  const forward = createEvent("keydown", { key: "Tab" });
+  document.dispatchEvent(forward);
+  assert.equal(forward.defaultPrevented, true);
+  assert.equal(document.activeElement, about.close);
+  for (const item of Object.values(destinations)) {
+    item.button.dispatchEvent(createEvent("click"));
+    const last = item.link || item.close;
+    last.focus();
+    document.dispatchEvent(createEvent("keydown", { key: "Tab" }));
+    assert.equal(document.activeElement, item.close);
+    document.dispatchEvent(createEvent("keydown", { key: "Tab", shiftKey: true }));
+    assert.equal(document.activeElement, last);
+    document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
+    assert.equal(document.activeElement, item.button);
+  }
+  document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
+  assert.equal(document.activeElement, about.entry);
+});
+
+test("rapid child returns and reopenings cannot let stale exits hide the active map or category", async () => {
+  const dom = createSceneEstateDom({ reduceMotion: false });
+  const { document, about, destinations } = dom;
+  const callbacks = [];
+  dom.window.setTimeout = (callback) => { callbacks.push(callback); return callbacks.length; };
+  dom.window.clearTimeout = () => {};
+  await loadPanels(dom.window, document);
+  about.entry.dispatchEvent(createEvent("click"));
+  destinations.profile.button.dispatchEvent(createEvent("click")); // About exit 0.
+  destinations.profile.close.dispatchEvent(createEvent("click")); // Profile exit 1.
+  callbacks[0]();
+  assert.equal(about.panel.hidden, false);
+  assert.equal(about.panel.inert, false);
+  assert.equal(document.activeElement, destinations.profile.button);
+  destinations.profile.button.dispatchEvent(createEvent("click")); // About exit 2.
+  callbacks[1]();
+  assert.equal(destinations.profile.panel.hidden, false);
+  assert.equal(destinations.profile.panel.inert, false);
+  document.dispatchEvent(createEvent("keydown", { key: "Escape" })); // Profile exit 3.
+  destinations.contact.button.dispatchEvent(createEvent("click")); // About exit 4.
+  callbacks[2]();
+  callbacks[3]();
+  assert.equal(destinations.profile.panel.hidden, true);
+  assert.equal(destinations.contact.panel.hidden, false);
+  assert.equal(destinations.contact.panel.inert, false);
+  assert.equal(document.activeElement, destinations.contact.close);
+  destinations.contact.close.dispatchEvent(createEvent("click")); // Contact exit 5.
+  callbacks[4]();
+  assert.equal(about.panel.hidden, false);
+  assert.equal(document.activeElement, destinations.contact.button);
+  for (const node of dom.backgrounds) assert.equal(node.inert, true);
+  about.close.dispatchEvent(createEvent("click")); // About exit 6.
+  assert.equal(document.activeElement, about.entry);
+  assert.equal(document.body.getAttribute("data-panel-open"), null);
+  callbacks.forEach((callback) => callback());
+  assert.equal(about.panel.hidden, true);
+  for (const item of Object.values(destinations)) {
+    assert.equal(item.panel.hidden, true);
+    assert.equal(item.button.getAttribute("aria-expanded"), "false");
+  }
+  about.entry.dispatchEvent(createEvent("click"));
+  about.close.dispatchEvent(createEvent("click"));
+  assert.equal(document.activeElement, about.entry, "rapid nested navigation leaves no stale history entry");
+  callbacks.forEach((callback) => callback());
+});
+
+test("repeated initialization while a child is open preserves nested navigation and listener counts", async () => {
+  const dom = createSceneEstateDom();
+  const { document, about, destinations } = dom;
+  await loadPanels(dom.window, document);
+  about.entry.dispatchEvent(createEvent("click"));
+  destinations.experience.button.dispatchEvent(createEvent("click"));
+  for (let i = 0; i < 3; i++) assert.equal(dom.window.BabelSite.ui.initPanels(), true);
+  assert.equal(listenerCount(document), 1);
+  assert.equal(listenerCount(dom.media), 1);
+  assert.equal(listenerCount(about.entry), 1);
+  assert.equal(listenerCount(about.close), 1);
+  for (const item of Object.values(destinations)) {
+    assert.equal(listenerCount(item.button), 1);
+    assert.equal(listenerCount(item.close), 1);
+    assert.equal(listenerCount(item.panel), 1);
+  }
+  assert.equal(document.activeElement, destinations.experience.close);
+  document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
+  assert.equal(document.activeElement, destinations.experience.button);
+  document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
+  assert.equal(document.activeElement, about.entry);
+  assert.equal(about.panel.hidden, true);
 });
