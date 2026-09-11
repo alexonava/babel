@@ -137,3 +137,16 @@ the origin after GLB import. Two soft area lights: (-2, -3, 4), 450 W / 4 units;
 (3, -2, 1), 110 W / 3 units. World color (0.35, 0.37, 0.42), strength 0.5.
 Downsample with Lanczos to 256px and export WebP quality 92, method 6, exact
 alpha. Combined size: 17,972 bytes.
+
+
+## Cotton paper panel material
+
+The About and Contact paper textures were generated with OpenAI's built-in image generation tool and prepared as local WebP material assets. Generation prompts, source provenance, export settings and validation are recorded in `PAPER-PANELS-QA.md`. They are decorative; all panel wording remains selectable HTML.
+
+
+## Illustrated navigation icons
+
+The superseded experimental About leather case and Contact stamped-envelope icons were original AI-generated 2D illustrations, using the previous supplied-model renders as object references. Generated with the built-in OpenAI image tool; prompt set, source files and export details are in `NAV-ICONS-QA.md`. The original GLBs remain unchanged and are not shipped as navigation assets.
+
+
+Current navigation uses the original supplied GLBs rendered with matching camera yaw (+15 degrees for both About and Contact), 6-degree elevation, and 80% baked brightness. See the current section of `NAV-ICONS-QA.md` for the reproducible camera/lighting/export recipe and validation. No generated illustration remains in the current navigation assets.

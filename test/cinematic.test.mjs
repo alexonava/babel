@@ -156,16 +156,16 @@ test("quiet presentation suppresses re-enabled objects and restores original vis
 });
 
 test("angle overrides and fresh-load angle sampling stay within each subject's own composition count", () => {
-  for (const angle of [1, 2, 3, 4, 5])
+  for (const angle of [1, 2, 3, 4])
     assert.equal(chooseCinematicAngle(`?angle=${angle}`, "tower"), angle - 1);
   // Tree has four compositions, so its fourth direct URL remains reproducible.
   assert.equal(chooseCinematicAngle("?angle=4", "tree", () => 0.99), 3);
-  // Tower has five, so the sixth URL falls back to its sampled composition.
-  assert.equal(chooseCinematicAngle("?angle=6", "tower", () => 0.99), 4);
+  // Tower has four, so the fifth URL falls back to its sampled composition.
+  assert.equal(chooseCinematicAngle("?angle=5", "tower", () => 0.99), 3);
   assert.equal(chooseCinematicAngle("?view=tree", "tree", () => 0.99), 0);
   assert.equal(chooseCinematicAngle("", "tower", () => 0), 0);
   assert.equal(chooseCinematicAngle("", "tower", () => 0.5), 2);
-  assert.equal(chooseCinematicAngle("", "tower", () => 0.99), 4);
+  assert.equal(chooseCinematicAngle("", "tower", () => 0.99), 3);
   // Tree's random range can reach its fourth composition.
   assert.equal(chooseCinematicAngle("", "tree", () => 0.99), 3);
 });

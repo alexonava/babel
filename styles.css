@@ -57,25 +57,25 @@
      hover labels, scene tuner) uses this so it whispers rather than
      competing with the hero word. Warm off-white — reads as legible white
      against the blue-black scene without clashing with the warm scene. */
-  --text-muted-accent: #c5c9c2;
+  --text-muted-accent: #bfc1bf;
   /* Prefix companion to the anchor. Used for "Calm by" so it reads as
      legible white against the twilight scene while still letting "design."
      be the clear focal word. One notch brighter than --text-muted-accent
      so it holds hero-level presence. */
   --calm-prefix: #ebe4d4;
-  --text: #e5dfd3;
-  --muted: #bdb6aa;
+  --text: #e5e4df;
+  --muted: #c3c3c0;
   --text-primary: var(--text);
   --text-secondary: var(--muted);
-  --text-meta: #b9b1a4;
+  --text-meta: #b4b5b3;
   --text-accent: var(--text-muted-accent);
-  --text-meta-shadow: 0 2px 8px rgba(7, 10, 14, 0.42), 0 0 10px rgba(198, 208, 202, 0.08);
+  --text-meta-shadow: 0 2px 8px rgba(7, 10, 14, 0.42);
   --shadow-deep: 0 30px 84px rgba(0, 0, 0, 0.38);
   --shadow-panel: 0 18px 48px rgba(7, 10, 20, 0.24);
   --border-soft: rgba(241, 229, 212, 0.16);
   --ui-surface: #161719;
-  --ui-line: #6d6559;
-  --ui-focus: #d3b689;
+  --ui-line: #696c6d;
+  --ui-focus: #d0d1cc;
   --ui-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --border-strong: rgba(210, 218, 212, 0.34);
   --panel-surface: linear-gradient(180deg, rgba(85, 85, 82, 0.88) 0%, rgba(38, 40, 44, 0.82) 100%);
@@ -547,7 +547,7 @@ main:focus {
   text-shadow: 0 2px 12px rgba(4, 7, 12, 0.65);
   max-width: 30ch;
   margin: 18px 0 0;
-  color: var(--text-secondary);
+  color: #deddd9;
   font-size: clamp(14px, 1.25vw, 17px);
   line-height: 1.55;
   text-wrap: balance;
@@ -574,20 +574,21 @@ main:focus {
 }
 
 .hero h1 {
-  font-weight: 500;
+  font-weight: 700;
+  color: #f7f1ea;
   font-size: clamp(48px, 8vw, 104px);
   max-width: 8ch;
   overflow-wrap: anywhere;
   /* Whisper of warm halo only — enough to feel lit-from-within without
      announcing itself. The muted palette does the work of keeping the
      type inside the scene. */
-  text-shadow: 0 2px 22px rgba(4, 7, 12, 0.4);
+  text-shadow: 0 0 44px rgba(198, 208, 202, 0.1);
 }
 
 .hero h1 .hero-word {
   display: block;
   padding-bottom: 0.12em;
-  color: var(--text-primary);
+  color: inherit;
 }
 
 @keyframes hero-reveal {
@@ -787,7 +788,6 @@ main:focus {
 }
 
 .btn-icon {
-  filter: brightness(0.8);
   object-fit: contain;
   width: 100%;
   height: 100%;
@@ -796,14 +796,14 @@ main:focus {
 }
 
 .btn-icon-label {
-  color: var(--text-secondary);
+  color: #ccccc7;
   position: absolute;
   left: 50%;
   bottom: calc(100% + 8px);
   white-space: nowrap;
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   opacity: 1;
   transform: translate(-50%, 0);
@@ -852,10 +852,11 @@ main:focus {
     rgba(8, 10, 16, 0.64);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 280ms ease;
+  transition: opacity 240ms ease;
 }
 
 .panel-overlay.open {
+  transition-duration: 440ms;
   opacity: 1;
   pointer-events: auto;
 }
@@ -906,18 +907,18 @@ main:focus {
 
 .panel-surface {
   position: relative;
-  transform: translateY(12px);
-  transition: transform 280ms var(--ui-ease);
+  transform: perspective(1200px) translateY(18px) scale(0.985) rotateX(4deg);
+  transform-origin: 50% 80%;
+  transition: transform 240ms ease;
 }
 
 .panel-overlay.open .panel-surface {
-  transform: translateY(0);
+  transform: none;
+  transition-duration: 440ms;
+  transition-timing-function: cubic-bezier(0.2, 0.7, 0.25, 1);
 }
 
-/* Single shared parchment frame for About + Contact panels.
-   Per-panel character comes from one ornament: an "A" watermark inside
-   #panel-about, a wax seal inside #panel-contact. The frame itself is
-   identical across both — same paper, same drop angle, same shadow. */
+/* Shared cotton paper with a fixed-scale grain and nine-slice edges. */
 .panel-parchment {
   display: grid;
   width: min(100%, 720px);
@@ -934,37 +935,37 @@ main:focus {
   position: relative;
   padding: clamp(40px, 5.4vw, 64px) clamp(34px, 4.8vw, 60px) clamp(46px, 6vw, 72px);
   min-height: clamp(280px, 36vh, 380px);
-  overflow: hidden;
+  isolation: isolate;
   color: #332d25;
   font-family: var(--font-body);
-  background-color: #bfb39b;
-  background-image:
-    radial-gradient(circle at 18% 18%, rgba(255, 248, 229, 0.16) 0%, rgba(255, 248, 229, 0) 42%),
-    radial-gradient(circle at 86% 78%, rgba(96, 74, 48, 0.13) 0%, rgba(96, 74, 48, 0) 44%),
-    repeating-linear-gradient(
-      180deg,
-      transparent 0,
-      transparent calc(1.78em - 1px),
-      rgba(69, 58, 43, 0.1) calc(1.78em - 1px),
-      rgba(69, 58, 43, 0.1) 1.78em
-    ),
-    linear-gradient(180deg, #cbbfa7 0%, #b7aa92 100%);
-  background-position:
-    0 0,
-    0 0,
-    0 1.2em,
-    0 0;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 249, 232, 0.28),
-    inset 0 -18px 34px rgba(44, 34, 24, 0.12),
-    inset 0 0 0 1px rgba(78, 65, 46, 0.22);
+}
+
+.panel-parchment__sheet::before,
+.panel-parchment__sheet::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* Solid ivory remains readable while either image is missing or downloading. */
+.panel-parchment__sheet::before {
+  inset: 23px;
+  background: #e8ddc8;
+  background-size: 384px 384px;
+}
+
+.panel-parchment__sheet::after {
+  inset: 0;
+  border: 24px solid transparent;
+  border-image: none;
 }
 
 .panel-parchment__content {
   position: relative;
   z-index: 2;
   max-width: 38ch;
-  padding-right: clamp(54px, 8vw, 72px);
+  padding-right: 0;
 }
 
 .panel-parchment__sheet .eyebrow {
@@ -1021,59 +1022,6 @@ main:focus {
   letter-spacing: 0.08em;
 }
 
-/* Display "A" sitting behind the About text — reads as a tooled cover
-   initial. Anchored right-of-center so the text column stays the eye's
-   first stop, then the watermark registers as ambient ornament. */
-.panel-parchment__watermark {
-  position: absolute;
-  top: 50%;
-  right: clamp(-12px, 2vw, 24px);
-  transform: translateY(-52%);
-  z-index: 1;
-  font-family: var(--font-display);
-  font-style: italic;
-  font-size: clamp(220px, 32vw, 360px);
-  line-height: 0.8;
-  color: rgba(60, 44, 24, 0.1);
-  pointer-events: none;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-/* Matte wax and a pressed initial tie Contact to the leather/paper icons. */
-.panel-parchment__seal {
-  position: absolute;
-  right: clamp(28px, 4vw, 56px);
-  bottom: clamp(28px, 4vw, 56px);
-  z-index: 1;
-  width: clamp(64px, 7vw, 88px);
-  height: clamp(64px, 7vw, 88px);
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 32% 28%, rgba(239, 220, 183, 0.15), rgba(239, 220, 183, 0) 62%),
-    radial-gradient(circle at 70% 78%, rgba(58, 52, 44, 0.46), rgba(58, 52, 44, 0) 60%),
-    linear-gradient(155deg, #857052 0%, #705c43 58%, #564633 100%);
-  box-shadow:
-    0 4px 10px rgba(28, 25, 22, 0.2),
-    inset 0 1px 0 rgba(246, 223, 180, 0.18),
-    inset 0 -3px 6px rgba(32, 29, 26, 0.2);
-  pointer-events: none;
-}
-
-.panel-parchment__seal::after {
-  content: "A";
-  position: absolute;
-  inset: 14%;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(43, 32, 21, 0.4);
-  border-radius: 50%;
-  color: #443521;
-  font: 500 30px/1 var(--font-display);
-  text-shadow: 0 1px 0 rgba(229, 203, 155, 0.2);
-  box-shadow: 0 1px 0 rgba(229, 203, 155, 0.16);
-}
-
 @media (max-width: 640px) {
   .panel-overlay {
     padding: max(12px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
@@ -1098,18 +1046,7 @@ main:focus {
     font-size: clamp(30px, 10vw, 44px);
   }
 
-  .panel-parchment__watermark {
-    font-size: clamp(180px, 56vw, 260px);
-    right: clamp(-24px, -2vw, -8px);
-    opacity: 0.85;
-  }
 
-  .panel-parchment__seal {
-    width: clamp(52px, 14vw, 64px);
-    height: clamp(52px, 14vw, 64px);
-    right: clamp(20px, 6vw, 32px);
-    bottom: clamp(20px, 6vw, 32px);
-  }
 }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -1528,7 +1465,7 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
   margin-top: 18px;
   max-width: 310px;
   font: 400 12px/1.4 "Instrument Sans", sans-serif;
-  color: #d8d4ca;
+  color: var(--text-secondary);
 }
 .scene-tour-label {
   flex-basis: 100%;
@@ -1551,8 +1488,179 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
 .scene-tour select:hover {
   border-bottom-color: var(--ui-focus);
   color: var(--text-primary);
-  background: #22211f;
+  background: #222528;
 }
 .scene-tour button:disabled { opacity: 0.55; cursor: default; }
 .scene-tour button:focus-visible,
 .scene-tour select:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-overlay.open,
+  .panel-overlay.open .panel-surface {
+    transition: none;
+  }
+  .panel-surface { transform: none; }
+}
+
+@media (forced-colors: active) {
+  .panel-parchment__sheet::before,
+  .panel-parchment__sheet::after { display: none; }
+  .panel-parchment__sheet :is(h2, .eyebrow, .panel-body, a) {
+    color: CanvasText;
+  }
+}
+
+/* Resting icons face forward; only the open panel's icon turns inward. */
+.btn-icon { transition: opacity 180ms ease; }
+.btn-icon--active { position: absolute; inset: 0; opacity: 0; }
+.bottom-btn[aria-expanded="true"] .btn-icon { opacity: 0; }
+.bottom-btn[aria-expanded="true"] .btn-icon--active { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .btn-icon { transition: none; }
+}
+
+/* Rendered supplied scroll: the map and ties remain part of the paper. */
+.panel-parchment { width: min(100%, 880px); }
+.panel-parchment__sheet {
+  min-height: 0;
+  background: transparent;
+  aspect-ratio: 1.25;
+  padding: 5% 16% 16% 14%;
+}
+.panel-parchment__sheet::before {
+  inset: 5% 13% 7% 8%;
+  background: #ddcba5;
+}
+.panel-parchment__sheet::after {
+  inset: 0;
+  border: 0;
+  background: none center / 100% 100% no-repeat;
+}
+.panel-parchment__content { max-width: none; }
+.panel-parchment__sheet .eyebrow { text-align: center; margin: 0 0 9%; color: #30281e; }
+.panel-parchment__sheet h2 {
+  font-size: clamp(28px, 4vw, 44px);
+  max-width: none;
+  margin-left: 40%;
+  color: #211c16;
+}
+.panel-parchment__sheet .panel-body {
+  margin: 18px 0 0 40%;
+  color: #211c16;
+  font-family: var(--font-display);
+  font-size: clamp(18px, 2.1vw, 23px);
+  font-weight: 500;
+  line-height: 1.35;
+  text-shadow: 0 0 3px #e0cda4, 0 0 7px #e0cda4;
+}
+.panel-parchment .panel-close { margin: 7% 12% 0 0; }
+@media (max-width: 600px) {
+  .panel-parchment__sheet { aspect-ratio: auto; min-height: 420px; padding: 32px 18% 76px 15%; }
+  .panel-parchment__sheet .eyebrow { margin-bottom: 32px; }
+  .panel-parchment__sheet h2 { margin-left: 0; font-size: 32px; }
+  .panel-parchment__sheet .panel-body { margin-left: 0; font-size: 18px; }
+  .panel-parchment .panel-close { margin-top: 38px; }
+}
+@media (forced-colors: active) {
+  .panel-parchment__sheet { background: Canvas; border: 1px solid CanvasText; }
+  .panel-parchment__sheet :is(h2, .eyebrow, .panel-body) { color: CanvasText; text-shadow: none; }
+}
+
+/* Labels and hit areas share the artwork's proportional coordinate system. */
+.panel-estate { width: min(100%, 960px); }
+.estate-map {
+  grid-area: 1 / 1; position: relative; width: 100%; aspect-ratio: 3 / 2;
+  background: #e6d3af url("/images/estate-map-desktop.webp") center / 100% 100% no-repeat;
+  border-radius: 5px; color: #30271c;
+}
+.estate-title {
+  position: absolute; top: 5%; left: 35%; width: 30%; margin: 0;
+  text-align: center; font: 600 clamp(22px, 3vw, 34px)/1.1 var(--font-display);
+  letter-spacing: .08em;
+}
+.estate-destinations { position: absolute; inset: 0; }
+.estate-destination {
+  position: absolute; width: 24%; min-width: 44px; min-height: 44px;
+  height: 48%; margin: 0; padding: 0; background: transparent; border: 0;
+  border-radius: 8px; color: #30271c; transform: none;
+}
+.estate-profile { left: 11%; top: 12%; }
+.estate-experience { left: 40%; top: 40%; height: 38%; }
+.estate-contact { left: 68%; top: 27%; height: 31%; }
+.estate-destination span {
+  position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+  padding: 4px 9px; border-radius: 50%; white-space: nowrap;
+  background: radial-gradient(ellipse, rgba(231,212,176,.95) 25%, rgba(231,212,176,0) 75%);
+  font: 600 clamp(18px, 2.5vw, 29px)/1.25 var(--font-display);
+  text-shadow: none;
+}
+.estate-destination:hover, .estate-destination:focus-visible { transform: none; background: rgba(78,54,26,.035); }
+.estate-destination:hover span { text-decoration: underline; text-underline-offset: 5px; }
+.estate-destination:focus-visible { outline: 2px solid #59452b; outline-offset: 3px; }
+.panel-estate .panel-close { margin: 3% 3% 0 0; background: rgba(230,211,175,.85); }
+@media (max-width: 600px) {
+  .panel-estate { width: min(100%, 440px); }
+  .estate-map { aspect-ratio: 2 / 3; background-image: url("/images/estate-map-portrait.webp"); }
+  .estate-title { top: 5%; font-size: 24px; }
+  .estate-destination { width: 38%; height: 30%; }
+  .estate-profile { left: 12%; top: 10%; }
+  .estate-experience { left: 50%; top: 38%; height: 24%; }
+  .estate-contact { left: 12%; top: 62%; height: 23%; }
+  .estate-destination span { font-size: 19px; }
+}
+@media (forced-colors: active) {
+  .estate-map { background: Canvas; color: CanvasText; border: 1px solid CanvasText; }
+  .estate-destination { background: Canvas; color: ButtonText; border: 1px solid ButtonText; }
+  .estate-destination span { background: Canvas; color: CanvasText; }
+  .estate-destination:focus-visible { outline-color: Highlight; }
+}
+
+/* The estate is the page, not an overlay. All motion belongs to opened sections. */
+.estate-home { background: #0c1016; min-height: 100svh; overflow-x: hidden; }
+.estate-main { width: min(1120px, calc(100% - 48px)); margin: 0 auto; padding: 42px 0 0; }
+.estate-identity { text-align: center; margin: 0 0 32px; }
+.estate-identity h1 { margin: 0; font: 700 clamp(48px, 6vw, 80px)/1.05 var(--font-display); color: #f7f1ea; letter-spacing: -.04em; }
+.estate-identity p { margin: 16px 0 0; font: 400 16px/1.5 var(--font-body); color: #deddd9; }
+.estate-home-map { position: relative; }
+.estate-home-map .estate-map { background: none; border-radius: 0; isolation: isolate; }
+.estate-home-map .estate-map::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: url("/images/estate-map-desktop.webp") center / 100% 100% no-repeat;
+  filter: drop-shadow(0 14px 18px rgba(0,0,0,.3));
+}
+.estate-home-map .estate-map::after {
+  content: ""; position: absolute; inset: 2%; z-index: -2; background: #e6d3af;
+}
+.estate-home .site-copyright { position: static; text-align: center; padding: 24px 16px 30px; margin: 0; }
+.estate-text-nav, .estate-text-section { margin: 24px auto; max-width: 640px; line-height: 1.6; }
+.estate-home .panel-parchment { width: min(100%, 720px); }
+.estate-home .panel-parchment__sheet {
+  aspect-ratio: auto; min-height: 320px; padding: 64px 64px 70px;
+  background: transparent; color: #332d25;
+}
+.estate-home .panel-parchment__sheet::before { inset: 23px; background: #e8ddc8 url("/images/paper-grain.webp") repeat; background-size: 384px; }
+.estate-home .panel-parchment__sheet::after { inset: 0; border: 24px solid transparent; background: none; border-image: url("/images/paper-edge.webp") 96 / 24px / 0 stretch; }
+.estate-home .panel-parchment__sheet .eyebrow { text-align: left; margin: 0 0 14px; }
+.estate-home .panel-parchment__sheet h2 { margin: 0; max-width: 13ch; font-size: clamp(34px, 4vw, 52px); }
+.estate-home .panel-parchment__sheet .panel-body { margin: 24px 0 0; max-width: 38ch; font: 400 17px/1.65 var(--font-body); text-shadow: none; }
+.estate-home .panel-parchment .panel-close { margin: 18px; }
+@media (max-width: 600px) {
+  .estate-main { width: calc(100% - 24px); padding-top: 28px; }
+  .estate-identity { margin-bottom: 24px; }
+  .estate-identity p { max-width: 30ch; margin: 12px auto 0; font-size: 14px; }
+  .estate-home-map .estate-map::before { background-image: url("/images/estate-map-portrait.webp"); }
+  .estate-home .panel-parchment__sheet { padding: 62px 36px 48px; min-height: 300px; }
+  .estate-home .panel-parchment__sheet .panel-body { font-size: 16px; overflow-wrap: anywhere; }
+}
+@media (forced-colors: active) {
+  .estate-home { background: Canvas; }
+  .estate-identity h1, .estate-identity p { color: CanvasText; }
+  .estate-home-map .estate-map::before { display: none; }
+  .estate-home-map .estate-map::after { background: Canvas; }
+  .estate-home .panel-parchment__sheet { background: Canvas; border: 1px solid CanvasText; }
+  .estate-home .panel-parchment__sheet::before, .estate-home .panel-parchment__sheet::after { display: none; }
+  .estate-home .panel-parchment__sheet :is(h2,.eyebrow,.panel-body,a) { color: CanvasText; }
+}
+
+/* Keep nonfunctional dialog buttons out of the no-JavaScript fallback. */
+.estate-destinations[hidden] { display: none; }

@@ -57,8 +57,13 @@ curl() {
     if [ "$url" = "https://alexnava.me/" ] && [ "$MOCK_FAILURE" = "different-assets" ]; then
       css_hash=99999999
     fi
-    printf '<title>%s</title> css/styles.%s.css scripts/app.22222222.js scripts/scene.33333333.js' \
+    printf '<title>%s</title> css/styles.%s.css scripts/app.22222222.js' \
       "$title" "$css_hash" > "$body"
+    if [ "$MOCK_LAYOUT" = "scene" ]; then
+      printf ' scripts/scene.33333333.js' >> "$body"
+    elif [ "$MOCK_LAYOUT" != "missing-navigation" ]; then
+      printf ' estate-destinations' >> "$body"
+    fi
   fi
   printf '%s\t%s' "$status" "$effective"
 }
@@ -79,6 +84,9 @@ test("production smoke checks keep old branding exclusive to rollback and retain
 
   const cases = [
     { name: "new release accepts current title", title: "Alex Nava", code: 0 },
+    { name: "new release rejects scene boot", title: "Alex Nava", layout: "scene", code: 1 },
+    { name: "new release requires estate navigation", title: "Alex Nava", layout: "missing-navigation", code: 1 },
+    { name: "rollback accepts previous scene", title: "Alex Nava", layout: "scene", rollback: true, code: 0 },
     { name: "new release rejects old title", title: "Nava Designs — Alex Nava", code: 1 },
     {
       name: "rollback accepts old title",
@@ -117,6 +125,7 @@ test("production smoke checks keep old branding exclusive to rollback and retain
               RUNNER_TEMP: tempRoot.replaceAll("\\", "/"),
               MOCK_TITLE: scenario.title || "Nava Designs — Alex Nava",
               MOCK_FAILURE: scenario.failure || "",
+              MOCK_LAYOUT: scenario.layout || "estate",
             },
           },
         );

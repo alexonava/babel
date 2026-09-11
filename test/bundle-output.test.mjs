@@ -147,7 +147,7 @@ test("published responsive posters use content hashes and retain intact compatib
     const hash = createHash("sha256").update(source).digest("hex").slice(0, 8);
     const hashedName = `scene-poster-${orientation}.${hash}.webp`;
     expectedNames.push(hashedName);
-    assert.ok(html.includes(`${attribute}="/images/${hashedName}"`));
+    assert.ok(!html.includes(hashedName), "retained posters are not requested by the estate");
     assert.deepEqual(await readFile(path.join(distDir, "images", hashedName)), source);
     assert.deepEqual(await readFile(path.join(distDir, "images", stableName)), source);
   }
@@ -176,7 +176,7 @@ test("changing only fixture poster bytes changes only that poster URL", async ()
     await writeFile(path.join(fixture, "src", "scene-entry.js"), "void 0;");
     async function posterUrls() {
       await execFileP(process.execPath, ["build.mjs", "--dist"], { cwd: fixture });
-      const html = await readFile(path.join(fixture, "dist", "index.html"), "utf8");
+      const html = (await readdir(path.join(fixture, "dist", "images"))).map(name => `/images/${name}`).join(" ");
       return Object.fromEntries(
         ["landscape", "portrait"].map((orientation) => [
           orientation,
@@ -287,16 +287,40 @@ test("grass color/mask maps are deferred and fit both their own and the complete
   }
 });
 
- test("navigation renders are fingerprinted and served without model loading code", async () => {
-  const html = await readFile(path.join(distDir, "index.html"), "utf8");
-  const app = await readFile(await findHashedScript("app"), "utf8");
-  for (const name of ["about", "contact"]) {
-    const bytes = await readFile(path.join(projectRoot, "images", "nav-" + name + ".webp"));
-    const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
-    const url = "/images/nav-" + name + "." + hash + ".webp";
-    assert.ok(html.includes('src="' + url + '"'));
-    assert.deepEqual(await readFile(path.join(distDir, url)), bytes);
+ test("homepage bundle excludes scene boot and model loading", async () => {
+ const html=await readFile(path.join(distDir,"index.html"),"utf8");const app=await readFile(await findHashedScript("app"),"utf8");
+ assert.doesNotMatch(html,/data-scene-script|scene-poster|nav-about/);
+ assert.doesNotMatch(app,/WebGL|initHomeScene|loadAndInitScene|sceneDebug|readSceneQualityControls/);
+});
+
+test("paper textures are fingerprinted in CSS and stay under 200 KiB combined", async () => {
+  const cssDir = path.join(distDir, "css");
+  const cssName = (await readdir(cssDir)).find((name) => /^styles\.[a-f0-9]{8}\.css$/.test(name));
+  const css = await readFile(path.join(cssDir, cssName), "utf8");
+  assert.equal(cssName, `styles.${createHash("sha256").update(css).digest("hex").slice(0, 8)}.css`);
+  let total = 0;
+  for (const name of ["paper-grain", "paper-edge"]) {
+    const source = await readFile(path.join(projectRoot, "images", `${name}.webp`));
+    total += source.length;
+    const hash = createHash("sha256").update(source).digest("hex").slice(0, 8);
+    assert.ok(css.includes(`/images/${name}.${hash}.webp`));
+    assert.ok(!css.includes(`/images/${name}.webp`));
+    assert.deepEqual(await readFile(path.join(distDir, "images", `${name}.${hash}.webp`)), source);
   }
-  assert.doesNotMatch(app, /initBottomNavIcons|Meshy_AI_|Leather_Envelope_Case|Stylized_3D_game_prop/);
-  assert.doesNotMatch(html, /Meshy_AI_|Leather_Envelope_Case|Stylized_3D_game_prop/);
+  assert.ok(total <= 200 * 1024, `${total} bytes of paper textures exceeds budget`);
+});
+
+
+test("estate map artwork is hashed, responsive and under 200 KiB combined", async () => {
+  const cssName = (await readdir(path.join(distDir, "css"))).find(n => /^styles\.[a-f0-9]{8}\.css$/.test(n));
+  const css = await readFile(path.join(distDir, "css", cssName), "utf8");
+  let total = 0;
+  for (const name of ["estate-map-desktop", "estate-map-portrait"]) {
+    const bytes = await readFile(path.join(projectRoot, "images", name + ".webp"));
+    total += bytes.length;
+    const hash = createHash("sha256").update(bytes).digest("hex").slice(0,8);
+    assert.ok(css.includes(`/images/${name}.${hash}.webp`));
+    assert.deepEqual(await readFile(path.join(distDir,"images",`${name}.${hash}.webp`)),bytes);
+  }
+  assert.ok(total <= 200 * 1024);
 });

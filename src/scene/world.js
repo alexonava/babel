@@ -34,7 +34,7 @@
     // Placed in open sky on the tower side of the field, clear of both the
     // tower silhouette and the tree canopy, so the directed shots that look
     // this way frame it against empty night rather than behind geometry.
-    // Shared by Arrival, The watch, and Gallery detail; never moved per shot.
+    // Shared by The watch and Gallery detail; never moved per shot.
     SUN_POSITION: Object.freeze([-85, 55, -14]),
 
     // --- Main camera (PerspectiveCamera) ---

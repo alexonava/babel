@@ -12,13 +12,10 @@ export function wantsFilmTreatment(search = "") {
 
 export const DIRECTED_SHOTS = {
   tower: [
-    // Arrival: the full tower and footing from a slightly lower eye, so it looms.
-    // A three-degree sweep retains corona clearance on narrow phones.
-    { name: "Arrival", region: [0, 1], fov: 38, azimuth: -6, height: 0.34, arc: 3 },
     // The watch: below the gallery, with the fixed sun beside the roof.
     { name: "The watch", region: [0.55, 1], fov: 32, azimuth: -4, height: 0.66, arc: 2 },
-    // Threshold: low and close at the entrance; buttresses and earth contact.
-    { name: "Threshold", region: [0, 0.45], fov: 36, azimuth: 72, height: 0.12, arc: 2 },
+    // Threshold: upper entrance wall and balcony, without the ground seam.
+    { name: "Threshold", widthBelow: 0.5, region: [0.42, 0.8], fov: 36, azimuth: 82, height: 0.36, arc: 2 },
     // Masonry study: an eye-level section of the wall, framed as a person
     // would encounter it on approach. It keeps enough depth to show stone
     // scale and joints without reading as a texture swatch.
@@ -33,8 +30,7 @@ export const DIRECTED_SHOTS = {
   // tree reads closer and more intimate in frame; tower shots keep the
   // default spacing.
   tree: [
-    // Lower and tighter than before so the tree looms the way Arrival's
-    // tower does, instead of just sitting centered in frame.
+    // A low, close composition gives the tree a looming silhouette.
     { name: "Portrait", region: [0, 1], fov: 36, azimuth: -77, height: 0.24, arc: 4, margin: 0.93 },
 
     {

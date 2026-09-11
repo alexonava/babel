@@ -114,14 +114,23 @@ collect_assets() {
 
   grep -oE '(css/styles|scripts/(app|scene))\.[a-f0-9]{8}\.(css|js)' "$body" |
     sort -u > "$output" || true
-  [ "$(wc -l < "$output" | tr -d ' ')" -eq 3 ]
+  [ "$(grep -Ec '^css/styles\.[a-f0-9]{8}\.css$' "$output")" -eq 1 ] &&
+    [ "$(grep -Ec '^scripts/app\.[a-f0-9]{8}\.js$' "$output")" -eq 1 ] || return 1
+  local count
+  count="$(wc -l < "$output" | tr -d ' ')"
+  if [ "$allow_previous_branding" = "true" ]; then
+    # Rollback can restore either the estate or the previous scene homepage.
+    [ "$count" -eq 2 ] || [ "$count" -eq 3 ]
+  else
+    [ "$count" -eq 2 ] && grep -Fq 'estate-destinations' "$body"
+  fi
 }
 
 retry_page "deployment" "$deployment_url" "$deployment_host" "false"
 
 deployment_assets="$work_dir/deployment-assets.txt"
 if ! collect_assets "$work_dir/deployment-body.html" "$deployment_assets"; then
-  echo "::error::Immutable deployment must reference exactly three hashed app, scene, and CSS assets."
+  echo "::error::Immutable deployment must contain the estate navigation and exactly one hashed app and CSS asset; scene references are accepted only for rollback."
   exit 1
 fi
 

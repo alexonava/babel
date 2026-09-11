@@ -3,32 +3,15 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
-test("navigation model renders are decorative and buttons remain labeled without images", async () => {
-  const html = await readFile(new URL("index.html", root), "utf8");
-  for (const name of ["about", "contact"]) {
-    const button = [...html.matchAll(/<button\b[\s\S]*?<\/button>/g)]
-      .map((m) => m[0])
-      .find((s) => s.includes('data-panel="' + name + '"'));
-    assert.ok(button);
-    assert.match(
-      button,
-      new RegExp('aria-label="' + (name === "about" ? "About" : "Contact") + '"'),
-    );
-    assert.match(button, /class="btn-icon-label"/);
-    assert.match(button, new RegExp('aria-controls="panel-' + name + '"'));
-    const img = button.match(/<img\b[^>]+>/)?.[0];
-    assert.ok(img);
-    assert.ok(img.includes('src="/images/nav-' + name + '.webp"'));
-    assert.match(img, /alt=""/);
-    assert.match(img, /aria-hidden="true"/);
-    assert.match(img, /width="256" height="256"/);
-    assert.doesNotMatch(button, /<canvas/);
-  }
+test("estate homepage exposes categories directly without the old icon entry", async () => {
+ const html=await readFile(new URL("index.html",root),"utf8");
+ assert.doesNotMatch(html,/data-panel="about"|nav-about|nav-contact/);
+ for(const name of ["profile","experience","contact"]) assert.ok(html.includes(`aria-controls="panel-${name}"`));
 });
 
-test("navigation renders have 256px alpha canvases and fit the combined transfer budget", async () => {
+test("navigation model renders have 256px alpha canvases and fit the combined transfer budget", async () => {
   let total = 0;
-  for (const name of ["about", "contact"]) {
+  for (const name of ["about", "contact", "about-active", "contact-active"]) {
     const data = await readFile(new URL("images/nav-" + name + ".webp", root));
     total += data.length;
     assert.equal(data.toString("ascii", 0, 4), "RIFF");
@@ -39,4 +22,17 @@ test("navigation renders have 256px alpha canvases and fit the combined transfer
     assert.equal(data.readUIntLE(27, 3) + 1, 256);
   }
   assert.ok(total <= 80 * 1024, "navigation icons exceed 80 KiB");
+});
+
+
+test("estate destinations are labeled HTML buttons in keyboard order without floating icons", async () => {
+  const html = await readFile(new URL("index.html", root), "utf8");
+  const map = html.match(/<nav class="estate-destinations"[\s\S]*?<\/nav>/)[0];
+  const destinations = [...map.matchAll(/data-panel="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(destinations, ["profile", "experience", "contact"]);
+  assert.doesNotMatch(map, /<img|<canvas/);
+  for (const name of destinations) {
+    assert.ok(map.includes(`aria-controls="panel-${name}"`));
+    assert.ok(map.includes(`<span>${name[0].toUpperCase() + name.slice(1)}</span>`));
+  }
 });

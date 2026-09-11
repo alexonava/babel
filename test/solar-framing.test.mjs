@@ -14,7 +14,7 @@ import {
   DoubleSide,
 } from "three";
 import { createCompleteTowerArchitecture } from "../src/scene/architecture.js";
-import { DIRECTED_SHOTS } from "../src/scene/directed-shots.js";
+import { DIRECTED_SHOTS, measureShot } from "../src/scene/directed-shots.js";
 import { createCinematicCamera, cinematicSafeArea } from "../src/scene/cinematic.js";
 
 // Decode the authored tower's geometry without loading its browser-only textures.
@@ -56,7 +56,7 @@ async function towerAsset(tier) {
 
 for (const tier of ["high", "balanced"])
   test(
-    tier + " tower keeps the fixed sun clear in Arrival, The watch and Gallery detail",
+    tier + " tower keeps the fixed sun clear in The watch and Gallery detail",
     async () => {
       const window = { BabelSite: {} };
       vm.runInNewContext(
@@ -113,7 +113,7 @@ for (const tier of ["high", "balanced"])
         },
       ];
       for (const layout of layouts)
-        for (const angle of [0, 1, 4]) {
+        for (const angle of [0, 3]) {
           const { width, height, hero, nav } = layout;
           const camera = new PerspectiveCamera(38, width / height, 0.1, 240);
           const controller = createCinematicCamera({
@@ -180,6 +180,28 @@ for (const tier of ["high", "balanced"])
           }
           controller.dispose();
         }
+      // Keep the authored footing out of Threshold throughout
+      // normal sweep and the tour's dolly, including narrow phone layouts.
+      const footing = measureShot(tower.root, { region: [0, 0.025], height: 0 });
+      for (const layout of layouts) for (const angle of [1]) {
+        const { width, height, hero, nav } = layout;
+        const camera = new PerspectiveCamera(38, width / height, 0.1, 240);
+        const controller = createCinematicCamera({ camera, film: true,
+          selected: "tower", angle,
+          getSafeArea: () => cinematicSafeArea(width, height, hero, nav) });
+        controller.setSubject("tower", tower.root);
+        controller.setStatus({ kind: "tower", status: "ready" });
+        for (const sample of [0, 6, 12, 18, 24, 30, 36, 42, 48].map(elapsedSeconds => ({elapsedSeconds}))
+          .concat([0, .25, .5, .75, 1].map(tourPhase => ({tourPhase})))) {
+          controller.apply({width, height, ...sample});
+          camera.updateMatrixWorld(true);
+          for (let i = 0; i < footing.points.length; i += 3) {
+            const point = new Vector3().fromArray(footing.points, i).project(camera);
+            assert.ok(point.y < -1, `${DIRECTED_SHOTS.tower[angle].name} ${width} footing visible: ${point.y}`);
+          }
+        }
+        controller.dispose();
+      }
       tower.dispose();
       asset.scene.traverse((o) => {
         o.geometry?.dispose();

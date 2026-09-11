@@ -79,18 +79,18 @@ test("modal overlays declare dialog semantics and start hidden", async () => {
   }
 });
 
-test("about and contact panels share the parchment frame and each carry one ornament", async () => {
+test("about and contact panels share the parchment frame without decorative monograms or seals", async () => {
   const html = await readIndexHtml();
   const sharedFrames =
     html.match(/class="[^"]*\bpanel-parchment\b[^"]*\bpanel-surface\b[^"]*"/g) || [];
 
   assert.equal(
     sharedFrames.length,
-    2,
-    "both panels use the shared panel-parchment + panel-surface frame",
+    3,
+    "all panels use the shared panel-parchment + panel-surface frame",
   );
-  assert.match(html, /class="panel-parchment__watermark"/, "About carries the watermark ornament");
-  assert.match(html, /class="panel-parchment__seal"/, "Contact carries the wax-seal ornament");
+  assert.doesNotMatch(html, /class="panel-parchment__watermark"/);
+  assert.doesNotMatch(html, /class="panel-parchment__seal"/);
   assert.doesNotMatch(html, /panel-object-stage/, "the 3D panel-object stage is removed");
   assert.doesNotMatch(html, /data-panel-object/);
   assert.doesNotMatch(html, /panel-parchment--notebook/, "metaphor-named modifiers are gone");
@@ -103,80 +103,21 @@ test("about and contact panels share the parchment frame and each carry one orna
   assert.doesNotMatch(html, /panel-letter__quill/);
 });
 
-test("decorative regions are hidden from assistive tech and main content stays programmatically reachable", async () => {
-  const html = await readIndexHtml();
-  assert.match(html, /class="scene-shell"[^>]*aria-hidden="true"/);
-  assert.match(html, /class="site-shell"[^>]*aria-hidden="true"/);
-  assert.match(html, /<main[^>]*id="main"[^>]*tabindex="-1"/);
+test("estate navigation is the reachable main content without a scene host", async () => {
+ const html = await readIndexHtml();
+ assert.match(html, /<main[^>]*id="main"[^>]*tabindex="-1"/);
+ assert.match(html, /class="estate-destinations"/);
+ assert.doesNotMatch(html, /id="home-scene"|class="scene-shell"|class="site-shell"|id="panel-about"/);
 });
 
-test("the loading ritual is decorative, self-contained, timed, and motion-safe", async () => {
-  const html = await readIndexHtml();
-  const styles = await readStyles();
-  const ritualStart = html.indexOf('<div class="loading-ritual"');
-  const sceneStart = html.indexOf('<div class="scene-shell"', ritualStart);
-  const ritual = html.slice(ritualStart, sceneStart);
-
-  assert.ok(ritualStart >= 0, "loading ritual is present");
-  assert.ok(sceneStart > ritualStart, "loading ritual precedes the scene");
-  assert.match(ritual, /aria-hidden="true"/);
-  assert.match(ritual, /<svg[\s\S]*class="loading-ritual__seal"/);
-  assert.match(ritual, /class="loading-ritual__tower"/);
-  assert.doesNotMatch(ritual, /class="loading-ritual__name"/);
-  assert.match(ritual, /class="loading-ritual__motto">Alex Nava</);
-  assert.doesNotMatch(ritual, /loading-ritual__(?:fog|ticks|brazier|ember|progress)/);
-  assert.doesNotMatch(ritual, /<(?:a|button|input|select|textarea)\b/i);
-  assert.doesNotMatch(ritual, /\ssrc=/i, "the ritual adds no external media asset");
-  assert.doesNotMatch(ritual, /https?:\/\//i);
-
-  assert.match(styles, /--loading-ritual-duration:\s*900ms/);
-  assert.match(
-    styles,
-    /\.loading-ritual\s*\{[\s\S]*?animation:\s*loading-ritual-exit 180ms[^;]*720ms both;/,
-  );
-  assert.match(
-    styles,
-    /@keyframes loading-ritual-exit[\s\S]*?to\s*\{[^}]*visibility:\s*hidden;[^}]*opacity:\s*0;/,
-    "CSS hides the ritual without waiting for JavaScript",
-  );
-  assert.match(
-    styles,
-    /\.loading-ritual__content\s*\{[\s\S]*?animation:\s*loading-ritual-content-enter 420ms[^;]*60ms both;/,
-  );
-  assert.match(
-    styles,
-    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.loading-ritual\s*\{[^}]*animation:\s*loading-ritual-exit 120ms linear 250ms both;/,
-  );
-  assert.match(
-    styles,
-    /@media \(forced-colors: active\)[\s\S]*?\.loading-ritual\s*\{[^}]*background:\s*Canvas;/,
-  );
+test("homepage has no loading ritual or camera controls", async () => {
+ const html=await readIndexHtml();assert.doesNotMatch(html,/loading-ritual|dev-mode-hud|scene-tour/);
 });
 
-test("the decorative scene poster is eager, responsive, and only fades for a ready scene", async () => {
-  const html = await readIndexHtml();
-  const styles = await readStyles();
-  const picture = html.match(/<picture class="scene-poster"[\s\S]*?<\/picture>/)?.[0] || "";
-  const image = picture.match(/<img[\s\S]*?\/>/)?.[0] || "";
-
-  assert.match(picture, /aria-hidden="true"/);
-  assert.match(picture, /media="\(orientation: portrait\)"/);
-  assert.match(picture, /srcset="\/images\/scene-poster-portrait\.webp"/);
-  assert.match(image, /src="\/images\/scene-poster-landscape\.webp"/);
-  assert.match(image, /alt=""/);
-  assert.match(image, /loading="eager"/);
-  assert.match(image, /fetchpriority="high"/);
-  assert.match(image, /decoding="async"/);
-  assert.match(styles, /\.scene-canvas\.is-ready \+ \.scene-poster\s*\{\s*opacity:\s*0;/);
-  assert.doesNotMatch(
-    styles,
-    /\.scene-shell\s*\{[^}]*animation:/,
-    "the first-paint poster must not wait on a shell opacity animation",
-  );
-  assert.match(
-    styles,
-    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.scene-canvas,\s*\.scene-poster\s*\{[^}]*transition:\s*none;/,
-  );
+test("estate layers preserve artwork proportions without masking labels", async () => {
+ const css=await readStyles();assert.match(css,/aspect-ratio: 3 \/ 2/);assert.match(css,/aspect-ratio: 2 \/ 3/);
+ assert.match(css,/\.estate-home-map \.estate-map::before/);
+ assert.doesNotMatch(await readIndexHtml(),/scene-poster/);
 });
 
 test("external links that open in a new tab declare rel=noopener", async () => {
@@ -187,25 +128,10 @@ test("external links that open in a new tab declare rel=noopener", async () => {
   }
 });
 
-test("hero and About copy remain clear, grounded, and free of scramble hooks", async () => {
-  const html = await readIndexHtml();
-  const hero = html.match(/<section id="home"[\s\S]*?<\/section>/)?.[0] || "";
-  const heroText = hero
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  assert.equal(heroText, "Alex Nava A little about me and what I’m working on.");
-  assert.equal(
-    html.replace(/\s+/g, " ").split(
-      "My background is in analytics, reporting, remediation, and controls, across banking and health analytics. This is my personal corner of the web.",
-    ).length - 1,
-    2,
-  );
-  assert.doesNotMatch(html, /Nine years|advisory inquiries|Core focus areas|Nava Designs/);
-  assert.doesNotMatch(html, /Wells Fargo|CVS Health/);
-  assert.match(html, /A little about me\./);
-  assert.doesNotMatch(html, /data-scramble/);
+test("identity and category copy remain present with a no-script equivalent", async () => {
+ const html=await readIndexHtml();assert.match(html,/<h1>Alex Nava<\/h1>/);
+ assert.match(html,/A little about me and what/);assert.match(html,/<noscript>[\s\S]*id="profile-text"[\s\S]*id="experience-text"[\s\S]*id="contact-text"/);
+ assert.doesNotMatch(html,/data-scramble|Wells Fargo|CVS Health/);
 });
 
 test("personal metadata stays consistent and scene discovery uses inert metadata", async () => {
@@ -219,8 +145,8 @@ test("personal metadata stays consistent and scene discovery uses inert metadata
   );
 
   assert.match(html, /<title>Alex Nava<\/title>/);
-  assert.match(sceneMeta, /content="\/scripts\/scene\.js\?v=648"/);
-  assert.match(sceneMeta, /\sdata-scene-script(?:\s|\/?>)/);
+  assert.equal(sceneMeta, "");
+  assert.doesNotMatch(html, /data-scene-script/);
   assert.doesNotMatch(html, /<link[^>]*data-scene-script/);
   assert.doesNotMatch(html, /rel="prefetch"[^>]*scene\.js/);
 });
