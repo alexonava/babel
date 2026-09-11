@@ -721,17 +721,27 @@ function setSrgbTexture(texture) {
             ctx2.closePath(),
             ctx2.clip());
           var gradient9 = ctx2.createRadialGradient(num407, num408, 0, num407, num408, 256);
-          (gradient9.addColorStop(0, "#ffffff"),
-            gradient9.addColorStop(0.12, "#fffde0"),
-            gradient9.addColorStop(0.25, "#ffeba8"),
-            gradient9.addColorStop(0.4, "#ffc050"),
-            gradient9.addColorStop(0.55, "#ff9928"),
-            gradient9.addColorStop(0.67, "rgba(240,90,15,0.6)"),
-            gradient9.addColorStop(0.78, "rgba(200,50,5,0.2)"),
-            gradient9.addColorStop(0.88, "rgba(100,20,0,0.04)"),
+          // A photosphere has a defined edge and darkens toward it, then falls
+          // away into corona. The old ramp faded evenly from centre to nothing,
+          // so there was no disc at all - only a soft blur, which is why it read
+          // as a glow rather than a body. Alpha holds near 1 out to the limb at
+          // 0.81 and then drops hard; everything past it is corona.
+          (gradient9.addColorStop(0, "#fff6e2"),
+            gradient9.addColorStop(0.25, "#ffeec2"),
+            gradient9.addColorStop(0.45, "#ffdc93"),
+            gradient9.addColorStop(0.6, "#ffc264"),
+            gradient9.addColorStop(0.72, "#f59a3c"),
+            gradient9.addColorStop(0.8, "rgba(214,110,40,0.95)"),
+            gradient9.addColorStop(0.82, "rgba(150,60,18,0.32)"),
+            gradient9.addColorStop(0.88, "rgba(120,40,10,0.1)"),
             gradient9.addColorStop(1, "rgba(0,0,0,0)"),
             (ctx2.fillStyle = gradient9),
             ctx2.fillRect(0, 0, arg59, arg59));
+          // Granulation adds light only. Stamped source-over, any blob darker
+          // than the near-white centre it lands on subtracts from it, which
+          // muddied the middle of the disc into grey while the unspeckled ring
+          // outside stayed clean - an inverted limb, brightest at the edge.
+          ctx2.globalCompositeOperation = "lighter";
           for (var num409 = 0; num409 < 400; num409++) {
             var num410 = Math.random() * Math.PI * 2,
               num411 = 256 * Math.random() * 0.45,
@@ -752,25 +762,41 @@ function setSrgbTexture(texture) {
                     "rgba(200,70,8," + (0.06 + 0.1 * Math.random()) + ")",
                   ),
                   gradient10.addColorStop(1, "rgba(160,40,0,0)"))
-                : (gradient10.addColorStop(0, "rgba(60,15,0," + (0.1 + 0.12 * Math.random()) + ")"),
-                  gradient10.addColorStop(1, "rgba(80,20,0,0)")),
+                : (gradient10.addColorStop(
+                    0,
+                    "rgba(190,70,15," + (0.1 + 0.12 * Math.random()) + ")",
+                  ),
+                  gradient10.addColorStop(1, "rgba(170,55,5,0)")),
               (ctx2.fillStyle = gradient10),
               ctx2.fillRect(num412 - num414, num413 - num414, 2 * num414, 2 * num414));
           }
-          var gradient11 = ctx2.createRadialGradient(num407, num408, 153.6, num407, num408, 235.52);
+          ctx2.globalCompositeOperation = "source-over";
+          // Inner corona, starting at the limb (0.81) rather than washing back
+          // across the disc from 0.6 - inside the limb it would only blur the
+          // edge the gradient above works to establish.
+          var gradient11 = ctx2.createRadialGradient(num407, num408, 207, num407, num408, 256);
           (gradient11.addColorStop(0, "rgba(0,0,0,0)"),
-            gradient11.addColorStop(1, "rgba(120,30,0,0.25)"),
+            gradient11.addColorStop(1, "rgba(130,45,12,0.12)"),
             (ctx2.fillStyle = gradient11),
             ctx2.fillRect(0, 0, arg59, arg59));
           var canvasTexture2 = new CanvasTexture(canvas2);
           return (setSrgbTexture(canvasTexture2), canvasTexture2);
         })(512),
-        color: 16777215,
+        // Warm and slightly reddened rather than pure white: a hundred-odd
+        // units of air scatters the short wavelengths out first, so what
+        // arrives is reddened as well as dimmed.
+        color: 16766884,
         transparent: !0,
-        opacity: 1,
+        // Held back from full strength so the core reads as attenuated by the
+        // air between rather than as a nearby light source.
+        opacity: 0.72,
         depthWrite: !1,
         depthTest: !0,
         fog: !1,
+        // Additive like the orbiting motes and jet bands: the core texture
+        // fades through near-black at its rim, which normal blending
+        // composited over the night sky as a dark ring around the sun.
+        blending: AdditiveBlending,
       }),
       sprite17 = new Sprite(spriteMaterial);
     function tmpV57(arg60, arg61) {
@@ -843,12 +869,15 @@ function setSrgbTexture(texture) {
         layer: tmpV58,
         theta: (num499 / num498) * Math.PI * 2 * 3.7 + 2 * Math.sin(num500),
         phi: Math.acos(1 - 2 * result99),
+        // Clustered against the limb (disc half-width ~3.25) instead of the
+        // old 0.8-5.5 spread. A wide swarm reads as debris around a nearby
+        // object; real activity sits on the surface and just off it.
         orbitRadius:
           0 === tmpV58
-            ? 0.8 + 1.5 * Math.abs(Math.sin(2.1 * num500))
+            ? 2.4 + 0.9 * Math.abs(Math.sin(2.1 * num500))
             : 1 === tmpV58
-              ? 2 + 2 * Math.abs(Math.sin(2.1 * num500))
-              : 3.5 + 2 * Math.abs(Math.sin(2.1 * num500)),
+              ? 3 + 1 * Math.abs(Math.sin(2.1 * num500))
+              : 3.6 + 1.2 * Math.abs(Math.sin(2.1 * num500)),
         orbitSpeed:
           0 === tmpV58
             ? 0.2 + 0.5 * Math.abs(Math.sin(1.4 * num500))
@@ -883,12 +912,18 @@ function setSrgbTexture(texture) {
       for (var arr5 = [], num418 = 0; num418 <= arg66; num418++) {
         var num419 = num418 / arg66,
           num420 = arg62 + (num419 - 0.5) * arg64,
-          num421 = 8.3 + Math.pow(Math.sin(num419 * Math.PI), 0.7) * arg63,
+          // Monotonic outward from a foot just outside the limb, instead of
+          // the old rise-and-return from 8.3. That curve came back to its own
+          // foot radius, so the two ends met and the prominence closed into a
+          // ring, and starting at 8.3 left it detached from a disc of radius
+          // ~3.25. A tongue that only travels outward reads as a jet leaving
+          // the sun.
+          num421 = 3.35 + Math.pow(num419, 0.65) * arg63,
           num422 = Math.cos(num420) * num421,
           num423 = Math.sin(num420) * num421,
           tmpV27 = num419 > 0.6 ? 2.5 * (num419 - 0.6) * arg63 * 0.3 : 0,
           num424 =
-            Math.sin(num419 * Math.PI) * Math.sin(arg65) * arg63 * 0.5 + tmpV27 * Math.cos(arg65);
+            Math.sin(num419 * Math.PI) * Math.sin(arg65) * arg63 * 0.18 + tmpV27 * Math.cos(arg65);
         arr5.push(new Vector3(num422, num423, num424));
       }
       return arr5;
@@ -904,13 +939,15 @@ function setSrgbTexture(texture) {
             return Math.abs(Math.sin(arg));
           },
           num503 = (num501 / orbitalGlowLayers) * Math.PI * 2 + 0.5 * Math.sin(num502),
-          num504 = 6 + 10 * fn4(2.3 * num502),
+          // Real prominences hug the limb; the old 6-16 reach put the tip three
+          // times further out than the sun is wide.
+          num504 = 1.4 + 1 * fn4(2.3 * num502),
           num505 = 0.4 + 0.6 * fn4(1.1 * num502),
           num506 = 1.4 * (Math.sin(3.7 * num502) - 0.5),
-          num507 = 0.12 + 0.18 * fn4(1.7 * num502),
+          num507 = 0.1 + 0.14 * fn4(1.7 * num502),
           eeResult = tmpV60(num503, num504, num505, num506, 20),
           catmullRomCurve3 = new CatmullRomCurve3(eeResult),
-          tubeGeometry = new TubeGeometry(catmullRomCurve3, 24, num507, 4, !1),
+          tubeGeometry = new TubeGeometry(catmullRomCurve3, 24, num507, 8, !1),
           arr11 = [],
           arr12 = [],
           position8 = tubeGeometry.attributes.position,
@@ -924,8 +961,14 @@ function setSrgbTexture(texture) {
           result103 = Math.sqrt(
             result100 * result100 + result101 * result101 + result102 * result102,
           ),
-          result104 = clamp01((result103 - 8) / (num504 + 1));
-        (arr12.push(result104), arr11.push(1, 0.98 - 0.65 * result104, 0.75 - 0.7 * result104));
+          // Ramp measured from the new foot radius so the amber-to-ember
+          // gradient spans the whole prominence rather than only its tip.
+          result104 = clamp01((result103 - 3.35) / (num504 + 1));
+        // Amber at the base fading to ember at the tip. This used to start at
+        // (1, 0.98, 0.75) - near-white - and only reach a warm hue at the very
+        // end, so most of the tube read as a cold streak against the warm
+        // palette. These are linear working-space values.
+        (arr12.push(result104), arr11.push(1, 0.66 - 0.41 * result104, 0.28 - 0.23 * result104));
       }
       tubeGeometry.setAttribute("color", new Float32BufferAttribute(arr11, 3));
       var sliceResult = arr11.slice(),
@@ -951,7 +994,8 @@ function setSrgbTexture(texture) {
           growTime: 0.8 + 0.6 * fn4(0.9 * num502),
           holdTime: 1.5 + 1.5 * fn4(1.3 * num502),
           shrinkTime: 1.2 + 0.8 * fn4(2.1 * num502),
-          pauseTime: 7 + 5 * fn4(0.5 * num502),
+          // Was 7-12s, which left the sun bare far more often than not.
+          pauseTime: 2.5 + 3 * fn4(0.5 * num502),
           noReturn: fn4(4.1 * num502) > 0.6,
         }));
     }
@@ -960,10 +1004,18 @@ function setSrgbTexture(texture) {
         return target.copy(moonPosition);
       },
       group: orbitalGlowGroup,
-      importance: "midAtmosphere",
+      // Core, not midAtmosphere: the visibility tracker culls decor past
+      // fog.far (154) and a sun sits well beyond that by design. Its
+      // materials already opt out of fog, so it reads as celestial distance
+      // rather than dissolving into ground haze.
+      importance: "core",
       name: "halo",
       radius: 42,
     });
+    // Sized to read at its ~200-unit distance without collapsing to a speck,
+    // and kept small deliberately: a larger disc reads as something near and
+    // hanging over the field rather than a sun beyond the horizon.
+    orbitalGlowGroup.scale.setScalar(1.15);
     setShadowParticipation(orbitalGlowGroup);
     const environmentSystem = createSceneEnvironment({
       groundHeight,
@@ -4417,9 +4469,11 @@ function setSrgbTexture(texture) {
     quietObjects.push(group5, group6, group10, group12, group13, group14, plantShadowGroup, plinthTorchLight, groundOverlay);
     subsystemRegistry.register(quietScene);
     let completeReady = false, completeTower = null;
-    const filmEffects = [orbitalGlowGroup, sprite15, sprite16];
+    // The orbital sun stays in the directed scene: it is the one warm celestial
+    // anchor in an otherwise cool night, and reads as distance rather than clutter.
+    const filmEffects = [sprite15, sprite16];
     filmScene = createFilmScene({ ground: groundSurface, groundHeight, rendering, atmosphere: atmosphereSystem,
-      effects: filmEffects, haloSystem, skyMaterial: skyShell.material,
+      effects: filmEffects, skyMaterial: skyShell.material,
       onGroundChange(active) { filmActive = active; towerSystem.setFilmTreatment(active); completeTower?.setFilmTreatment(active); result105.setFilmActive(active); },
     });
     subsystemRegistry.register(filmScene);
@@ -5400,7 +5454,10 @@ function setSrgbTexture(texture) {
                 });
               });
             })());
-      if (haloSystem.active && !filmActive) {
+      // The directed scene keeps the sun animating: without this the else
+      // branch below hides all 168 orbiting sprites and the three jet bands,
+      // leaving only the static core disc.
+      if (haloSystem.active) {
         const haloPulse =
           1 + 0.012 * Math.sin(1.3 * elapsedTime) + 0.006 * Math.sin(2.9 * elapsedTime);
         const haloLimit =

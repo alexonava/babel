@@ -128,15 +128,13 @@ test("indexed terrain covers the full square and samples the correct world Z wit
 test("film scene restores geometry, effects, lighting and sky before disposal and tolerates repeated teardown", () => {
   const ground = new Mesh(new BoxGeometry(), new MeshStandardMaterial()),
     original = ground.geometry,
-    effect = new Group(),
-    halo = { enabled: true };
+    effect = new Group();
   const states = [],
     skyMaterial = { uniforms: { sunColor: { value: new Color(0xffaa00) } } };
   const controller = createFilmScene({
     ground,
     groundHeight: () => 0,
     effects: [effect],
-    haloSystem: halo,
     skyMaterial,
     rendering: { setFilmTreatment: (a) => states.push(a) },
     atmosphere: { setFilmTreatment() {} },
@@ -146,7 +144,6 @@ test("film scene restores geometry, effects, lighting and sky before disposal an
   const terrain = ground.geometry;
   assert.notEqual(terrain, original);
   assert.equal(effect.visible, false);
-  assert.equal(halo.enabled, false);
   let disposed = 0;
   terrain.addEventListener("dispose", () => {
     disposed++;
@@ -154,7 +151,6 @@ test("film scene restores geometry, effects, lighting and sky before disposal an
   });
   controller.setActive(false);
   assert.equal(effect.visible, true);
-  assert.equal(halo.enabled, true);
   assert.equal(skyMaterial.uniforms.sunColor.value.getHex(), 0xffaa00);
   controller.setActive(true);
   assert.equal(ground.geometry, terrain);

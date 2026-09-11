@@ -9,7 +9,6 @@ export function createFilmScene({
   rendering,
   atmosphere,
   effects = [],
-  haloSystem,
   skyMaterial,
   onGroundChange = () => {},
 }) {
@@ -45,11 +44,6 @@ export function createFilmScene({
           });
           o.visible = false;
         }
-        const enabled = haloSystem.enabled;
-        undo.push(() => {
-          haloSystem.enabled = enabled;
-        });
-        haloSystem.enabled = false;
         const sunColor = skyMaterial.uniforms.sunColor.value.clone();
         undo.push(() => skyMaterial.uniforms.sunColor.value.copy(sunColor));
         skyMaterial.uniforms.sunColor.value.setHex(0x7e8eab).multiplyScalar(0.35);

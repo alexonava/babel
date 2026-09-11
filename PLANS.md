@@ -194,6 +194,34 @@ forced-colors treatments, adds no external asset or dependency, and leaves the r
 and deferred Three.js capability gates unchanged. See `ART/loading-ritual.md`.
 
 
+### The orbital sun
+
+Alex asked for "a sun with many sprites spiralling around it and jet bands blasting out" to be found and
+made visible. It already existed — `orbitalGlowGroup`, anchored at `WORLD.MOON_POSITION` — but was suppressed
+in four independent places: `film-scene.js` forced `haloSystem.enabled = false`; the group sat in
+`filmEffects` so film also hid it; the visibility tracker culls decor past `fog.far` (154) and the sun sits at
+~210; and the per-frame animation block was gated `&& !filmActive`, its `else` branch hiding all 168 orbiting
+sprites and all three jet bands. Undone in all four, reclassified as `importance: "core"` (a sun should not be
+distance-culled like ground decor — its materials already opt out of fog), and moved into open sky clear of
+the tower silhouette.
+
+Then made to read as a body rather than a glow. The core gradient previously faded evenly from centre to
+nothing, so there was no disc at all: it now holds near-opaque to a defined limb at 0.81 with limb darkening,
+corona beyond. Granulation switched to a `lighter` composite — stamped source-over it was *darkening* the
+near-white centre it sat on, producing an inverted limb that was brightest at the edge. The prominences were
+cold near-white `(1, 0.98, 0.75)` on a four-sided tube reaching three times the disc width, and detached
+(their foot radius was 8.3 against a disc of radius ~3.25); they are now warm amber-to-ember, eight-sided,
+rooted just outside the limb, travelling monotonically outward rather than returning to their own foot radius
+and closing into rings. Motes pulled in against the limb, an extinction tint on the core, and the rest between
+eruptions cut from 7-12s to 2.5-5.5s so the sun is active rather than usually bare.
+
+Deliberately not included: the sky palette and aureole work explored alongside this. Alex preferred the
+deployed sky, so this change is the body only — `skyTopColor`, `skyBottomColor`, the gradient ramp, `sunGlow`,
+`sunDirection` and the cloud handling are untouched. One consequence: the disc has no scattering halo around
+it. Also unchanged is the key light at azimuth 23.6°, so shadows still fall roughly *toward* the visible sun;
+re-aiming it would invalidate the tree-shadow reframing, the ground terraces and the shadow-softening work,
+all tuned against that direction.
+
 ### Directed moonlit scene
 
 **Implemented locally; awaiting visual acceptance.** Six geometry-fitted camera
