@@ -30,8 +30,11 @@
     // sky without flattening the warm key light on its front-facing shell.
     FILL_LIGHT_POSITION: Object.freeze([-30, 22, -28]),
 
-    // --- Moon / orbital glow anchor ---
-    MOON_POSITION: Object.freeze([-75, 50, -60]),
+    // --- Sun / orbital glow anchor ---
+    // Placed in open sky on the tower side of the field, clear of both the
+    // tower silhouette and the tree canopy, so the directed shots that look
+    // this way frame it against empty night rather than behind geometry.
+    MOON_POSITION: Object.freeze([-85, 55, -29]),
 
     // --- Main camera (PerspectiveCamera) ---
     CAMERA_FOV: 45,
