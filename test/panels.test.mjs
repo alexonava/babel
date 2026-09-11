@@ -323,7 +323,7 @@ function createSiteDom({ reduceMotion = true } = {}) {
   );
   append(
     aboutButton,
-    new FakeElement(document, "canvas", { classNames: ["btn-icon"], id: "btn-icon-about" }),
+    new FakeElement(document, "img", { classNames: ["btn-icon"], id: "btn-icon-about" }),
   );
   append(
     aboutButton,

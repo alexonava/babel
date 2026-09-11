@@ -120,3 +120,20 @@ attribution legally required. The samples are baked as a normalized constant
 array in source; no binary asset, runtime fetch, or additional generation is
 used. Noted here for transparency, consistent with this file's practice of
 recording sourcing even where the license does not require it.
+
+## Navigation model renders
+
+About uses the owner-supplied Meshy leather document case; Contact uses the
+stamped paper envelope. These are transparent 256px WebP renders, not runtime
+3D models. Original GLBs remain unchanged in the owner's Downloads folder and
+are excluded from the site payload.
+
+- Meshy_AI_Leather_Envelope_Case_0911015506_texture.glb — SHA-256 `a819c2ef4b466d5544e70ecbffdf806c1eb75b9ba3dfa2bc2ffcd88239989b60`.
+- Meshy_AI_Stylized_3D_game_prop_0911015500_texture.glb — SHA-256 `65d412aa8ac6786551ff41b3c3386b126b9d9d37ab3d707b85809a2255447aed`.
+
+Render recipe: Blender 4.5 Cycles, 96 samples with denoising, AgX, 512px
+transparent film, orthographic scale 2.3 and camera (0.35, -4, 0.7) looking at
+the origin after GLB import. Two soft area lights: (-2, -3, 4), 450 W / 4 units;
+(3, -2, 1), 110 W / 3 units. World color (0.35, 0.37, 0.42), strength 0.5.
+Downsample with Lanczos to 256px and export WebP quality 92, method 6, exact
+alpha. Combined size: 17,972 bytes.

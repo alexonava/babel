@@ -8,6 +8,5 @@ import "./shared/webgl-probe.js";
 import "./shared/motion.js";
 import "./scene/quality.js";
 import "./ui/hero.js";
-import "./ui/icons.js";
 import "./ui/panels.js";
 import "./main.js";

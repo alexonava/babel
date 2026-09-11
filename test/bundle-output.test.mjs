@@ -286,3 +286,17 @@ test("grass color/mask maps are deferred and fit both their own and the complete
     assert.ok(bytes<=totalLimit,`${tier} scene incl. earth+grass: ${bytes}`);
   }
 });
+
+ test("navigation renders are fingerprinted and served without model loading code", async () => {
+  const html = await readFile(path.join(distDir, "index.html"), "utf8");
+  const app = await readFile(await findHashedScript("app"), "utf8");
+  for (const name of ["about", "contact"]) {
+    const bytes = await readFile(path.join(projectRoot, "images", "nav-" + name + ".webp"));
+    const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
+    const url = "/images/nav-" + name + "." + hash + ".webp";
+    assert.ok(html.includes('src="' + url + '"'));
+    assert.deepEqual(await readFile(path.join(distDir, url)), bytes);
+  }
+  assert.doesNotMatch(app, /initBottomNavIcons|Meshy_AI_|Leather_Envelope_Case|Stylized_3D_game_prop/);
+  assert.doesNotMatch(html, /Meshy_AI_|Leather_Envelope_Case|Stylized_3D_game_prop/);
+});

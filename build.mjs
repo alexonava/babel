@@ -39,6 +39,7 @@ const STATIC_FILES = [
 const STATIC_FILE_ALIASES = [{ source: "site-agents.md", destination: "AGENTS.md" }];
 const STATIC_DIRS = ["fonts", "images"];
 const FINGERPRINTED_POSTERS = ["scene-poster-landscape.webp", "scene-poster-portrait.webp"];
+const FINGERPRINTED_ICONS = ["nav-about.webp", "nav-contact.webp"];
 const DIST_DIR = join(__dirname, "dist");
 const DIST_SCRIPTS_DIR = join(DIST_DIR, "scripts");
 const DIST_CSS_DIR = join(DIST_DIR, "css");
@@ -155,9 +156,9 @@ async function buildDist() {
   }
 
   // Keep the stable copies for older HTML while new pages receive a fresh URL
-  // whenever poster bytes change, independent of the browser's image cache.
+  // whenever poster or navigation icon bytes change, independent of the browser's image cache.
   const posterPaths = {};
-  for (const name of FINGERPRINTED_POSTERS) {
+  for (const name of [...FINGERPRINTED_POSTERS, ...FINGERPRINTED_ICONS]) {
     const bytes = await readFile(join(__dirname, "images", name));
     const hashedName = name.replace(/\.webp$/, `.${sha8(bytes)}.webp`);
     await writeFile(join(DIST_DIR, "images", hashedName), bytes);
