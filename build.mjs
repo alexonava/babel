@@ -1,9 +1,9 @@
 import { build } from "esbuild";
-import { watch as watchFiles } from "node:fs";
-import { copyFile, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { publishBuild } from "./tools/build-output.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -15,11 +15,6 @@ const SCRIPT_ENTRIES = [
   { basename: "app", entry: APP_ENTRY },
   { basename: "scene", entry: SCENE_ENTRY },
 ];
-
-const args = new Set(process.argv.slice(2));
-const watch = args.has("--watch");
-const check = args.has("--check");
-const dist = args.has("--dist");
 
 // Files copied verbatim (no URL rewriting).
 const STATIC_FILES = [
@@ -39,15 +34,27 @@ const STATIC_FILES = [
 const STATIC_FILE_ALIASES = [{ source: "site-agents.md", destination: "AGENTS.md" }];
 const STATIC_DIRS = ["fonts", "images"];
 const FINGERPRINTED_POSTERS = ["scene-poster-landscape.webp", "scene-poster-portrait.webp"];
-const FINGERPRINTED_PAPER = ["paper-grain.webp", "paper-edge.webp", "estate-map-desktop.webp", "estate-map-portrait.webp"];
+const FINGERPRINTED_PAPER = [
+  "paper-grain.webp",
+  "paper-edge.webp",
+  "paper-vignette-profile.webp",
+  "paper-vignette-experience.webp",
+  "paper-vignette-contact.webp",
+  "estate-map-desktop.webp",
+  "estate-map-portrait.webp",
+];
 const FINGERPRINTED_ICONS = ["nav-about.webp", "nav-about-active.webp"];
-const DIST_DIR = join(__dirname, "dist");
-const DIST_SCRIPTS_DIR = join(DIST_DIR, "scripts");
-const DIST_CSS_DIR = join(DIST_DIR, "css");
-
-if ((watch && check) || (watch && dist) || (check && dist)) {
-  throw new Error("Use only one of --watch, --check, or --dist.");
-}
+export const BUILD_INPUT_FILES = [
+  ...STATIC_FILES,
+  ...STATIC_FILE_ALIASES.map(({ source }) => source),
+  "index.html",
+  "404.html",
+  "styles.css",
+  "build.mjs",
+  "package.json",
+  "package-lock.json",
+];
+export const BUILD_INPUT_DIRS = ["src", ...STATIC_DIRS, "tools"];
 
 const scriptBuildOptions = (entry) => ({
   entryPoints: [join(__dirname, entry)],
@@ -79,11 +86,13 @@ async function architectureAssetManifest() {
   return { urls, files };
 }
 
-async function buildScriptBundle(entry) {
+async function buildScriptBundle(entry, architecture) {
   const options = scriptBuildOptions(entry);
   if (entry === SCENE_ENTRY) {
     options.define = {
-      __BABEL_ARCHITECTURE_URLS__: JSON.stringify((await architectureAssetManifest()).urls),
+      __BABEL_ARCHITECTURE_URLS__: JSON.stringify(
+        (architecture ?? (await architectureAssetManifest())).urls,
+      ),
     };
   }
   const result = await build(options);
@@ -105,24 +114,20 @@ function rewriteHtml(src, { appPath, cssPath, scenePath, posterPaths }) {
   return html;
 }
 
-async function clearDist() {
-  // Empty dist/ contents without removing the dir itself — a live preview
-  // server (python http.server) can hold the dir handle open on Windows.
-  await mkdir(DIST_DIR, { recursive: true });
-  const entries = await readdir(DIST_DIR);
-  await Promise.all(
-    entries.map((entry) => rm(join(DIST_DIR, entry), { recursive: true, force: true })),
-  );
-}
-
-async function buildDist() {
-  await clearDist();
+async function writePayload(DIST_DIR) {
+  const DIST_SCRIPTS_DIR = join(DIST_DIR, "scripts");
+  const DIST_CSS_DIR = join(DIST_DIR, "css");
   await mkdir(DIST_SCRIPTS_DIR, { recursive: true });
   await mkdir(DIST_CSS_DIR, { recursive: true });
+  const architecture = await architectureAssetManifest();
+  const fingerprintedImages = new Map();
+  for (const name of [...FINGERPRINTED_POSTERS, ...FINGERPRINTED_ICONS, ...FINGERPRINTED_PAPER]) {
+    fingerprintedImages.set(name, await readFile(join(__dirname, "images", name)));
+  }
 
   const scriptPaths = {};
   for (const { basename, entry } of SCRIPT_ENTRIES) {
-    const bundled = await buildScriptBundle(entry);
+    const bundled = await buildScriptBundle(entry, architecture);
     const scriptHash = sha8(bundled);
     const scriptHashedName = `${basename}.${scriptHash}.js`;
     const scriptHashedUrl = `/scripts/${scriptHashedName}`;
@@ -137,8 +142,11 @@ async function buildDist() {
   // everywhere so a release has one asset URL independent of the build host.
   let cssSrc = (await readFile(join(__dirname, "styles.css"), "utf8")).replace(/\r\n?/g, "\n");
   for (const name of FINGERPRINTED_PAPER) {
-    const bytes = await readFile(join(__dirname, "images", name));
-    cssSrc = cssSrc.replaceAll(`/images/${name}`, `/images/${name.replace(/\.webp$/, `.${sha8(bytes)}.webp`)}`);
+    const bytes = fingerprintedImages.get(name);
+    cssSrc = cssSrc.replaceAll(
+      `/images/${name}`,
+      `/images/${name.replace(/\.webp$/, `.${sha8(bytes)}.webp`)}`,
+    );
   }
   const cssHash = sha8(cssSrc);
   const cssHashedName = `styles.${cssHash}.css`;
@@ -158,7 +166,7 @@ async function buildDist() {
   );
 
   // Model revisions receive a new URL without invalidating the accepted classic assets.
-  for (const { hashedName, bytes } of (await architectureAssetManifest()).files) {
+  for (const { hashedName, bytes } of architecture.files) {
     await writeFile(join(DIST_DIR, "images", "architecture", hashedName), bytes);
   }
 
@@ -166,7 +174,7 @@ async function buildDist() {
   // whenever poster or navigation icon bytes change, independent of the browser's image cache.
   const posterPaths = {};
   for (const name of [...FINGERPRINTED_POSTERS, ...FINGERPRINTED_ICONS, ...FINGERPRINTED_PAPER]) {
-    const bytes = await readFile(join(__dirname, "images", name));
+    const bytes = fingerprintedImages.get(name);
     const hashedName = name.replace(/\.webp$/, `.${sha8(bytes)}.webp`);
     await writeFile(join(DIST_DIR, "images", hashedName), bytes);
     posterPaths[`/images/${name}`] = `/images/${hashedName}`;
@@ -199,43 +207,53 @@ async function buildDist() {
   console.log(`hashed assets: css/${cssHashedName}`);
 }
 
-function watchSourceTree() {
-  let timer = null;
-  const sourceRoot = join(__dirname, "src");
-  const rebuild = () => {
-    clearTimeout(timer);
-    timer = setTimeout(async () => {
-      try {
-        await buildDist();
-        console.log("rebuilt dist/");
-      } catch (err) {
-        console.error(err);
-      }
-    }, 120);
-  };
-
-  const watcher = watchFiles(sourceRoot, { recursive: true }, rebuild);
-  process.on("SIGINT", () => {
-    watcher.close();
-    process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    watcher.close();
-    process.exit(0);
+export async function buildDist(
+  outputDirectory = join(__dirname, "dist"),
+  { retainAssets = false } = {},
+) {
+  await publishBuild({
+    projectRoot: __dirname,
+    outputDirectory,
+    retainAssets,
+    prepare: writePayload,
   });
 }
 
-if (watch) {
-  await buildDist();
-  watchSourceTree();
-  console.log("watching src/ (rerun build:dist after static asset changes)");
-  await new Promise(() => {});
-} else if (check) {
-  for (const { entry } of SCRIPT_ENTRIES) {
-    await buildScriptBundle(entry);
+async function main() {
+  const args = process.argv.slice(2);
+  let mode = "--dist";
+  let modeChosen = false;
+  let outputDirectory = join(__dirname, "dist");
+  let retainAssets = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (["--watch", "--check", "--dist"].includes(arg)) {
+      if (modeChosen) throw new Error("Use only one of --watch, --check, or --dist.");
+      mode = arg;
+      modeChosen = true;
+    } else if (arg === "--outdir") {
+      const value = args[++i];
+      if (!value || value.startsWith("--")) throw new Error("--outdir requires a directory.");
+      outputDirectory = resolve(__dirname, value);
+    } else if (arg === "--retain-assets") retainAssets = true;
+    else throw new Error(`Unknown build option: ${arg}`);
   }
-  console.log(`verified ${SCRIPT_ENTRIES.map(({ entry }) => entry).join(", ")}`);
-} else {
-  await buildDist();
-  console.log("built deployable dist/");
+  if (mode === "--watch") {
+    const { runWatch } = await import("./tools/watch.mjs");
+    await runWatch({
+      projectRoot: __dirname,
+      outputDirectory,
+      files: BUILD_INPUT_FILES,
+      directories: BUILD_INPUT_DIRS,
+    });
+  } else if (mode === "--check") {
+    for (const { entry } of SCRIPT_ENTRIES) await buildScriptBundle(entry);
+    console.log(`verified ${SCRIPT_ENTRIES.map(({ entry }) => entry).join(", ")}`);
+  } else {
+    await buildDist(outputDirectory, { retainAssets });
+    console.log(`built deployable ${outputDirectory}`);
+  }
 }
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
+  await main();

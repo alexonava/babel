@@ -9,9 +9,9 @@ function setup(interval = 5, random = Math.random) {
     tower = new Group(),
     tree = new Group();
   const material = new MeshBasicMaterial(),
-    geometry = new BoxGeometry(10, 20, 10);
+    geometries = [new BoxGeometry(10, 20, 10), new BoxGeometry(3, 20, 3)];
   for (const root of [tower, tree]) {
-    const mesh = new Mesh(geometry, material);
+    const mesh = new Mesh(geometries[root === tower ? 0 : 1], material);
     mesh.position.y = 10;
     root.add(mesh);
   }
@@ -48,7 +48,7 @@ function setup(interval = 5, random = Math.random) {
     dispose() {
       tour.dispose();
       controller.dispose();
-      geometry.dispose();
+      geometries.forEach((geometry) => geometry.dispose());
       material.dispose();
     },
   };

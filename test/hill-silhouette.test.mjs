@@ -5,6 +5,7 @@ import {
   createHillSilhouette,
   HILL,
   HILL_PROFILE,
+  ESTATE_RIDGES,
 } from "../src/scene/hill-silhouette.js";
 
 const near = (a, b, eps = 1e-4) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
@@ -96,4 +97,56 @@ test("custom radii and amplitude are honoured by the geometry factory", () => {
     assert.ok(p.getY(i) <= 5 + 1e-3);
   }
   geometry.dispose();
+});
+
+test("film ridges keep one indexed mesh, three distinct elevation bands and a shared terrain seam", () => {
+  const geometry = createHillGeometry({ groundHeight, ...ESTATE_RIDGES, layered: true });
+  const p = geometry.attributes.position,
+    cols = ESTATE_RIDGES.radialSegments + 1;
+  assert.ok(geometry.attributes.color);
+  for (let i = 0; i < cols; i++) near(p.getY(i), groundHeight(p.getX(i), p.getZ(i)));
+  for (const ring of [1, 3, 5]) {
+    const values = Array.from({ length: cols }, (_, seg) => p.getY(ring * cols + seg));
+    const preceding = Array.from({ length: cols }, (_, seg) => p.getY((ring - 1) * cols + seg));
+    assert.ok(Math.max(...values) > Math.max(...preceding) + 2);
+  }
+  for (let ring = 0; ring <= ESTATE_RIDGES.ringSegments; ring++) {
+    const first = ring * cols,
+      last = first + cols - 1;
+    near(p.getX(first), p.getX(last));
+    near(p.getY(first), p.getY(last));
+    near(p.getZ(first), p.getZ(last));
+  }
+  assert.ok(geometry.boundingSphere.radius < 300);
+  geometry.dispose();
+});
+test("hill treatment swaps and reuses resources while restoring the original baseline", () => {
+  const hill = createHillSilhouette({ groundHeight }),
+    original = hill.mesh.geometry,
+    material = hill.mesh.material;
+  hill.setFilmTreatment(true);
+  const film = hill.mesh.geometry,
+    grade = hill.mesh.material;
+  assert.notEqual(film, original);
+  assert.notEqual(grade, material);
+  assert.equal(grade.fog, false);
+  hill.applyQuality({ tier: "low" });
+  assert.equal(hill.mesh.visible, false);
+  hill.setFilmTreatment(false);
+  assert.equal(hill.mesh.geometry, original);
+  assert.equal(hill.mesh.material, material);
+  hill.setFilmTreatment(true);
+  assert.equal(hill.mesh.geometry, film);
+  assert.equal(hill.mesh.material, grade);
+  assert.equal(hill.mesh.visible, false, "treatment must not undo low-quality hiding");
+  hill.applyQuality({ tier: "balanced" });
+  assert.equal(hill.mesh.visible, true);
+  assert.equal(hill.mesh.geometry, film);
+  let count = 0;
+  for (const resource of [original, material, film, grade])
+    resource.addEventListener("dispose", () => count++);
+  hill.dispose();
+  hill.dispose();
+  assert.equal(count, 4);
+  assert.equal(hill.setFilmTreatment(true), false);
 });

@@ -97,6 +97,20 @@ test("tower owns composition scale and orbital accent animation", () => {
   assert.equal(parent.children.includes(tower.root), true);
 });
 
+test("late procedural lights inherit the current tier and film state", () => {
+  const tower = createSceneTower({ parent: new Group(), profile: highProfile });
+  tower.applyQuality({ isLow: true, lighting: { practicalIntensityScale: 0.58, towerLightIntensityScale: 0 } });
+  tower.setFilmTreatment(true);
+  const practical = { intensity: 0 }, architectural = { visible: true };
+  tower.setPracticalLights([{ light: practical, baseIntensity: 0.5 }]);
+  tower.setArchitecturalLights([{ light: architectural, baseIntensity: 0.5, phase: 0 }]);
+  assert.equal(practical.intensity, 0.29);
+  assert.equal(architectural.visible, false);
+  tower.setFilmTreatment(false);
+  assert.equal(architectural.visible, false, "the low-tier light policy survives film restoration");
+  tower.dispose();
+});
+
 test("atmosphere owns cloud controls, visibility classification, composition, and point-field motion", () => {
   const parent = new Group();
   const calls = [];

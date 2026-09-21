@@ -176,8 +176,8 @@ test("tree retains its anchor and height with a quality-scaled non-shadow lanter
   assert.equal(replacement.fillLight.intensity, 1.2);
   replacement.light.distance=39; // A previously applied prop-scale range.
   replacement.setFilmTreatment(true);replacement.applyQuality({lighting:{practicalIntensityScale:1}});
-  assert.equal(replacement.light.intensity,3.4);assert.equal(replacement.light.distance,13.2);
-  assert.equal(replacement.fillLight.intensity,.96);assert.equal(replacement.fillLight.color.getHex(),0xd9e2f2);assert.equal(tree.material.emissiveIntensity,.04);
+  assert.equal(replacement.light.intensity,4.8);assert.equal(replacement.light.distance,10.5);
+  assert.equal(replacement.fillLight.intensity,2.4*.95);assert.equal(replacement.fillLight.color.getHex(),0xc2d2ec);assert.equal(tree.material.emissiveIntensity,.04);
   replacement.setFilmTreatment(false);assert.equal(replacement.light.distance,39);assert.equal(tree.material.emissiveIntensity,.22);
   replacement.applyQuality({lighting:{practicalIntensityScale:.5}});assert.equal(replacement.light.distance,39);
   assert.equal(replacement.dispose(), true);

@@ -1,25 +1,22 @@
+import { resolveSceneModes } from "./scene-modes.js";
 import { Box3, Vector3 } from "three";
-import { DIRECTED_SHOTS, measureShot, fitShot } from "./directed-shots.js";
+import { DIRECTED_SHOTS, measureShot, fitShot, resolveDirectedShot } from "./directed-shots.js";
 
-export function chooseCinematicView(search = "", random = Math.random) {
-  const q = new URLSearchParams(search);
-  if (["classic", "assembled"].includes(q.get("architecture")) || q.get("setting") === "previous")
-    return "orbit";
-  const view = q.get("view");
-  return ["tree", "tower", "orbit"].includes(view) ? view : random() < 0.5 ? "tower" : "tree";
+export function chooseCinematicView(search = "") {
+  return resolveSceneModes(search).view;
 }
 // Alternate entrance-side views and lantern-side tree views, selected once.
 export const CINEMATIC_ANGLES = { tower: [-0.1, -0.55, 1.25], tree: [-1.95, -2.55, -1.35] };
-export function chooseCinematicAngle(search = "", view = null, random = Math.random) {
+export function chooseCinematicAngle(search = "", view = null) {
   const q = new URLSearchParams(search),
     explicit = Number(q.get("angle")),
     count = DIRECTED_SHOTS[view]?.length ?? 3;
   if (Number.isInteger(explicit) && explicit >= 1 && explicit <= count) return explicit - 1;
-  // A subject override is reproducible even without an angle parameter.
-  return q.has("view") ? 0 : Math.floor(random() * count);
+  // Every fresh visit opens The watch; subject and valid angle URLs remain reproducible.
+  return 0;
 }
 export function cinematicSafeArea(width, height, hero, nav) {
-  const stacked = width < 900 || height > width;
+  const stacked = width < 600 || height > width;
   const top = stacked ? Math.max(24, (hero?.bottom || 180) + 24) : 32;
   const bottom = Math.max(top + 120, Math.min(height - 32, (nav?.top || height - 120) - 28));
   const left = stacked
@@ -151,8 +148,12 @@ export function createCinematicCamera({
       const root = view === "tree" ? tree : tower;
       root.updateWorldMatrix(true, true);
       if (film) {
-        const shot = DIRECTED_SHOTS[view][angle] || DIRECTED_SHOTS[view][0];
-        const key = root.uuid + root.matrixWorld.elements.join(",") + shot.name;
+        const shot = resolveDirectedShot(
+          DIRECTED_SHOTS[view][angle] || DIRECTED_SHOTS[view][0],
+          width,
+          height,
+        );
+        const key = root.uuid + root.matrixWorld.elements.join(",") + JSON.stringify(shot);
         if (!measured || measurementKey !== key) {
           measured = measurements.get(key) || measureShot(root, shot);
           measurements.set(key, measured);
@@ -169,7 +170,7 @@ export function createCinematicCamera({
         fitted ||= fits.get(measurementKey);
         if (!fitted) {
           let cameraY = measured.cameraY;
-          const targetFoot = root.getWorldPosition(new Vector3());
+          const targetFoot = measured.groundAnchor;
           for (let pass = 0; pass < 6; pass++) {
             fitted = fitShot({ ...measured, cameraY }, shot, area, width, height);
             fitted.cameraY = cameraY;
@@ -179,23 +180,23 @@ export function createCinematicCamera({
             for (let step = -4; step <= 4; step++) {
               const yaw = ((shot.azimuth + (step * shot.arc) / 4) * Math.PI) / 180;
               for (const reach of [1, 1 - PUSH_IN]) {
-              const x = measured.target.x + Math.cos(yaw) * fitted.distance * reach,
-                z = measured.target.z + Math.sin(yaw) * fitted.distance * reach;
-              clearanceY = Math.max(clearanceY, getGroundY(x, z) + 0.8);
-              // A low camera can be above the earth yet look through a hill.
-              // Keep footing views clear without moving or resizing the subject.
-              if (shot.region[0] === 0) {
-                const footY =
-                  Math.max(measured.footing, getGroundY(targetFoot.x, targetFoot.z)) + 0.18;
-                for (let sample = 1; sample < 24; sample++) {
-                  const t = sample / 24;
-                  const groundY = getGroundY(
-                    x * (1 - t) + targetFoot.x * t,
-                    z * (1 - t) + targetFoot.z * t,
-                  );
-                  clearanceY = Math.max(clearanceY, (groundY + 0.08 - footY * t) / (1 - t));
+                const x = measured.target.x + Math.cos(yaw) * fitted.distance * reach,
+                  z = measured.target.z + Math.sin(yaw) * fitted.distance * reach;
+                clearanceY = Math.max(clearanceY, getGroundY(x, z) + 0.8);
+                // A low camera can be above the earth yet look through a hill.
+                // Keep footing views clear without moving or resizing the subject.
+                if (shot.region[0] === 0) {
+                  const footY =
+                    Math.max(measured.footing, getGroundY(targetFoot.x, targetFoot.z)) + 0.18;
+                  for (let sample = 1; sample < 24; sample++) {
+                    const t = sample / 24;
+                    const groundY = getGroundY(
+                      x * (1 - t) + targetFoot.x * t,
+                      z * (1 - t) + targetFoot.z * t,
+                    );
+                    clearanceY = Math.max(clearanceY, (groundY + 0.08 - footY * t) / (1 - t));
+                  }
                 }
-              }
               }
             }
             if (clearanceY - cameraY < 0.005) break;

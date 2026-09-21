@@ -10,7 +10,12 @@ import {
   PerspectiveCamera,
   Vector3,
 } from "three";
-import { DIRECTED_SHOTS, wantsFilmTreatment, measureShot } from "../src/scene/directed-shots.js";
+import {
+  DIRECTED_SHOTS,
+  wantsFilmTreatment,
+  measureShot,
+  resolveDirectedShot,
+} from "../src/scene/directed-shots.js";
 import { createCinematicCamera, cinematicSafeArea } from "../src/scene/cinematic.js";
 import { createEarthGeometry, createEarthDetail, EARTH } from "../src/scene/filmic-earth.js";
 import { createFilmScene } from "../src/scene/film-scene.js";
@@ -35,13 +40,15 @@ test("directed framing clips actual geometry and includes the entire lantern", (
   trunk.name = "meshy-tree";
   trunk.position.y = 10;
   const lantern = new Mesh(new BoxGeometry(1, 4, 1), new MeshStandardMaterial());
+  lantern.name = "tree-lantern";
   lantern.position.set(7, 2, 0);
   root.add(trunk, lantern);
   const measured = measureShot(root, DIRECTED_SHOTS.tree[1]);
   close(measured.region.min.y, 0);
-  close(measured.region.max.y, 10);
+  close(measured.region.max.y, 4);
   close(measured.region.max.x, 7.5);
-  close(measured.cameraY, 3);
+  close(measured.cameraY, 4 * DIRECTED_SHOTS.tree[1].height);
+  close(measured.region.min.x, 6.5);
 });
 test("all directed framing regions fit desktop and phone through both movement extremes with fixed camera height", () => {
   for (const [w, h] of [
@@ -53,7 +60,10 @@ test("all directed framing regions fit desktop and phone through both movement e
       for (const angle of DIRECTED_SHOTS[subject].keys()) {
         const camera = new PerspectiveCamera(45, w / h, 0.1, 1000),
           root = new Group();
-        const mesh = new Mesh(new BoxGeometry(14, 34, 12), new MeshStandardMaterial());
+        const mesh = new Mesh(
+          new BoxGeometry(subject === "tree" ? 4 : 14, 34, subject === "tree" ? 4 : 12),
+          new MeshStandardMaterial(),
+        );
         mesh.position.y = 17;
         root.add(mesh);
         root.position.set(3, -6, 4);
@@ -69,7 +79,7 @@ test("all directed framing regions fit desktop and phone through both movement e
         controller.setStatus({ kind: "tower", status: "ready" });
         controller.setSubject("tree", root);
         controller.setStatus({ kind: "tree", status: "ready" });
-        const shot = DIRECTED_SHOTS[subject][angle];
+        const shot = resolveDirectedShot(DIRECTED_SHOTS[subject][angle], w, h);
         const measured = measureShot(root, shot);
         let frame;
         for (const t of [0, 12, 36, 48]) {
@@ -242,7 +252,7 @@ test("a failed earth companion map retains the procedural surface without paid o
 test("low shots retain terrain clearance throughout the bounded camera arc", () => {
   const camera = new PerspectiveCamera(),
     root = new Group();
-  const tree = new Mesh(new BoxGeometry(12, 20, 12), new MeshStandardMaterial());
+  const tree = new Mesh(new BoxGeometry(5, 20, 5), new MeshStandardMaterial());
   tree.position.y = 10;
   root.add(tree);
   const ground = (x, z) => 4 + 0.02 * x + 0.025 * z;

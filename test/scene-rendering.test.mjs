@@ -131,7 +131,7 @@ test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", 
   );
   assert.equal(rendering.lights.sun.shadow.camera.left, -32);
   rendering.applyQuality(profile);
-  assert.equal(rendering.lights.fill.intensity, 0.31 * 1.1);
+  assert.equal(rendering.lights.fill.intensity, 0.31 * 1.48);
   rendering.setFilmTreatment(false);
   assert.deepEqual(rendering.lights.sun.position.toArray(), beforePosition.toArray());
   assert.deepEqual(rendering.lights.sun.target.position.toArray(), beforeTarget.toArray());

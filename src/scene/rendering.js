@@ -137,14 +137,14 @@ export function createSceneRendering({
   function applyLightingTreatment() {
     sunLight.color.copy(baselineKeyColor);
     if (groundedLighting) sunLight.color.setHex(0xd9e2f2);
-    if (filmLighting) sunLight.color.setHex(0xe8c9a0);
+    if (filmLighting) sunLight.color.setHex(0xd9def0);
     sunLight.intensity =
-      baselineKeyIntensity * (groundedLighting ? 0.8 : 1) * (filmLighting ? 0.5 : 1);
+      baselineKeyIntensity * (groundedLighting ? 0.8 : 1) * (filmLighting ? 0.64 : 1);
     fillLight.intensity =
-      baselineFillIntensity * (groundedLighting ? 1.5 : 1) * (filmLighting ? 1.1 : 1);
-    hemisphereLight.intensity = baselineHemisphereIntensity * (filmLighting ? 1.25 : 1);
+      baselineFillIntensity * (groundedLighting ? 1.5 : 1) * (filmLighting ? 1.48 : 1);
+    hemisphereLight.intensity = baselineHemisphereIntensity * (filmLighting ? 1.15 : 1);
     hemisphereLight.groundColor.copy(baselineGroundColor);
-    if (filmLighting) hemisphereLight.groundColor.setHex(0x463c34);
+    if (filmLighting) hemisphereLight.groundColor.setHex(0x333b45);
     ambientLight.intensity = baselineAmbientIntensity * (filmLighting ? 0.95 : 1);
     // Softer still than the earlier film pass: close, low shots showed the
     // tree canopy's cast shadow as a hard-edged dark pool on the ground.

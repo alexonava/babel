@@ -1,62 +1,44 @@
-import { BufferAttribute, BufferGeometry, DoubleSide, Mesh, MeshLambertMaterial } from "three";
+import {
+  BufferAttribute,
+  BufferGeometry,
+  DoubleSide,
+  Mesh,
+  MeshBasicMaterial,
+  MeshLambertMaterial,
+} from "three";
 
-// A quiet, real-world elevation traverse gives the background hill silhouette
-// an honest large-scale shape instead of another hand-tuned sine wave.
-// Source: South Downs, England (Devil's Dyke area) — a circle of 48 samples,
-// 1.6 km radius, centered on 50.9050 N, -0.2110 W. Retrieved 2026-09-09 via
-// the public Open-Elevation API (https://api.open-elevation.com), which
-// serves SRTM-derived elevation data: a NASA/USGS public-domain work, no
-// attribution required. Raw meters were 22 (min) to 200 (max); normalized
-// to 0..1 below.
+// South Downs elevation traverse, 48 samples (SRTM-derived public-domain data,
+// retrieved 2026-09-09). Reused at different phases for fixed, continuous ridges.
 export const HILL_PROFILE = Object.freeze([
-  0.091, 0.081, 0.081, 0.09, 0.092, 0.098, 0.12, 0.151, 0.219, 0.246, 0.269, 0.281, 0.311, 0.413, 0.567,
-  0.72, 0.839, 0.927, 0.858, 0.716, 0.621, 0.529, 0.415, 0.338, 0.326, 0.249, 0.199, 0.183, 0.166, 0.141,
-  0.129, 0.107, 0.08, 0.057, 0.038, 0.021, 0.02, 0.029, 0.046, 0.068, 0.091, 0.1, 0.111, 0.123, 0.134,
-  0.125, 0.115, 0.104,
+  0.091, 0.081, 0.081, 0.09, 0.092, 0.098, 0.12, 0.151, 0.219, 0.246, 0.269, 0.281, 0.311, 0.413,
+  0.567, 0.72, 0.839, 0.927, 0.858, 0.716, 0.621, 0.529, 0.415, 0.338, 0.326, 0.249, 0.199, 0.183,
+  0.166, 0.141, 0.129, 0.107, 0.08, 0.057, 0.038, 0.021, 0.02, 0.029, 0.046, 0.068, 0.091, 0.1,
+  0.111, 0.123, 0.134, 0.125, 0.115, 0.104,
 ]);
-// A circular moving average (window 5) over the raw samples above removes
-// sample-to-sample facets that read as sharp, un-hill-like spikes at this
-// mesh's angular resolution; the large-scale rise-and-fall shape is kept.
-
-// Two constraints fight each other here. Fog is measured camera-to-point, not
-// origin-to-point: with fog.far only ~150-180 even under film's dynamic push,
-// and the camera itself 20-116 units from the origin depending on shot, a
-// ring placed too far out (radius 210-300, an earlier attempt sized to clear
-// the terrain's own 192-unit half-extent) sits at camera-distance
-// ~cameraDistance+hillRadius on the far side — routinely 250+, fully
-// fog-colored and invisible. But a ring placed close enough to read against
-// that fog budget risks the widest shot's camera (radius ~116) ending up
-// *inside* the ring's own footprint, which renders as a solid dark wedge
-// filling the frame. innerRadius here clears every shot's camera distance
-// with margin; the hill is consequently subtle in most shots and closer to
-// invisible in the widest ones — a genuine limit of this scene's fog budget,
-// not a bug to chase further.
 export const HILL = Object.freeze({
-  // The six directed shots' cameras range from radius ~22 (Lantern study) to
-  // ~116 (Under the branches, its widest wide-angle low shot) from the
-  // origin. innerRadius must clear the farthest of those with margin, or a
-  // wide shot's camera ends up standing inside the hill's own geometry.
   innerRadius: 135,
   outerRadius: 210,
   amplitude: 22,
   radialSegments: 144,
   ringSegments: 3,
-  color: 0x262b39, // close to the scene's fogColor (0x2d3242) so the silhouette blends, not cuts out
+  color: 0x262b39,
+});
+export const ESTATE_RIDGES = Object.freeze({
+  innerRadius: 135,
+  outerRadius: 270,
+  amplitude: 58,
+  radialSegments: 192,
+  ringSegments: 6,
 });
 
 function sampleProfile(angle) {
-  const n = HILL_PROFILE.length;
-  const t = (((angle / (Math.PI * 2)) % 1) + 1) % 1 * n;
-  const i0 = Math.floor(t) % n,
-    i1 = (i0 + 1) % n,
-    f = t - Math.floor(t);
-  return HILL_PROFILE[i0] * (1 - f) + HILL_PROFILE[i1] * f;
+  const n = HILL_PROFILE.length,
+    t = ((((angle / (Math.PI * 2)) % 1) + 1) % 1) * n;
+  const i = Math.floor(t),
+    f = t - i;
+  return HILL_PROFILE[i % n] * (1 - f) + HILL_PROFILE[(i + 1) % n] * f;
 }
 
-// A coarse ring, not a full disc: continuity at the inner radius comes from
-// evaluating the same groundHeight the walkable terrain uses (helpers.js),
-// blended via smoothstep out to the amplified real-elevation silhouette at
-// the outer radius. Zero seam, zero extra geometry near the tower.
 export function createHillGeometry({
   groundHeight,
   innerRadius = HILL.innerRadius,
@@ -64,28 +46,46 @@ export function createHillGeometry({
   amplitude = HILL.amplitude,
   radialSegments = HILL.radialSegments,
   ringSegments = HILL.ringSegments,
+  layered = false,
 }) {
   const cols = radialSegments + 1,
     rows = ringSegments + 1;
-  const positions = new Float32Array(cols * rows * 3);
+  const positions = new Float32Array(cols * rows * 3),
+    colors = new Float32Array(positions.length);
   let cursor = 0;
   for (let ring = 0; ring < rows; ring++) {
     const rt = ring / ringSegments,
-      radius = innerRadius + (outerRadius - innerRadius) * rt,
-      blend = rt * rt * (3 - 2 * rt);
+      radius = innerRadius + (outerRadius - innerRadius) * rt;
+    const ridge = ring % 2 === 1,
+      tier = Math.min(1, ring / Math.max(1, ringSegments - 1));
     for (let seg = 0; seg <= radialSegments; seg++) {
-      const angle = (seg / radialSegments) * Math.PI * 2,
-        x = Math.cos(angle) * radius,
+      const angle = (seg / radialSegments) * Math.PI * 2;
+      const x = Math.cos(angle) * radius,
         z = Math.sin(angle) * radius;
-      const base = groundHeight(x, z),
-        peak = amplitude * sampleProfile(angle);
-      positions[cursor++] = x;
-      positions[cursor++] = base + (peak - base) * blend;
-      positions[cursor++] = z;
+      const base = groundHeight(x, z);
+      // Several phased traverses yield varied valleys in every viewing direction,
+      // rather than one large rise and long nearly level stretches around a ring.
+      const profile = layered
+        ? 0.7 * sampleProfile(angle * 3 + tier * 1.9) + 0.3 * sampleProfile(angle * 7 - tier * 2.7)
+        : sampleProfile(angle);
+      const peak = layered
+        ? amplitude * (ridge ? (0.025 + profile * 0.975) * (0.48 + tier * 0.52) : profile * 0.045)
+        : amplitude * profile;
+      const blend = layered ? Math.min(1, rt * 6) : rt * rt * (3 - 2 * rt);
+      positions[cursor] = x;
+      positions[cursor + 1] = base + (peak - base) * blend;
+      positions[cursor + 2] = z;
+      // Height variation leaves gentle relief within each depth layer. Values
+      // are linear; the built-in output conversion handles display encoding.
+      const relief = 0.83 + profile * 0.17;
+      colors[cursor] = (0.025 + tier * 0.033) * relief;
+      colors[cursor + 1] = (0.032 + tier * 0.035) * relief;
+      colors[cursor + 2] = (0.054 + tier * 0.045) * relief;
+      cursor += 3;
     }
   }
   const indices = [];
-  for (let ring = 0; ring < ringSegments; ring++) {
+  for (let ring = 0; ring < ringSegments; ring++)
     for (let seg = 0; seg < radialSegments; seg++) {
       const a = ring * cols + seg,
         b = a + cols,
@@ -93,9 +93,9 @@ export function createHillGeometry({
         d = b + 1;
       indices.push(a, b, c, b, d, c);
     }
-  }
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new BufferAttribute(positions, 3));
+  if (layered) geometry.setAttribute("color", new BufferAttribute(colors, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   geometry.computeBoundingBox();
@@ -103,27 +103,63 @@ export function createHillGeometry({
   return geometry;
 }
 
-// Unlit-adjacent by design: MeshLambertMaterial picks up the scene's existing
-// ambient/hemisphere/moon lights for a faint near/far gradient, but casts and
-// receives no shadow (a decorative backdrop, not a subject). Standard fog
-// (material.fog defaults true) fades it into the same fogColor the terrain's
-// own horizon already blends to, so the two treatments read as one horizon.
+function ridgeMaterial() {
+  const material = new MeshBasicMaterial({ vertexColors: true, side: DoubleSide, fog: false });
+  material.customProgramCacheKey = () => "estate-distance-ridges-v3";
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = "varying float vRidgeDistance, vRidgeHeight;\n" + shader.vertexShader;
+    // The ring indices face inward/downward; invert their normals for a fixed
+    // moonward slope response, without another light, shadow, or fragment pass.
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <color_vertex>",
+      "#include <color_vertex>\nvColor.xyz *= .64 + .36 * max(dot(-normalize(normal), normalize(vec3(-.45,.75,.48))), 0.);",
+    );
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <project_vertex>",
+      "#include <project_vertex>\nvRidgeDistance = length(mvPosition.xyz); vRidgeHeight = position.y;",
+    );
+    shader.fragmentShader = "varying float vRidgeDistance, vRidgeHeight;\n" + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <fog_fragment>",
+      `
+      float mist = .08 + .43 * smoothstep(90.0, 370.0, vRidgeDistance);
+      mist += .19 * (1.0 - smoothstep(2.0, 18.0, vRidgeHeight));
+      gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(.275,.299,.369), mist);
+    `,
+    );
+  };
+  return material;
+}
+
+// One mesh, three terrain-connected ridges. Dedicated distance extinction keeps
+// the distant relief legible without weakening the foreground scene's fog.
 export function createHillSilhouette({ groundHeight, ...overrides } = {}) {
   const geometry = createHillGeometry({ groundHeight, ...overrides });
   const material = new MeshLambertMaterial({ color: HILL.color, side: DoubleSide });
   const mesh = new Mesh(geometry, material);
   mesh.name = "hill-silhouette";
-  mesh.castShadow = false;
-  mesh.receiveShadow = false;
+  mesh.castShadow = mesh.receiveShadow = false;
   mesh.matrixAutoUpdate = false;
   mesh.updateMatrix();
-  let disposed = false;
+  let disposed = false,
+    layeredGeometry = null,
+    layeredMaterial = null;
   return {
     mesh,
     lifecycleOrder: 24,
+    setFilmTreatment(active) {
+      if (disposed) return false;
+      if (active) {
+        layeredGeometry ||= createHillGeometry({ groundHeight, ...ESTATE_RIDGES, layered: true });
+        layeredMaterial ||= ridgeMaterial();
+      }
+      mesh.geometry = active ? layeredGeometry : geometry;
+      mesh.material = active ? layeredMaterial : material;
+      return true;
+    },
     applyQuality(profile) {
       if (disposed) return false;
-      mesh.visible = profile?.tier !== "low";
+      mesh.visible = profile?.tier !== "low" && !profile?.isLow;
       return true;
     },
     dispose() {
@@ -132,6 +168,8 @@ export function createHillSilhouette({ groundHeight, ...overrides } = {}) {
       mesh.removeFromParent();
       geometry.dispose();
       material.dispose();
+      layeredGeometry?.dispose();
+      layeredMaterial?.dispose();
       return true;
     },
   };

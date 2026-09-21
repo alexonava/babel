@@ -1,4 +1,5 @@
 import { Group } from "three";
+import { createEstateGroundDetail } from "./estate-ground-detail.js";
 
 export function createSceneEnvironment({ groundHeight, parent, profile }) {
   const root = new Group();
@@ -10,6 +11,8 @@ export function createSceneEnvironment({ groundHeight, parent, profile }) {
   let groundPlantRecords = [];
   let lowPower = Boolean(profile?.isLow);
   let monolithGroup = null;
+  let groundDetail = null,
+    currentProfile = profile;
 
   return {
     lifecycleOrder: 10,
@@ -17,12 +20,15 @@ export function createSceneEnvironment({ groundHeight, parent, profile }) {
     applyQuality(nextProfile = {}) {
       if (disposed) return false;
       lowPower = Boolean(nextProfile.isLow);
+      currentProfile = nextProfile;
+      groundDetail?.applyQuality(nextProfile);
       return true;
     },
     dispose() {
       if (disposed) return false;
       disposed = true;
       root.visible = false;
+      groundDetail?.dispose();
       crystalRecords = [];
       groundPlantRecords = [];
       monolithGroup = null;
@@ -31,6 +37,16 @@ export function createSceneEnvironment({ groundHeight, parent, profile }) {
     resize({ composition } = {}) {
       if (disposed || !composition) return false;
       root.position.y = composition.sceneOffsetY;
+      return true;
+    },
+    setFilmTreatment(active) {
+      if (disposed) return false;
+      if (active && !groundDetail) {
+        groundDetail = createEstateGroundDetail(groundHeight);
+        root.add(groundDetail.mesh);
+        groundDetail.applyQuality(currentProfile);
+      }
+      groundDetail?.setActive(active);
       return true;
     },
     setClutterEnabled(enabled) {

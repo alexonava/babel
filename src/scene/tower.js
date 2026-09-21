@@ -12,6 +12,7 @@ export function createSceneTower({ parent, profile }) {
   let lowPower = Boolean(profile?.isLow);
   let orbitRings = [];
   let practicalLights = [];
+  let currentProfile = profile;
   root.userData.lowPower = lowPower;
 
   function applyPracticalLightScale(lighting = {}) {
@@ -37,6 +38,7 @@ export function createSceneTower({ parent, profile }) {
     root,
     applyQuality(nextProfile = {}) {
       if (disposed) return false;
+      currentProfile = nextProfile;
       lowPower = Boolean(nextProfile.isLow);
       root.userData.lowPower = lowPower;
       applyArchitecturalLightScale(nextProfile.lighting);
@@ -72,13 +74,13 @@ export function createSceneTower({ parent, profile }) {
       architecturalLights = Array.isArray(records)
         ? records.filter((record) => record?.light && Number.isFinite(record.baseIntensity))
         : [];
-      applyArchitecturalLightScale(profile?.lighting);
+      applyArchitecturalLightScale(currentProfile?.lighting);
     },
     setPracticalLights(records) {
       practicalLights = Array.isArray(records)
         ? records.filter((record) => record?.light && Number.isFinite(record.baseIntensity))
         : [];
-      applyPracticalLightScale(profile?.lighting);
+      applyPracticalLightScale(currentProfile?.lighting);
     },
     update({ elapsedSeconds = 0 } = {}) {
       if (disposed || film) return false;

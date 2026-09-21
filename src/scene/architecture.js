@@ -15,6 +15,7 @@ import {
   Vector3,
 } from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { createTreeFoliage, smoothTreeNormals } from "./tree-foliage.js";
 import { createSpiralSupportGeometry } from "./spiral-support.js";
 
 export const ARCHITECTURE = Object.freeze({
@@ -73,18 +74,18 @@ const FILM_GRADES = Object.freeze({
   // detail, but compress it beneath a cool moon key instead of just tinting
   // the entire asset blue. This leaves the lantern as the sole warm accent.
   tower: {
-    saturation: 0.68,
-    highlights: 0.56,
+    saturation: 0.73,
+    highlights: 0.42,
     tint: [0.93, 0.97, 1.0],
     shadowTint: [0.12, 0.15, 0.2],
-    lift: 0.11,
+    lift: 0.13,
   },
   tree: {
-    saturation: 0.74,
-    highlights: 0.4,
+    saturation: 0.8,
+    highlights: 0.3,
     tint: [0.9, 0.95, 1.0],
     shadowTint: [0.1, 0.14, 0.18],
-    lift: 0.07,
+    lift: 0.1,
   },
 });
 export function applyFilmGrade(material, active) {
@@ -97,6 +98,7 @@ export function applyFilmGrade(material, active) {
   grade.uniforms.babelTint.value.setRGB(...(film?.tint ?? [1, 1, 1]));
   grade.uniforms.babelShadowTint.value.setRGB(...(film?.shadowTint ?? [0.19, 0.17, 0.15]));
   grade.uniforms.babelLift.value = film?.lift ?? 0;
+  grade.uniforms.babelFilm.value = active ? 1 : 0;
   return true;
 }
 
@@ -294,11 +296,13 @@ function materialFor(asset, anisotropy, role) {
       babelTint: { value: new Color(1, 1, 1) },
       babelShadowTint: { value: new Color(0.19, 0.17, 0.15) },
       babelLift: { value: 0 },
+      babelFilm: { value: 0 },
     };
     material.userData.babelGrade = { role, uniforms };
-    material.customProgramCacheKey = () => `babel-moonlit-material-v3-${roughnessFloor}`;
+    material.customProgramCacheKey = () => `babel-estate-material-v4-${role}-${roughnessFloor}`;
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 babelLocal;").replace("#include <begin_vertex>", "#include <begin_vertex>\nbabelLocal = position;");
       shader.fragmentShader = shader.fragmentShader
         .replace(
           "#include <common>",
@@ -307,7 +311,9 @@ function materialFor(asset, anisotropy, role) {
           uniform float babelHighlights;
           uniform vec3 babelTint;
           uniform vec3 babelShadowTint;
-          uniform float babelLift;`,
+          uniform float babelLift;
+          uniform float babelFilm;
+          varying vec3 babelLocal;`,
         )
         .replace(
           "#include <roughnessmap_fragment>",
@@ -320,7 +326,19 @@ function materialFor(asset, anisotropy, role) {
           diffuseColor.rgb = mix(vec3(babelLuma), diffuseColor.rgb, babelSaturation);
           diffuseColor.rgb *= 1.0 - babelHighlights * smoothstep(0.30, 0.85, babelLuma);
           diffuseColor.rgb = mix(diffuseColor.rgb, babelShadowTint, babelLift * (1.0 - smoothstep(0.02, 0.22, babelLuma)));
-          diffuseColor.rgb *= babelTint;`,
+          diffuseColor.rgb *= babelTint;
+          ${role === "tree" ? `
+          float leafMask = smoothstep(0.98, 1.14, diffuseColor.g / max(0.001, diffuseColor.r)) * smoothstep(7.0, 11.0, babelLocal.y);
+          diffuseColor.rgb += babelFilm * leafMask * vec3(0.012, 0.022, 0.027);
+          float bend = sin(babelLocal.y*.7 + babelLocal.x*.3)*.08;
+          float grain = sin((babelLocal.x+bend)*42.0 + sin(babelLocal.z*30.0)*2.0);
+          float furrow = smoothstep(.5,.98,grain) * (.65+.35*sin(babelLocal.y*5.0+babelLocal.z*12.0));
+          float detail = 1.0-smoothstep(.06,.18,fwidth(grain));
+          diffuseColor.rgb *= 1.0 - babelFilm*(1.0-leafMask)*furrow*detail*.18;
+          ` : role === "tower" ? `
+          float timber = smoothstep(23.0, 26.0, babelLocal.y) * (1.0 - smoothstep(31.0, 34.0, babelLocal.y)) * (1.0 - smoothstep(0.11, 0.24, babelLuma));
+          diffuseColor.rgb *= mix(vec3(1.0), vec3(0.96, 0.9, 0.83), timber * babelFilm * 0.6);
+          ` : ""}`,
         );
     };
     if (material.normalScale && profile.normalScale) {
@@ -593,11 +611,12 @@ export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4, an
     materials.add(material);
     return material;
   };
-  let disposed = false;
+  let disposed = false, foliage = null;
   const dispose = () => {
     if (disposed) return false;
     disposed = true;
     root.removeFromParent();
+    foliage?.dispose();
     geometries.forEach((geometry) => geometry.dispose());
     materials.forEach((material) => material.dispose());
     geometries.clear();
@@ -621,17 +640,20 @@ export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4, an
     tree.name = "meshy-tree";
     tree.castShadow = tree.receiveShadow = true;
     root.add(tree);
+    foliage = createTreeFoliage(geometry, tree);
+    const normalAttribute = geometry.attributes.normal;
+    const originalNormals = normalAttribute.array.slice(), softenedNormals = smoothTreeNormals(geometry).array;
     const lantern = new Group();
     lantern.name = "tree-lantern";
     const direction = new Vector3(-treeX, 0, -treeZ).normalize();
-    lantern.position.copy(direction.multiplyScalar(2.4));
+    lantern.position.copy(direction.multiplyScalar(5.0));
     lantern.position.y =
       groundHeight(treeX + lantern.position.x, treeZ + lantern.position.z) - root.position.y;
     // Iron post lantern, authored 2.48 units tall: foot, post, tray, four
     // stiles, top plate, pyramid cap and finial ring merge into one frame. The
     // candle flame is the emitter, seen through four tinted glass panes.
     const frameMaterial = ownMaterial(
-      new MeshStandardMaterial({ color: 0x2f2825, roughness: 0.68, metalness: 0.55 }),
+      new MeshStandardMaterial({ color: 0x45413d, roughness: 0.84, metalness: 0.38 }),
     );
     const frameParts = [];
     let frameGeometry;
@@ -660,13 +682,13 @@ export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4, an
     lantern.add(frame);
     const glassMaterial = ownMaterial(
       new MeshStandardMaterial({
-        color: 0xffe2b0,
+        color: 0xb7c9d0,
         emissive: 0xffb562,
         emissiveIntensity: 0.3,
-        roughness: 0.3,
+        roughness: 0.72,
         metalness: 0,
         transparent: true,
-        opacity: 0.18,
+        opacity: 0.065,
         depthWrite: false,
         side: DoubleSide,
       }),
@@ -691,7 +713,7 @@ export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4, an
     candle.name = "lantern-candle";
     candle.position.y = 1.45;
     lantern.add(candle);
-    const glowGeometry = ownGeometry(new SphereGeometry(0.075, 8, 8));
+    const glowGeometry = ownGeometry(new SphereGeometry(0.04, 12, 12));
     const glowMaterial = ownMaterial(
       new MeshStandardMaterial({
         color: 0xffcf82,
@@ -702,12 +724,12 @@ export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4, an
     );
     const glow = new Mesh(glowGeometry, glowMaterial);
     glow.name = "lantern-flame";
-    glow.scale.set(1.25, 2.4, 1.25);
-    glow.position.y = 1.7;
+    glow.scale.set(.82, 2.0, .82);
+    glow.position.y = 1.665;
     lantern.add(glow);
     const light = new PointLight(0xffbe72, TREE_LANTERN_INTENSITY, 23, 1.45);
     light.name = "tree-lantern-light";
-    light.position.y = 1.7;
+    light.position.y = 1.665;
     light.castShadow = false;
     lantern.add(light);
     root.add(lantern);
@@ -720,15 +742,19 @@ export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4, an
     const originalFillColor = fillLight.color.clone(), originalEmission = material.emissiveIntensity;
     function applyTreeLighting() {
       const intensityScale = currentProfile.lighting?.practicalIntensityScale ?? 1;
-      light.intensity = (film ? 3.4 : TREE_LANTERN_INTENSITY) * intensityScale;
-      fillLight.intensity = TREE_FILL_INTENSITY * (film ? .4 : 1) * intensityScale;
+      light.intensity = (film ? 4.8 : TREE_LANTERN_INTENSITY) * intensityScale;
+      fillLight.intensity = TREE_FILL_INTENSITY * (film ? .95 : 1) * intensityScale;
       fillLight.color.copy(originalFillColor);
-      if (film) fillLight.color.setHex(0xd9e2f2);
-      glowMaterial.emissiveIntensity = film ? 2.8 : 2;
-      glassMaterial.emissiveIntensity = film ? 0.38 : 0.3;
+      if (film) fillLight.color.setHex(0xc2d2ec);
+      glowMaterial.emissiveIntensity = film ? 1.35 : 2;
+      glassMaterial.emissiveIntensity = film ? 0.018 : 0.3;
       material.emissiveIntensity = film ? .04 : originalEmission;
       applyFilmGrade(material, film);
-      if (film) { light.distance = 13.2; light.decay = 0.9; }
+      normalAttribute.array.set(film ? softenedNormals : originalNormals);
+      normalAttribute.needsUpdate = true;
+      foliage.setActive(film);
+      foliage.applyQuality(currentProfile);
+      if (film) { light.distance = 10.5; light.decay = 1.2; }
     }
     return {
       root,

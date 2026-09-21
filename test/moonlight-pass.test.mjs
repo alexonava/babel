@@ -148,18 +148,18 @@ test("supplied tower and tree switch between source and moonlight grades without
   close(u.babelSaturation.value, 0.94);
   assert.equal(u.babelLift.value, 0);
   tower.setFilmTreatment(true);
-  close(u.babelSaturation.value, 0.68);
-  close(u.babelHighlights.value, 0.56);
+  close(u.babelSaturation.value, 0.73);
+  close(u.babelHighlights.value, 0.42);
   close(u.babelTint.value.r, 0.93);
   close(u.babelShadowTint.value.b, 0.2);
-  close(u.babelLift.value, 0.11);
+  close(u.babelLift.value, 0.13);
   tower.setFilmTreatment(false);
   close(u.babelSaturation.value, 0.94);
   assert.equal(u.babelTint.value.r, 1);
   close(u.babelShadowTint.value.r, 0.19);
   assert.equal(u.babelLift.value, 0);
   assert.equal(applyFilmGrade(new MeshStandardMaterial(), true), false);
-  const shader = { uniforms: {}, fragmentShader: "#include <common>\n#include <map_fragment>\n#include <roughnessmap_fragment>" };
+  const shader = { uniforms: {}, vertexShader: "#include <common>\n#include <begin_vertex>", fragmentShader: "#include <common>\n#include <map_fragment>\n#include <roughnessmap_fragment>" };
   material.onBeforeCompile(shader);
   assert.equal(shader.uniforms.babelTint, u.babelTint);
   assert.equal(shader.uniforms.babelShadowTint, u.babelShadowTint);
@@ -171,7 +171,7 @@ test("supplied tower and tree switch between source and moonlight grades without
   const tree = createTreeArchitecture({ asset: asset(), groundHeight: () => 0 });
   const treeUniforms = tree.root.getObjectByName("meshy-tree").material.userData.babelGrade.uniforms;
   tree.setFilmTreatment(true);
-  close(treeUniforms.babelSaturation.value, 0.74);
+  close(treeUniforms.babelSaturation.value, 0.8);
   tree.setFilmTreatment(false);
   assert.equal(treeUniforms.babelSaturation.value, 1);
   tree.dispose();
@@ -200,8 +200,8 @@ test("the lantern is an iron post lantern with glass, candle and flame, authored
   const flame = lantern.getObjectByName("lantern-flame");
   close(tree.light.position.y, flame.position.y);
   tree.setFilmTreatment(true);
-  close(glass.emissiveIntensity, 0.38);
-  close(flame.material.emissiveIntensity, 2.8);
+  close(glass.emissiveIntensity, 0.018);
+  close(flame.material.emissiveIntensity, 1.35);
   const geometries = new Set(),
     materials = new Set();
   lantern.traverse((o) => {

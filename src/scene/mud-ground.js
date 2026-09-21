@@ -1,16 +1,12 @@
+import { resolveSceneModes } from "./scene-modes.js";
 // Clear centreline opening: source high GLB, yaw 0, sill 1.64 to arch ~8.24.
 export const DOOR_HEIGHT = 6.6;
 export const MUD_TILE_WIDTH = DOOR_HEIGHT * 1.6;
 export function wantsMud(search = "") {
-  const q = new URLSearchParams(search);
-  return (
-    !["classic", "assembled"].includes(q.get("architecture")) &&
-    !["desert", "procedural"].includes(q.get("ground"))
-  );
+  return resolveSceneModes(search).mud;
 }
 export function wantsPropScale(search = "") {
-  const q = new URLSearchParams(search);
-  return !["classic", "assembled"].includes(q.get("architecture")) && q.get("scale") !== "baseline";
+  return resolveSceneModes(search).propScale;
 }
 const smooth = (x) => x * x * (3 - 2 * x);
 function noise(u, v, cells) {
@@ -143,34 +139,24 @@ export function configureMudShading(material, active, quiet = false, film = fals
       ${
         film
           ? `
-      // Three incommensurate world-space fields keep the two-meter tile quiet and avoid repeated wet ovals.
-      // A single wide, soft falloff marks ground contact at the tower and the
-      // tree/lantern (quiet mode's own rootContact/footingDry darkening is
-      // skipped under film — stacking both produced a visible hard-edged
-      // dark disc around the tree instead of a gradual clearing).
       float earthBroad = .5 + .16*sin(vMudWorld.x*.043 + sin(vMudWorld.z*.031)) + .12*sin(vMudWorld.z*.067 + sin(vMudWorld.x*.052)) + .08*sin((vMudWorld.x+vMudWorld.z)*.109);
       float earthContact = max(1.0-smoothstep(5.0,13.0,length(vMudWorld.xz)), 1.0-smoothstep(2.5,10.0,length(vMudWorld.xz-vec2(55.1,36.1))));
-      // A narrow (.80-.98) window here read as a hard-edged dark "puddle" in
-      // low, close shots, since damp also swings roughness from .86 to .74 —
-      // a visible sheen boundary, not just the small diffuse darkening below.
-      // Widened so the same patchiness reads as a gentle gradient instead.
+      vec2 pathAxis = normalize(vec2(55.1,36.1));
+      float along = clamp(dot(vMudWorld.xz,pathAxis),0.0,65.87);
+      vec2 pathCenter = pathAxis*along+vec2(-pathAxis.y,pathAxis.x)*sin(along/65.87*6.283185)*2.4;
+      float approach = 1.0-smoothstep(1.2,3.8,length(vMudWorld.xz-pathCenter));
+      float worn = max(earthContact,approach);
       float damp = smoothstep(.78,.98,earthBroad)*(1.0-earthContact);
       roughnessFactor = mix(max(.88,roughnessFactor), .78, damp);
-      diffuseColor.rgb *= .84 + .10*earthBroad - .04*earthContact - .035*damp;
+      diffuseColor.rgb *= .84 + .10*earthBroad - .04*earthContact - .035*damp + .035*approach;
+      roughnessFactor = mix(roughnessFactor,.94,approach*.65);
       ${
         useGrass
           ? `
-      // A second, lower-frequency patchiness field (own constants, not
-      // earthBroad's) keeps grass patches from correlating with the earth
-      // tone variation above; grass fades out on the worn rings earthContact
-      // already tracks around the tower footing and the tree roots.
       vec2 grassUv = vMudWorld.xz / ${grass.grassTile.toFixed(3)};
       vec3 grassColorSample = texture2D(grassColor, grassUv).rgb;
       float grassMaskSample = texture2D(grassMask, grassUv).r;
-      // Measured runtime mean of the mask is ~0.14 (mostly sparse dark soil
-      // with occasional brighter tufts up to ~0.8); remap that low range so
-      // typical soil stays bare; only sparse peripheral tufts reach the final mix.
-      float grassAmount = clamp((grassMaskSample - 0.28) / 0.48, 0.0, 1.0) * .18 * (1.0 - earthContact);
+      float grassAmount = clamp((grassMaskSample - 0.28) / 0.48, 0.0, 1.0) * .22 * (1.0 - worn);
       diffuseColor.rgb = mix(diffuseColor.rgb, grassColorSample, grassAmount);
       roughnessFactor = mix(roughnessFactor, .82, grassAmount);
       `
