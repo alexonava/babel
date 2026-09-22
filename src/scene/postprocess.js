@@ -70,10 +70,12 @@ void main() {
   color = mix(color, celColor, uCelMix);
   color = saturateColor(color, 1.04);
 
+  if (uInkMix > 0.0) {
   float horizontalEdge = abs(luminanceAt(vec2(uTexelSize.x, 0.0)) - luminanceAt(vec2(-uTexelSize.x, 0.0)));
   float verticalEdge = abs(luminanceAt(vec2(0.0, uTexelSize.y)) - luminanceAt(vec2(0.0, -uTexelSize.y)));
   float inkContour = smoothstep(0.2, 0.48, max(horizontalEdge, verticalEdge));
   color = mix(color, vec3(0.035, 0.055, 0.095), inkContour * uInkMix);
+  }
 
   gl_FragColor = vec4(clamp(color, 0.0, 1.0), texel.a);
 }
@@ -165,12 +167,12 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
       ? {
           ...baseline,
           bloomStrength: 0.2,
-          celMix: 0.16,
-          contrast: 0.99,
-          grainStrength: 0.014,
-          highlightWarmMix: 0.2,
-          shadowCoolMix: 0.1,
-          vignetteStrength: 0.14,
+          celMix: 0,
+          contrast: 1.015,
+          grainStrength: 0.008,
+          highlightWarmMix: 0.12,
+          shadowCoolMix: 0.16,
+          vignetteStrength: 0.12,
         }
       : baseline;
     const gradingEnabled = profile.postprocessGrading !== false;

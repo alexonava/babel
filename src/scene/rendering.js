@@ -137,15 +137,15 @@ export function createSceneRendering({
   function applyLightingTreatment() {
     sunLight.color.copy(baselineKeyColor);
     if (groundedLighting) sunLight.color.setHex(0xd9e2f2);
-    if (filmLighting) sunLight.color.setHex(0xe8c9a0);
+    if (filmLighting) sunLight.color.setHex(0xd9def0);
     sunLight.intensity =
-      baselineKeyIntensity * (groundedLighting ? 0.8 : 1) * (filmLighting ? 0.5 : 1);
+      baselineKeyIntensity * (groundedLighting ? 0.8 : 1) * (filmLighting ? 0.64 : 1);
     fillLight.intensity =
-      baselineFillIntensity * (groundedLighting ? 1.5 : 1) * (filmLighting ? 1.1 : 1);
+      baselineFillIntensity * (groundedLighting ? 1.5 : 1) * (filmLighting ? 1.66 : 1);
     hemisphereLight.intensity = baselineHemisphereIntensity * (filmLighting ? 1.25 : 1);
     hemisphereLight.groundColor.copy(baselineGroundColor);
-    if (filmLighting) hemisphereLight.groundColor.setHex(0x463c34);
-    ambientLight.intensity = baselineAmbientIntensity * (filmLighting ? 0.95 : 1);
+    if (filmLighting) hemisphereLight.groundColor.setHex(0x37404a);
+    ambientLight.intensity = baselineAmbientIntensity;
     // Softer still than the earlier film pass: close, low shots showed the
     // tree canopy's cast shadow as a hard-edged dark pool on the ground.
     sunLight.shadow.radius = filmLighting ? 6.5 : baselineShadowRadius;
@@ -292,6 +292,9 @@ export function createSceneRendering({
     },
     update({ render = true } = {}) {
       if (disposed) return false;
+      // Physical loss precedes the queued contextlost event. Do not enter
+      // Three's shader/uniform setup while its event-driven flag is still stale.
+      if (render && renderer.getContext?.()?.isContextLost?.()) return false;
       if (render) composer.render();
       return true;
     },

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
@@ -9,10 +9,17 @@ import { fileURLToPath } from "node:url";
 
 const execFileP = promisify(execFile);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const distDir = path.join(projectRoot, "dist");
+const scratchRoot = path.join(projectRoot, ".tmp-preview-review");
+await mkdir(scratchRoot, { recursive: true });
+const bundleScratch = await mkdtemp(path.join(scratchRoot, "bundle-output-"));
+const distDir = path.join(bundleScratch, "dist");
 const scriptsDir = path.join(distDir, "scripts");
 
-await execFileP(process.execPath, ["build.mjs", "--dist"], { cwd: projectRoot });
+after(async () => {
+  assert.equal(path.dirname(path.resolve(bundleScratch)), scratchRoot);
+  await rm(bundleScratch, { recursive: true, force: true });
+});
+await execFileP(process.execPath, ["build.mjs", "--dist", "--outdir", distDir], { cwd: projectRoot });
 
 async function findHashedScript(prefix) {
   const entries = await readdir(scriptsDir);
@@ -171,12 +178,13 @@ test("changing only fixture poster bytes changes only that poster URL", async ()
     for (const file of ["build.mjs", "index.html", "404.html", "styles.css", "site-agents.md"]) {
       await cp(path.join(projectRoot, file), path.join(fixture, file));
     }
+    await cp(path.join(projectRoot, "tools"), path.join(fixture, "tools"), { recursive: true });
     await mkdir(path.join(fixture, "src"));
     await writeFile(path.join(fixture, "src", "app.js"), "void 0;");
     await writeFile(path.join(fixture, "src", "scene-entry.js"), "void 0;");
     async function posterUrls() {
-      await execFileP(process.execPath, ["build.mjs", "--dist"], { cwd: fixture });
-      const html = (await readdir(path.join(fixture, "dist", "images"))).map(name => `/images/${name}`).join(" ");
+      await execFileP(process.execPath, ["build.mjs", "--dist", "--outdir", path.join(fixture, "dist")], { cwd: fixture });
+      const html = await readFile(path.join(fixture, "dist", "index.html"), "utf8");
       return Object.fromEntries(
         ["landscape", "portrait"].map((orientation) => [
           orientation,
@@ -315,13 +323,13 @@ test("About model icon states are fingerprinted and emitted intact", async () =>
   assert.doesNotMatch(html, /nav-contact|Leather_Envelope|Stylized_3D/);
 });
 
-test("paper textures are fingerprinted in CSS and stay under 200 KiB combined", async () => {
+test("paper textures and category vignettes are fingerprinted and stay under 200 KiB combined", async () => {
   const cssDir = path.join(distDir, "css");
   const cssName = (await readdir(cssDir)).find((name) => /^styles\.[a-f0-9]{8}\.css$/.test(name));
   const css = await readFile(path.join(cssDir, cssName), "utf8");
   assert.equal(cssName, `styles.${createHash("sha256").update(css).digest("hex").slice(0, 8)}.css`);
   let total = 0;
-  for (const name of ["paper-grain", "paper-edge"]) {
+  for (const name of ["paper-grain", "paper-edge", "paper-vignette-profile", "paper-vignette-experience", "paper-vignette-contact"]) {
     const source = await readFile(path.join(projectRoot, "images", `${name}.webp`));
     total += source.length;
     const hash = createHash("sha256").update(source).digest("hex").slice(0, 8);

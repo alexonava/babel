@@ -24,12 +24,16 @@ export function createPropScale({
       o.updateMatrixWorld(true);
     });
   };
-  function bounds(o) {
+  function bounds(o, ownGeometry = false) {
     o.updateWorldMatrix(true, true);
+    if (ownGeometry) {
+      o.geometry.computeBoundingBox();
+      return o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld);
+    }
     return new Box3().setFromObject(o);
   }
-  function ground(o) {
-    const b = bounds(o),
+  function ground(o, ownGeometry = false) {
+    const b = bounds(o, ownGeometry),
       w = o.getWorldPosition(new Vector3()),
       local = groundRoot.worldToLocal(w.clone());
     local.y = groundHeight(local.x, local.z);
@@ -79,10 +83,12 @@ export function createPropScale({
       l = root.getObjectByName("tree-lantern");
     if (t) {
       save(t, treeUndo);
-      const size = bounds(t).getSize(new Vector3());
+      // Leaf accents inherit this transform, but their distribution must not
+      // change the authored tree's size, footing or subsequent camera fit.
+      const size = bounds(t, true).getSize(new Vector3());
       // Larger canopy: the tree now reads as a mature tree beside the tower.
       t.scale.multiplyScalar((4.2 * D) / size.y);
-      ground(t);
+      ground(t, true);
     }
     if (l) {
       save(l, treeUndo);

@@ -1,109 +1,148 @@
+import { resolveSceneModes } from "./scene-modes.js";
 import { Box3, Vector3 } from "three";
 
 export function wantsFilmTreatment(search = "") {
-  const q = new URLSearchParams(search);
-  return (
-    !["classic", "assembled"].includes(q.get("architecture")) &&
-    q.get("setting") !== "previous" &&
-    q.get("view") !== "orbit" &&
-    q.get("cinematography") !== "baseline"
-  );
+  return resolveSceneModes(search).film;
 }
 
+// Heights and focal widths are proportions of the selected authored subject.
+// Detail shots intentionally crop incidental roof/canopy geometry; fitting the
+// entire horizontal slice would turn every portrait detail into a wide shot.
 export const DIRECTED_SHOTS = {
   tower: [
-    // The watch: below the gallery, with the fixed sun beside the roof.
-    { name: "The watch", region: [0.55, 1], fov: 32, azimuth: -4, height: 0.66, arc: 2 },
-    // Threshold: upper entrance wall and balcony, without the ground seam.
-    { name: "Threshold", widthBelow: 0.5, region: [0.42, 0.8], fov: 36, azimuth: 82, height: 0.36, arc: 2 },
-    // Masonry study: an eye-level section of the wall, framed as a person
-    // would encounter it on approach. It keeps enough depth to show stone
-    // scale and joints without reading as a texture swatch.
-    { name: "Masonry study", region: [0.22, 0.58], fov: 32, azimuth: 44, height: 0.42, arc: 1, margin: 0.96 },
-    // Gallery detail: the timber brackets and balcony rail in a human-scale
-    // view. A lower eye keeps the fixed sun above the roof while retaining
-    // the brackets and railing. Extra upper framing leaves room for the corona
-    // below phone tour controls; the small arc preserves the shadow rhythm.
-    { name: "Gallery detail", region: [0.6, 0.96], fov: 31, azimuth: -5, height: 0.62, arc: 1, margin: 0.96 },
+    {
+      name: "The watch",
+      region: [0.55, 1],
+      fov: 32,
+      azimuth: -4,
+      height: 0.66,
+      arc: 2,
+      portrait: { region: [0.62, 1], targetHeight: 1.11 },
+    },
+    {
+      name: "Threshold",
+      region: [0.34, 0.69],
+      fov: 36,
+      azimuth: 82,
+      height: 0.33,
+      arc: 2,
+      focus: { width: 0.3, depth: [0.06, 0.34] },
+      margin: 0.91,
+      portrait: { focus: { width: 0.22, depth: [0.06, 0.34] } },
+    },
+    {
+      name: "Masonry study",
+      tour: false, // Retain its comparison URL without including it in the tour.
+      region: [0.26, 0.53],
+      fov: 32,
+      azimuth: 44,
+      height: 0.39,
+      arc: 1,
+      focus: { width: 0.2, depth: [0.13, 0.36] },
+      margin: 0.91,
+      portrait: { focus: { width: 0.16, depth: [0.13, 0.36] } },
+    },
+    {
+      name: "Gallery detail",
+      region: [0.55, 0.79],
+      fov: 31,
+      azimuth: -8,
+      height: 0.58,
+      arc: 1,
+      focus: { width: 0.27, depth: [0.13, 0.41] },
+      margin: 0.91,
+      portrait: { focus: { width: 0.2, depth: [0.13, 0.41] } },
+    },
   ],
-  // Tree shots use a tighter 0.93 fit margin (vs. the 0.85 default) so the
-  // tree reads closer and more intimate in frame; tower shots keep the
-  // default spacing.
   tree: [
-    // A low, close composition gives the tree a looming silhouette.
     { name: "Portrait", region: [0, 1], fov: 36, azimuth: -77, height: 0.24, arc: 4, margin: 0.93 },
-
     {
       name: "Lantern study",
-      widthBelow: 0.25,
-      region: [0, 0.5],
+      subject: "tree-lantern",
+      region: [0, 1],
       fov: 34,
-      // Was -145 (=215 deg), almost exactly on the shadow's throw azimuth
-      // (~204 deg from the sun rig), putting the cast shadow between camera
-      // and trunk in this shot's close, low framing. Rotated off that line.
       azimuth: -115,
-      height: 0.15,
+      height: 0.62,
       arc: 2,
-      margin: 0.93,
+      margin: 0.7,
     },
-    // Close-up: was near-identical to Lantern study (low, close, trunk base
-    // and roots). Recomposed around a different idea instead: a tight,
-    // committed look at the trunk fork and lower canopy, away from ground
-    // level entirely (no roots, no lantern) so it doesn't repeat Lantern
-    // study's subject. A narrow region keeps it genuinely close, not a
-    // second wide shot. widthBelow anchors horizontal fitting to the trunk
-    // fork rather than the much wider upper canopy spread, so narrow phone
-    // screens don't back the camera off into another full-tree shot.
-    // Azimuth kept off the ~204 deg shadow-throw line established for
-    // Lantern study above.
     {
       name: "Close-up",
-      widthBelow: 0.45,
-      region: [0.35, 0.65],
+      region: [0.28, 0.46],
       fov: 30,
-      azimuth: -40,
-      height: 0.5,
+      azimuth: -155,
+      height: 0.32,
       arc: 2,
-      margin: 0.95,
+      focus: { width: 0.23, depth: [-0.09, 0.14] },
+      margin: 0.91,
+      portrait: { focus: { width: 0.16, depth: [-0.09, 0.14] } },
     },
-    // Root and lantern: the immediate arrival-scale view. It includes the
-    // whole lantern with trunk flare and roots, avoiding a detached glowing prop.
     {
       name: "Root and lantern",
-      widthBelow: 0.34,
-      region: [0, 0.3],
+      region: [0, 0.16],
       fov: 32,
-      azimuth: -98,
-      height: 0.17,
+      azimuth: -115,
+      height: 0.16,
       arc: 1,
-      margin: 0.97,
+      focus: { width: 0.3, depth: [-0.1, 0.32] },
+      margin: 0.91,
+      portrait: { focus: { width: 0.25, depth: [-0.1, 0.32] } },
     },
-
   ],
 };
 
-// Clip triangles at the framing region's two horizontal planes. This retains
-// real roof/canopy outlines, including the lantern, without an inflated AABB.
-// The controller caches this work until an asset or its world transform changes.
+export function resolveDirectedShot(shot, width, height) {
+  return shot.portrait && (width < 600 || height > width) ? { ...shot, ...shot.portrait } : shot;
+}
+
+// Clip each triangle against the directed volume, retaining intersections rather
+// than discarding large triangles whose vertices lie outside the crop. The same
+// world-space points drive the fit and its regression checks on both asset tiers.
 export function measureShot(root, shot) {
   root.updateWorldMatrix(true, true);
-  const subject = root.getObjectByName("meshy-tree") || root;
-  const box = new Box3().setFromObject(subject);
+  const subject =
+    (shot.subject && root.getObjectByName(shot.subject)) ||
+    root.getObjectByName("meshy-tree") ||
+    root;
+  const box = new Box3();
+  // Derived leaf accents are children of the authored tree so they inherit its
+  // scale. They must not enlarge either the focal bounds or the clipped fit.
+  subject.traverse((mesh) => {
+    if (!mesh.isMesh || !mesh.visible || mesh.userData.excludeFromShot) return;
+    mesh.geometry.computeBoundingBox();
+    box.union(mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld));
+  });
   const height = box.max.y - box.min.y;
+  if (!Number.isFinite(height) || height <= 0) throw new Error("Empty cinematic subject");
   const lo = box.min.y + height * shot.region[0];
   const hi = box.min.y + height * shot.region[1];
+  const center = box.getCenter(new Vector3());
+  const yaw = (shot.azimuth * Math.PI) / 180;
+  const right = new Vector3(-Math.sin(yaw), 0, Math.cos(yaw));
+  const front = new Vector3(Math.cos(yaw), 0, Math.sin(yaw));
+  const planes = [
+    { normal: new Vector3(0, 1, 0), limit: hi },
+    { normal: new Vector3(0, -1, 0), limit: -lo },
+  ];
+  if (shot.focus) {
+    const halfWidth = (shot.focus.width * height) / 2;
+    planes.push(
+      { normal: right, limit: center.dot(right) + halfWidth },
+      { normal: right.clone().negate(), limit: -center.dot(right) + halfWidth },
+      { normal: front, limit: center.dot(front) + shot.focus.depth[1] * height },
+      { normal: front.clone().negate(), limit: -center.dot(front) - shot.focus.depth[0] * height },
+    );
+  }
   const points = [],
     region = new Box3();
-  const push = (p) => {
-    points.push(p.x, p.y, p.z);
-    region.expandByPoint(p);
-  };
   const a = new Vector3(),
     b = new Vector3(),
-    c = new Vector3(),
-    cross = new Vector3();
-  root.traverse((mesh) => {
-    if (!mesh.isMesh || !mesh.visible) return;
+    c = new Vector3();
+  // A selected prop is measured on its own. Other shots include surrounding
+  // meshes within the volume (notably the lantern in Root and lantern).
+  const traversalRoot = shot.subject ? subject : root;
+  traversalRoot.traverse((mesh) => {
+    if (!mesh.isMesh || !mesh.visible || mesh.userData.excludeFromShot) return;
     const position = mesh.geometry.attributes.position,
       index = mesh.geometry.index;
     if (!position) return;
@@ -115,29 +154,36 @@ export function measureShot(root, shot) {
           .fromBufferAttribute(position, index ? index.getX(i + k) : i + k)
           .applyMatrix4(mesh.matrixWorld),
       );
-      for (let j = 0; j < 3; j++) {
-        const p = vertices[j],
-          q = vertices[(j + 1) % 3];
-        if (p.y >= lo && p.y <= hi) push(p);
-        for (const y of [lo, hi]) {
-          if ((p.y < y && q.y > y) || (p.y > y && q.y < y)) {
-            cross.copy(p).lerp(q, (y - p.y) / (q.y - p.y));
-            push(cross);
-          }
+      let polygon = vertices;
+      for (const { normal, limit } of planes) {
+        const clipped = [];
+        for (let j = 0; j < polygon.length; j++) {
+          const p = polygon[j],
+            q = polygon[(j + 1) % polygon.length];
+          const d = p.dot(normal) - limit,
+            next = q.dot(normal) - limit;
+          if (d <= 0) clipped.push(p);
+          if ((d < 0 && next > 0) || (d > 0 && next < 0))
+            clipped.push(p.clone().lerp(q, d / (d - next)));
         }
+        polygon = clipped;
+        if (!polygon.length) break;
+      }
+      for (const p of polygon) {
+        points.push(p.x, p.y, p.z);
+        region.expandByPoint(p);
       }
     }
   });
-  if (!points.length || !Number.isFinite(height) || height <= 0)
-    throw new Error("Empty cinematic subject");
+  if (!points.length) throw new Error("Empty cinematic focal region");
   const target = region.getCenter(new Vector3());
-  target.y = (lo + hi) / 2;
+  target.y = box.min.y + height * (shot.targetHeight ?? (shot.region[0] + shot.region[1]) / 2);
   return {
     points: new Float32Array(points),
     target,
     cameraY: box.min.y + shot.height * height,
     footing: box.min.y,
-    widthMaxY: shot.widthBelow === undefined ? Infinity : box.min.y + shot.widthBelow * height,
+    groundAnchor: subject.getWorldPosition(new Vector3()),
     height,
     region,
     radius: region.getSize(new Vector3()).length() / 2,
@@ -161,9 +207,7 @@ export function fitShot(measured, shot, area, width, height) {
       const x = measured.points[i] - measured.target.x,
         y = measured.points[i + 1] - measured.target.y,
         z = measured.points[i + 2] - measured.target.z;
-      // Incidental low foliage may crop in the lantern study; its width is
-      // directed by roots/trunk and the complete lantern, not canopy fragments.
-      data[i] = measured.points[i + 1] <= measured.widthMaxY ? -si * x + co * z : 0;
+      data[i] = -si * x + co * z;
       data[i + 1] = y;
       data[i + 2] = co * x + si * z;
     }

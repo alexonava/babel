@@ -1,9 +1,6 @@
+import { resolveSceneModes } from "./scene-modes.js";
 export function wantsGroundedWatchtower(search = "") {
-  const query = new URLSearchParams(search);
-  return (
-    !["classic", "assembled"].includes(query.get("architecture")) &&
-    query.get("refinement") !== "baseline"
-  );
+  return resolveSceneModes(search).grounded;
 }
 
 export function createWatchtowerRefinement({

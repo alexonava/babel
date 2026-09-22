@@ -1,6 +1,10 @@
 import { DIRECTED_SHOTS } from "./directed-shots.js";
 
 const TOUR_INTERVALS = Object.freeze([3, 5, 20]);
+const directedViews = Object.entries(DIRECTED_SHOTS).flatMap(([subject, shots]) =>
+  shots.map((shot, angle) => ({ subject, angle, shot })),
+);
+const tourViews = directedViews.filter(({ shot }) => shot.tour !== false);
 
 export function readTourInterval(search = "") {
   const query = new URLSearchParams(search);
@@ -38,14 +42,12 @@ export function createCameraTour({ camera, interval = 5, invalidate = () => {}, 
     ready = false,
     disposed = false;
   function next() {
-    const towerCount = DIRECTED_SHOTS.tower.length,
-      total = towerCount + DIRECTED_SHOTS.tree.length;
-    const start = (camera.current === "tree" ? towerCount : 0) + camera.angle;
-    for (let offset = 1; offset <= total; offset++) {
-      const i = (start + offset) % total,
-        subject = i < towerCount ? "tower" : "tree",
-        localAngle = i < towerCount ? i : i - towerCount;
-      if (camera.setPreviewShot(subject, localAngle)) break;
+    const start = directedViews.findIndex(
+      ({ subject, angle }) => subject === camera.current && angle === camera.angle,
+    );
+    for (let offset = 1; offset <= directedViews.length; offset++) {
+      const { subject, angle, shot } = directedViews[(start + offset) % directedViews.length];
+      if (shot.tour !== false && camera.setPreviewShot(subject, angle)) break;
     }
     duration = sampleDuration();
     elapsed = 0;
@@ -65,8 +67,9 @@ export function createCameraTour({ camera, interval = 5, invalidate = () => {}, 
     },
     get state() {
       const subject = camera.current,
-        towerCount = DIRECTED_SHOTS.tower.length,
-        total = towerCount + DIRECTED_SHOTS.tree.length;
+        tourIndex = tourViews.findIndex(
+          (view) => view.subject === subject && view.angle === camera.angle,
+        );
       return {
         interval: baseInterval,
         dwell: duration,
@@ -74,8 +77,8 @@ export function createCameraTour({ camera, interval = 5, invalidate = () => {}, 
         reduced,
         ready,
         name: DIRECTED_SHOTS[subject]?.[camera.angle]?.name || "Loading views",
-        index: (subject === "tree" ? towerCount : 0) + camera.angle + 1,
-        total,
+        index: tourIndex < 0 ? null : tourIndex + 1,
+        total: tourViews.length,
       };
     },
     update({ elapsedSeconds, reducedMotion = false, developer = false, panelOpen = false }) {
@@ -113,68 +116,6 @@ export function createCameraTour({ camera, interval = 5, invalidate = () => {}, 
       disposed = true;
       lastTime = null;
       wasActive = false;
-    },
-  };
-}
-
-export function createTourControls({ tour, parent, document }) {
-  const root = document.createElement("div");
-  root.className = "scene-tour";
-  root.setAttribute("role", "group");
-  root.setAttribute("aria-label", "Camera preview");
-  const label = document.createElement("span");
-  label.className = "scene-tour-label";
-  const pause = document.createElement("button");
-  pause.type = "button";
-  const next = document.createElement("button");
-  next.type = "button";
-  next.textContent = "Next view";
-  const speed = document.createElement("select");
-  speed.setAttribute("aria-label", "Seconds per view");
-  for (const seconds of [3, 5, 20]) {
-    const option = document.createElement("option");
-    option.value = String(seconds);
-    option.textContent = `${seconds} seconds`;
-    speed.append(option);
-  }
-  const onPause = () => {
-    tour.toggle();
-    update();
-  };
-  const onNext = () => {
-    tour.next();
-    update();
-  };
-  const onSpeed = () => {
-    tour.setInterval(Number(speed.value));
-    update();
-  };
-  pause.addEventListener("click", onPause);
-  next.addEventListener("click", onNext);
-  speed.addEventListener("change", onSpeed);
-  root.append(label, pause, next, speed);
-  parent?.append(root);
-  let key = "";
-  function update() {
-    const state = tour.state,
-      nextKey = JSON.stringify(state);
-    if (key === nextKey) return;
-    key = nextKey;
-    label.textContent = state.ready ? `${state.name} / ${state.index} of ${state.total}` : "Loading views";
-    pause.textContent = state.reduced ? "Motion off" : state.paused ? "Resume" : "Pause";
-    pause.disabled = state.reduced || !state.ready;
-    next.disabled = !state.ready;
-    speed.value = String(state.interval);
-  }
-  update();
-  return {
-    update,
-    dispose() {
-      pause.removeEventListener("click", onPause);
-      next.removeEventListener("click", onNext);
-      speed.removeEventListener("change", onSpeed);
-      root.remove();
-      tour.dispose();
     },
   };
 }

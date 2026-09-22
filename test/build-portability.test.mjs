@@ -22,13 +22,24 @@ test("CSS asset URLs and bytes are portable across checkout line endings", async
   const paper = Buffer.from([82, 73, 70, 70, 13, 10, 0, 255, 87, 69, 66, 80]);
   try {
     await cp(path.join(projectRoot, "build.mjs"), path.join(fixture, "build.mjs"));
+    await cp(path.join(projectRoot, "tools"), path.join(fixture, "tools"), { recursive: true });
     for (const dir of ["src", "fonts", "images/architecture"]) {
       await mkdir(path.join(fixture, dir), { recursive: true });
     }
     for (const file of [
-      "LICENSE", "favicon.svg", "icon.svg", "icon-maskable.svg", "manifest.webmanifest",
-      "og.png", "robots.txt", "llms.txt", "sitemap.md", "index.md", "_headers",
-      "_redirects", "site-agents.md",
+      "LICENSE",
+      "favicon.svg",
+      "icon.svg",
+      "icon-maskable.svg",
+      "manifest.webmanifest",
+      "og.png",
+      "robots.txt",
+      "llms.txt",
+      "sitemap.md",
+      "index.md",
+      "_headers",
+      "_redirects",
+      "site-agents.md",
     ]) {
       await writeFile(path.join(fixture, file), "fixture\n");
     }
@@ -39,8 +50,17 @@ test("CSS asset URLs and bytes are portable across checkout line endings", async
       await writeFile(path.join(fixture, file), '<link rel="stylesheet" href="/styles.css">');
     }
     for (const name of [
-      "scene-poster-landscape", "scene-poster-portrait", "paper-grain", "paper-edge",
-      "estate-map-desktop", "estate-map-portrait", "nav-about", "nav-about-active",
+      "scene-poster-landscape",
+      "scene-poster-portrait",
+      "paper-grain",
+      "paper-edge",
+      "paper-vignette-profile",
+      "paper-vignette-experience",
+      "paper-vignette-contact",
+      "estate-map-desktop",
+      "estate-map-portrait",
+      "nav-about",
+      "nav-about-active",
     ]) {
       await writeFile(path.join(fixture, "images", `${name}.webp`), paper);
     }
@@ -52,7 +72,11 @@ test("CSS asset URLs and bytes are portable across checkout line endings", async
 
     async function buildCss(css) {
       await writeFile(path.join(fixture, "styles.css"), css);
-      await execFileP(process.execPath, ["build.mjs", "--dist"], { cwd: fixture });
+      await execFileP(
+        process.execPath,
+        ["build.mjs", "--dist", "--outdir", path.join(fixture, "dist")],
+        { cwd: fixture },
+      );
       const cssDir = path.join(fixture, "dist", "css");
       const names = await readdir(cssDir);
       assert.equal(names.length, 1);
@@ -73,14 +97,49 @@ test("CSS asset URLs and bytes are portable across checkout line endings", async
     assert.ok(!crlf.bytes.includes(13), "emitted CSS must contain only LF line endings");
     assert.ok(crlf.bytes.toString("utf8").includes(`/images/paper-grain.${hash(paper)}.webp`));
     for (const name of ["paper-grain.webp", `paper-grain.${hash(paper)}.webp`]) {
-      assert.deepEqual(await readFile(path.join(fixture, "dist", "images", name)), paper,
-        "binary artwork, including CRLF bytes, must remain unchanged");
+      assert.deepEqual(
+        await readFile(path.join(fixture, "dist", "images", name)),
+        paper,
+        "binary artwork, including CRLF bytes, must remain unchanged",
+      );
     }
 
     const edited = await buildCss(`${lfSource}\n.portability-fixture { color: #123456; }\n`);
     assert.notEqual(edited.name, lf.name, "a real CSS change must still invalidate its URL");
-    assert.deepEqual(await readFile(path.join(projectRoot, "styles.css")), sourceCss,
-      "the tracked stylesheet must not be modified by this regression test");
+    const publishedHtml = await readFile(path.join(fixture, "dist", "index.html"));
+    await writeFile(path.join(fixture, "src", "app.js"), "export const broken = ;");
+    await assert.rejects(
+      execFileP(process.execPath, ["build.mjs", "--dist", "--outdir", path.join(fixture, "dist")], {
+        cwd: fixture,
+      }),
+    );
+    assert.deepEqual(
+      await readFile(path.join(fixture, "dist", "index.html")),
+      publishedHtml,
+      "a syntax error must leave the last successful page available",
+    );
+    assert.deepEqual(
+      await readFile(path.join(fixture, "dist", "css", edited.name)),
+      edited.bytes,
+      "a syntax error must leave the last successful assets available",
+    );
+    await writeFile(path.join(fixture, "src", "app.js"), "void 0;");
+    await rm(path.join(fixture, "favicon.svg"));
+    await assert.rejects(
+      execFileP(process.execPath, ["build.mjs", "--dist", "--outdir", path.join(fixture, "dist")], {
+        cwd: fixture,
+      }),
+    );
+    assert.deepEqual(
+      await readFile(path.join(fixture, "dist", "index.html")),
+      publishedHtml,
+      "a missing copied input must also preserve the last successful page",
+    );
+    assert.deepEqual(
+      await readFile(path.join(projectRoot, "styles.css")),
+      sourceCss,
+      "the tracked stylesheet must not be modified by this regression test",
+    );
   } finally {
     assert.equal(path.dirname(path.resolve(fixture)), scratchRoot);
     await rm(fixture, { recursive: true, force: true });

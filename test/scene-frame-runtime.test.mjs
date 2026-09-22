@@ -283,7 +283,7 @@ test("runtime resource disposal deduplicates scene assets and leaves render-targ
 });
 
 test("scene wires each brazier to its own visibility record", async () => {
-  const source = await readFile(new URL("../src/scene/index.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../src/scene/legacy-world.js", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /const brazierSystem\s*=/);
   assert.match(source, /name: `brazier-\$\{num460\}`/);

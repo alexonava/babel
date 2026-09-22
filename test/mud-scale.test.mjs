@@ -3,6 +3,7 @@ import test from "node:test";
 import { Box3, BoxGeometry, Group, Mesh, MeshStandardMaterial, Vector3, PointLight } from "three";
 import { DOOR_HEIGHT as D, mudSample, wantsMud, wantsPropScale } from "../src/scene/mud-ground.js";
 import { createPropScale } from "../src/scene/prop-scale.js";
+import { DIRECTED_SHOTS, measureShot, fitShot } from "../src/scene/directed-shots.js";
 const size = (o) => new Box3().setFromObject(o).getSize(new Vector3());
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-5, `${a} != ${b}`);
 function fixture() {
@@ -102,6 +103,58 @@ test("independently loaded tree and lantern resize and restore without changing 
   near(size(tree).y, 22);
   near(light.distance, 23);
   c.dispose();
+});
+
+test("decorative canopy bounds cannot change authored tree scale, footing or fitted camera", () => {
+  const { root, make } = fixture(),
+    treeRoot = new Group(),
+    tree = make(8, 22, 8, 0);
+  root.add(treeRoot);
+  treeRoot.add(tree);
+  tree.name = "meshy-tree";
+  const original = {
+    position: tree.position.clone(),
+    scale: tree.scale.clone(),
+    vertices: tree.geometry.attributes.position.array.slice(),
+    uv: tree.geometry.attributes.uv.array.slice(),
+  };
+  const controller = createPropScale({ groundRoot: root, groundHeight: () => 2 });
+  controller.setActive(true);
+  controller.setTree({ root: treeRoot });
+  const expectedScale = tree.scale.clone(),
+    expectedPosition = tree.position.clone(),
+    shot = DIRECTED_SHOTS.tree[0],
+    expected = measureShot(treeRoot, shot),
+    area = { left: 576, top: 80, width: 806, height: 820 },
+    expectedFit = fitShot(expected, shot, area, 1440, 1000);
+  near(expected.height, 4.2 * D);
+  near(expected.footing, -5);
+  assert.ok(expectedFit.distance > 0 && expectedFit.distance < 200);
+  const decoration = new Mesh(new BoxGeometry(100, 100, 100), new MeshStandardMaterial());
+  decoration.userData.excludeFromShot = true;
+  tree.add(decoration);
+  for (const [visible, y] of [[false, 80], [true, 80], [true, -80]]) {
+    decoration.visible = visible;
+    decoration.position.y = y;
+    controller.setTree({ root: treeRoot });
+    const measured = measureShot(treeRoot, shot);
+    assert.deepEqual(tree.scale, expectedScale);
+    assert.deepEqual(tree.position, expectedPosition);
+    assert.deepEqual(measured.points, expected.points);
+    assert.deepEqual(measured.target, expected.target);
+    near(measured.height, expected.height);
+    near(measured.footing, expected.footing);
+    assert.deepEqual(fitShot(measured, shot, area, 1440, 1000), expectedFit);
+  }
+  controller.dispose();
+  assert.deepEqual(tree.position, original.position);
+  assert.deepEqual(tree.scale, original.scale);
+  assert.deepEqual(tree.geometry.attributes.position.array, original.vertices);
+  assert.deepEqual(tree.geometry.attributes.uv.array, original.uv);
+  for (const mesh of [tree, decoration]) {
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+  }
 });
 
 test("torch animation remains inside scaled parents and restoration removes wrappers", () => {

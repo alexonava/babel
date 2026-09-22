@@ -1456,44 +1456,6 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
 }
 
 
-/* Optional local camera-review controls, shown only with ?tour=3 or ?tour=5. */
-.scene-tour {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 18px;
-  max-width: 310px;
-  font: 400 12px/1.4 "Instrument Sans", sans-serif;
-  color: var(--text-secondary);
-}
-.scene-tour-label {
-  flex-basis: 100%;
-  color: var(--text-meta);
-  letter-spacing: 0.08em;
-  text-shadow: 0 2px 8px rgba(4, 7, 12, 0.7);
-}
-.scene-tour button,
-.scene-tour select {
-  border: 1px solid transparent;
-  border-bottom-color: var(--ui-line);
-  border-radius: 0;
-  background: var(--ui-surface);
-  color: var(--text-secondary);
-  font: inherit;
-  padding: 7px 9px;
-}
-.scene-tour button { cursor: pointer; }
-.scene-tour button:hover:not(:disabled),
-.scene-tour select:hover {
-  border-bottom-color: var(--ui-focus);
-  color: var(--text-primary);
-  background: #222528;
-}
-.scene-tour button:disabled { opacity: 0.55; cursor: default; }
-.scene-tour button:focus-visible,
-.scene-tour select:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 3px; }
-
 @media (prefers-reduced-motion: reduce) {
   .panel-overlay.open,
   .panel-overlay.open .panel-surface {
@@ -1671,3 +1633,66 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
 .panel-estate { margin-block: auto; }
 .panel-estate .panel-close { position: absolute; top: 16px; right: 16px; margin: 0; z-index: 2; }
 .panel-parchment .panel-back { width: auto; min-width: 64px; padding-inline: 12px; font-size: 13px; line-height: 1; }
+
+
+/* A little directional light on the existing estate; its alpha and coordinates stay intact. */
+.scene-home .panel-estate .estate-map::before {
+  filter: brightness(1.015) drop-shadow(5px 20px 24px rgba(1, 3, 7, .42)) drop-shadow(0 3px 4px rgba(1, 3, 7, .2));
+}
+.scene-home .panel-estate .estate-title { color: #3a2e21; letter-spacing: .055em; }
+.scene-home .panel-estate .estate-destination span {
+  color: #342a1f;
+  background: none;
+  text-shadow: 0 1px rgba(255, 249, 231, .38);
+}
+.scene-home .panel-estate .estate-destination:hover span { text-decoration-color: rgba(72, 53, 30, .55); }
+.scene-home .panel-estate .panel-close {
+  background: rgba(242, 230, 203, .58);
+  border-color: rgba(81, 61, 35, .22);
+}
+.scene-home .panel-estate .panel-close:focus-visible { outline: 2px solid #59452b; outline-offset: 3px; }
+
+/* Decorative ink has its own column, never underneath selectable reading copy. */
+.scene-home .panel-parchment__sheet {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  column-gap: 24px;
+  align-items: center;
+  min-height: 370px;
+}
+.scene-home .panel-parchment__sheet::before {
+  background-image: linear-gradient(115deg, rgba(255, 252, 240, .19), rgba(71, 47, 22, .035)), url("/images/paper-grain.webp");
+  background-size: 100% 100%, 384px 384px;
+  background-repeat: no-repeat, repeat;
+}
+.scene-home .panel-parchment__content { grid-column: 1; grid-row: 1; }
+.panel-vignette {
+  grid-column: 2;
+  grid-row: 1;
+  width: 180px;
+  aspect-ratio: 1;
+  align-self: end;
+  justify-self: center;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  mix-blend-mode: multiply;
+  opacity: .7;
+  pointer-events: none;
+  user-select: none;
+}
+.panel-vignette--profile { background-image: url("/images/paper-vignette-profile.webp"); }
+.panel-vignette--experience { background-image: url("/images/paper-vignette-experience.webp"); }
+.panel-vignette--contact { background-image: url("/images/paper-vignette-contact.webp"); }
+@media (max-width: 700px) {
+  .scene-home .panel-parchment__sheet { grid-template-columns: minmax(0, 1fr); row-gap: 18px; }
+  .panel-vignette { grid-column: 1; grid-row: 2; width: 154px; }
+}
+@media (forced-colors: active) {
+  .scene-home .panel-estate .estate-map::before, .panel-vignette { display: none; }
+  .scene-home .panel-parchment__sheet { grid-template-columns: minmax(0, 1fr); row-gap: 0; }
+  .scene-home .panel-estate .estate-title,
+  .scene-home .panel-estate .estate-destination span { color: CanvasText; text-shadow: none; }
+  .scene-home .panel-estate .panel-close { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
+  .scene-home .panel-estate .panel-close:focus-visible { outline-color: Highlight; }
+}

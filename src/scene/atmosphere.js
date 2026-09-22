@@ -1,4 +1,5 @@
 import { Group, Vector3 } from "three";
+import { celestialTier } from "./solar-body.js";
 
 export function createSceneAtmosphere({
   onInvalidate,
@@ -12,24 +13,33 @@ export function createSceneAtmosphere({
 
   const cloudGroups = [];
   const decorativeSystems = [];
-  let cloudAnchor = null;
+  let cloudAnchor = null,
+    skyMaterial = null;
   let cloudsEnabled = true;
   let disposed = false;
   let lowPower = Boolean(profile?.isLow);
-  let pointField = null, film = false, pointSize = 1;
+  let skyTier = celestialTier(profile);
+  let pointField = null,
+    film = false,
+    pointSize = 1;
+
+  function applySkyQuality() {
+    const layers = skyMaterial?.uniforms.uNebulaLayers;
+    if (layers) layers.value = film && skyTier !== "low" ? (skyTier === "balanced" ? 2 : 3) : 0;
+  }
 
   function setCloudGroupSceneVisibility(group, visible) {
     if (!group) return;
     group.userData = group.userData || {};
     group.userData.sceneVisible = visible;
-    group.visible = cloudsEnabled && visible;
+    group.visible = cloudsEnabled && !film && visible;
   }
 
   function applyCloudVisibility() {
     cloudGroups.forEach((group) => {
       if (!group) return;
       const sceneVisible = group.userData?.sceneVisible !== false;
-      group.visible = cloudsEnabled && sceneVisible;
+      group.visible = cloudsEnabled && !film && sceneVisible;
     });
   }
 
@@ -97,6 +107,8 @@ export function createSceneAtmosphere({
     applyQuality(nextProfile = {}) {
       if (disposed) return false;
       lowPower = Boolean(nextProfile.isLow);
+      skyTier = celestialTier(nextProfile);
+      applySkyQuality();
       return true;
     },
     dispose() {
@@ -106,6 +118,8 @@ export function createSceneAtmosphere({
       cloudGroups.length = 0;
       decorativeSystems.length = 0;
       cloudAnchor = null;
+      if (skyMaterial?.uniforms.uNebulaLayers) skyMaterial.uniforms.uNebulaLayers.value = 0;
+      skyMaterial = null;
       pointField = null;
       return true;
     },
@@ -133,27 +147,50 @@ export function createSceneAtmosphere({
     setCloudAnchor(group) {
       cloudAnchor = group || null;
     },
+    setSkyMaterial(material) {
+      if (disposed) return false;
+      if (skyMaterial !== material && skyMaterial?.uniforms.uNebulaLayers) {
+        skyMaterial.uniforms.uNebulaLayers.value = 0;
+      }
+      skyMaterial = material;
+      if (skyMaterial?.uniforms.uClouds) skyMaterial.uniforms.uClouds.value = cloudsEnabled ? 1 : 0;
+      applySkyQuality();
+      return true;
+    },
     setClouds(on) {
       if (disposed) return false;
       cloudsEnabled = Boolean(on);
+      if (skyMaterial?.uniforms.uClouds) skyMaterial.uniforms.uClouds.value = cloudsEnabled ? 1 : 0;
       applyCloudVisibility();
       onInvalidate?.();
       return cloudsEnabled;
     },
-    setFilmTreatment(active) { film = Boolean(active); if (pointField) pointField.material.size = pointSize * (film ? .55 : 1); },
+    setFilmTreatment(active) {
+      if (disposed) return false;
+      film = Boolean(active);
+      applySkyQuality();
+      applyCloudVisibility();
+      if (pointField) pointField.material.size = pointSize * (film ? 0.55 : 1);
+      return true;
+    },
     setPointField(points) {
       pointField = points || null;
-      if (pointField) { pointSize = pointField.material.size; pointField.material.size = pointSize * (film ? .55 : 1); }
+      if (pointField) {
+        pointSize = pointField.material.size;
+        pointField.material.size = pointSize * (film ? 0.55 : 1);
+      }
     },
     toggleClouds() {
       return this.setClouds(!cloudsEnabled);
     },
-    update({ elapsedSeconds = 0, visibilityScale = 1 } = {}) {
+    update({ elapsedSeconds = 0, visibilityScale = 1, reducedMotion = false } = {}) {
       if (disposed) return false;
       updateDecorativeVisibility();
+      if (!reducedMotion && skyMaterial?.uniforms.uTime)
+        skyMaterial.uniforms.uTime.value = elapsedSeconds;
       if (pointField) {
         pointField.rotation.y = 0.02 * elapsedSeconds;
-        pointField.material.opacity = (lowPower ? 0.42 : 0.5) * visibilityScale * (film ? .4 : 1);
+        pointField.material.opacity = (lowPower ? 0.42 : 0.5) * visibilityScale * (film ? 0.4 : 1);
       }
       return true;
     },

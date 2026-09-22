@@ -43,24 +43,18 @@ function setup(selected = "tower", width = 1440, height = 900, angle = 0) {
       controller.apply({ width, height, elapsedSeconds: time, ...extra }),
   };
 }
-test("view overrides avoid RNG and default selection divides at one half", () => {
-  let calls = 0;
-  const rng = () => {
-    calls++;
-    return 0.49;
+test("every ordinary visit opens The watch while explicit comparison and subject URLs remain valid", () => {
+  const unexpectedRandom = () => {
+    throw new Error("opening composition must not use RNG");
   };
-  assert.equal(chooseCinematicView("", rng), "tower");
-  assert.equal(calls, 1);
-  assert.equal(
-    chooseCinematicView("", () => 0.5),
-    "tree",
-  );
-  for (const v of ["tower", "tree", "orbit"])
-    assert.equal(chooseCinematicView(`?view=${v}`, rng), v);
-  for (const q of ["?architecture=classic", "?architecture=assembled", "?setting=previous"])
-    assert.equal(chooseCinematicView(q, rng), "orbit");
-  assert.equal(calls, 1);
+  for (const query of ["", "?quality=high", "?view=unknown", "?angle=3"])
+    assert.equal(chooseCinematicView(query, unexpectedRandom), "tower");
+  for (const view of ["tower", "tree", "orbit"])
+    assert.equal(chooseCinematicView(`?view=${view}`, unexpectedRandom), view);
+  for (const query of ["?architecture=classic", "?architecture=assembled", "?setting=previous"])
+    assert.equal(chooseCinematicView(query, unexpectedRandom), "orbit");
 });
+
 test("camera fits all subject corners inside phone and desktop safe areas throughout the arc", () => {
   for (const [w, h] of [
     [390, 844],
@@ -155,20 +149,36 @@ test("quiet presentation suppresses re-enabled objects and restores original vis
   assert.deepEqual(states, [false, true, false, true]);
 });
 
-test("angle overrides and fresh-load angle sampling stay within each subject's own composition count", () => {
-  for (const angle of [1, 2, 3, 4])
-    assert.equal(chooseCinematicAngle(`?angle=${angle}`, "tower"), angle - 1);
-  // Tree has four compositions, so its fourth direct URL remains reproducible.
-  assert.equal(chooseCinematicAngle("?angle=4", "tree", () => 0.99), 3);
-  // Tower has four, so the fifth URL falls back to its sampled composition.
-  assert.equal(chooseCinematicAngle("?angle=5", "tower", () => 0.99), 3);
-  assert.equal(chooseCinematicAngle("?view=tree", "tree", () => 0.99), 0);
-  assert.equal(chooseCinematicAngle("", "tower", () => 0), 0);
-  assert.equal(chooseCinematicAngle("", "tower", () => 0.5), 2);
-  assert.equal(chooseCinematicAngle("", "tower", () => 0.99), 3);
-  // Tree's random range can reach its fourth composition.
-  assert.equal(chooseCinematicAngle("", "tree", () => 0.99), 3);
+test("valid angle overrides remain reproducible and missing or invalid angles select the first shot", () => {
+  const unexpectedRandom = () => {
+    throw new Error("opening angle must not use RNG");
+  };
+  for (const view of ["tower", "tree"])
+    for (const angle of [1, 2, 3, 4])
+      assert.equal(
+        chooseCinematicAngle(`?view=${view}&angle=${angle}`, view, unexpectedRandom),
+        angle - 1,
+      );
+  for (const view of ["tower", "tree"])
+    for (const query of [
+      "",
+      `?view=${view}`,
+      "?angle=0",
+      "?angle=5",
+      "?angle=2.5",
+      "?angle=invalid",
+    ])
+      assert.equal(chooseCinematicAngle(query, view, unexpectedRandom), 0);
 });
+
+test("short landscape uses a side-by-side safe area instead of backing out below the hero", () => {
+  const area = cinematicSafeArea(844, 390, { right: 330, bottom: 220 }, { top: 285 });
+  assert.ok(area.left >= 330);
+  assert.equal(area.top, 32);
+  assert.ok(area.top + area.height < 285);
+  assert.ok(area.height >= 200);
+});
+
 test("all angle variants retain safe portrait framing at both arc limits", () => {
   for (const subject of ["tower", "tree"])
     for (const angle of DIRECTED_SHOTS[subject].keys()) {

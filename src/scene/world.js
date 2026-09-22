@@ -40,7 +40,7 @@
     // --- Main camera (PerspectiveCamera) ---
     CAMERA_FOV: 45,
     CAMERA_NEAR: 0.1,
-    CAMERA_FAR: 240,
+    CAMERA_FAR: 450,
 
     // --- Sun shadow frustum (orthographic, symmetric around the scene) ---
     SHADOW_CAMERA_HALF_EXTENT: 60,

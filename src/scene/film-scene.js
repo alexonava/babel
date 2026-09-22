@@ -1,8 +1,6 @@
-import { CanvasTexture, Color, Vector3 } from "three";
 import { createEarthGeometry } from "./filmic-earth.js";
 
-// Scene-owned overrides borrow source resources and restore bindings before
-// freeing their derived geometry/maps. No additional renderable or light.
+// Borrow existing resources; restore originals before freeing the derived terrain.
 export function createFilmScene({
   ground,
   groundHeight,
@@ -16,20 +14,30 @@ export function createFilmScene({
     disposed = false,
     terrain = null,
     clouds = [],
-    undo = [],
-    blurred = new Map(),
-    cloudOpacity = new Map();
-  const originalGeometry = ground.geometry;
-  const offset = new Vector3(),
-    direction = new Vector3(),
-    world = new Vector3();
+    undo = [];
+  const cloudVisibility = new Map(),
+    originalGeometry = ground.geometry;
+  function captureClouds() {
+    for (const cloud of clouds) {
+      if (!cloudVisibility.has(cloud)) cloudVisibility.set(cloud, cloud.visible);
+      cloud.visible = false;
+    }
+  }
+  function restoreClouds() {
+    cloudVisibility.forEach((visible, cloud) => {
+      cloud.visible = visible;
+    });
+    cloudVisibility.clear();
+  }
   return {
     lifecycleOrder: 18,
     get active() {
       return active;
     },
     setClouds(objects) {
+      restoreClouds();
       clouds = objects.filter(Boolean);
+      if (active) captureClouds();
     },
     setActive(next) {
       if (disposed || active === Boolean(next)) return;
@@ -38,52 +46,35 @@ export function createFilmScene({
         terrain ||= createEarthGeometry(groundHeight);
         ground.geometry = terrain;
         for (const o of effects) {
-          const v = o.visible;
+          const visible = o.visible;
           undo.push(() => {
-            o.visible = v;
+            o.visible = visible;
           });
           o.visible = false;
         }
-        const sunColor = skyMaterial.uniforms.sunColor.value.clone();
-        undo.push(() => skyMaterial.uniforms.sunColor.value.copy(sunColor));
+        const sunColor = skyMaterial.uniforms.sunColor.value.clone(),
+          transparent = skyMaterial.transparent;
+        const filmUniform = skyMaterial.uniforms.uFilm,
+          previousFilm = filmUniform?.value;
+        undo.push(() => {
+          skyMaterial.uniforms.sunColor.value.copy(sunColor);
+          skyMaterial.transparent = transparent;
+          skyMaterial.needsUpdate = true;
+          if (filmUniform) filmUniform.value = previousFilm;
+        });
         skyMaterial.uniforms.sunColor.value.setHex(0x7e8eab).multiplyScalar(0.35);
-        const materials = new Set(clouds.map((c) => c.material));
-        for (const m of materials) {
-          const original = { map: m.map, color: m.color.clone(), opacity: m.opacity };
-          cloudOpacity.set(m, original.opacity);
-          undo.push(() => {
-            m.map = original.map;
-            m.color.copy(original.color);
-            m.opacity = original.opacity;
-            m.needsUpdate = true;
-          });
-          if (m.map?.image) {
-            if (!blurred.has(m.map)) {
-              const source = m.map.image,
-                canvas = document.createElement("canvas");
-              canvas.width = source.width;
-              canvas.height = source.height;
-              const ctx = canvas.getContext("2d");
-              if (ctx) {
-                ctx.filter = `blur(${Math.max(2, source.width * 0.018)}px)`;
-                ctx.drawImage(source, 0, 0);
-                const texture = new CanvasTexture(canvas);
-                texture.colorSpace = m.map.colorSpace;
-                blurred.set(m.map, texture);
-              }
-            }
-            m.map = blurred.get(m.map) || m.map;
-          }
-          m.color.lerp(new Color(0x66758b), 0.25);
-          m.needsUpdate = true;
-        }
+        if (filmUniform) filmUniform.value = 1;
+        // Opaque-list first: the nearer shell must never haze over distant hills.
+        skyMaterial.transparent = false;
+        skyMaterial.needsUpdate = true;
+        captureClouds();
       } else {
         ground.geometry = originalGeometry;
         undo
           .splice(0)
           .reverse()
           .forEach((fn) => fn());
-        cloudOpacity.clear();
+        restoreClouds();
       }
       rendering.setFilmTreatment(active);
       atmosphere.setFilmTreatment(active);
@@ -91,26 +82,14 @@ export function createFilmScene({
     },
     finishFrame(camera, target, frame, phoneDetail = false, textBottom = 0.25) {
       if (!active || disposed) return;
-      effects.forEach((o) => {
-        o.visible = false;
+      effects.forEach((object) => {
+        object.visible = false;
       });
-      const distance = direction.copy(target).sub(camera.position).length();
-      direction.normalize();
-      const radius = Math.max(3, (frame?.radius || 12) * 0.75);
-      for (const cloud of clouds) {
-        if (!cloud.visible) continue;
-        cloud.getWorldPosition(world);
-        offset.copy(world).sub(camera.position);
-        const depth = offset.dot(direction);
-        let fade = 1;
-        if (depth > 0 && depth < distance * 1.1) {
-          const lateral = offset.addScaledVector(direction, -depth).length();
-          fade = Math.max(0.02, Math.min(1, (lateral - radius) / (radius + cloud.scale.x * 0.25)));
-        }
-        // Reapply the captured baseline each frame. Multiplying the current
-        // opacity would compound until every cloud disappeared.
-        cloud.material.opacity = (cloudOpacity.get(cloud.material) ?? cloud.material.opacity) * 0.44 * fade;
-      }
+      // Older visibility systems may re-enable sprites during update. Their
+      // dreamlike replacement is world-fixed density on the existing sky shell.
+      clouds.forEach((cloud) => {
+        cloud.visible = false;
+      });
       rendering.focusFilmShadow(target, frame?.radius || 20);
       rendering.postprocessPipeline.setTextProtection?.(phoneDetail, textBottom);
     },
@@ -120,8 +99,6 @@ export function createFilmScene({
       disposed = true;
       terrain?.dispose();
       terrain = null;
-      blurred.forEach((texture) => texture.dispose());
-      blurred.clear();
       clouds = [];
       return true;
     },
