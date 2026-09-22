@@ -1,7 +1,7 @@
 import "./quality.js";
 import { createSolarBody } from "./solar-body.js";
 import { createStarfield } from "./starfield.js";
-import { readTourInterval, createCameraTour, createTourControls } from "./camera-tour.js";
+import { readTourInterval, createCameraTour } from "./camera-tour.js";
 import { resolveSceneModes } from "./scene-modes.js";
 import { createLegacyWorld } from "./legacy-world.js";
 import { createDeferredWorld } from "./deferred-world.js";
@@ -231,8 +231,7 @@ function setSrgbTexture(texture) {
     const tourInterval = filmEnabled ? readTourInterval(window.location.search) : 0;
     const cameraTour = tourInterval ? createCameraTour({ camera: cinematic, interval: tourInterval,
       invalidate: () => frameScheduler?.invalidate() }) : null;
-    if (cameraTour) subsystemRegistry.register(createTourControls({ tour: cameraTour, document,
-      parent: document.getElementById("hero-minimal") }));
+    if (cameraTour) subsystemRegistry.register({ dispose: () => cameraTour.dispose() });
     function isLowPower() {
       return state.profile.isLow;
     }
@@ -363,7 +362,8 @@ function setSrgbTexture(texture) {
       getCenter(target) { return solarBody.root.getWorldPosition(target); },
       group: solarBody.root, importance: "core", name: "sun", radius: 5.5,
     });
-    const starfield = createStarfield({ parent: atmosphereSystem.root, camera, profile: state.profile });
+    const starfield = createStarfield({ parent: atmosphereSystem.root, camera, profile: state.profile,
+      nebulaLayers: skyShell.material.uniforms.uNebulaLayers });
     subsystemRegistry.register(starfield);
     const environmentSystem = createSceneEnvironment({
       groundHeight,

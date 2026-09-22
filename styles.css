@@ -1456,44 +1456,6 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
 }
 
 
-/* Optional local camera-review controls, shown only with ?tour=3 or ?tour=5. */
-.scene-tour {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 18px;
-  max-width: 310px;
-  font: 400 12px/1.4 "Instrument Sans", sans-serif;
-  color: var(--text-secondary);
-}
-.scene-tour-label {
-  flex-basis: 100%;
-  color: var(--text-meta);
-  letter-spacing: 0.08em;
-  text-shadow: 0 2px 8px rgba(4, 7, 12, 0.7);
-}
-.scene-tour button,
-.scene-tour select {
-  border: 1px solid transparent;
-  border-bottom-color: var(--ui-line);
-  border-radius: 0;
-  background: var(--ui-surface);
-  color: var(--text-secondary);
-  font: inherit;
-  padding: 7px 9px;
-}
-.scene-tour button { cursor: pointer; }
-.scene-tour button:hover:not(:disabled),
-.scene-tour select:hover {
-  border-bottom-color: var(--ui-focus);
-  color: var(--text-primary);
-  background: #222528;
-}
-.scene-tour button:disabled { opacity: 0.55; cursor: default; }
-.scene-tour button:focus-visible,
-.scene-tour select:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 3px; }
-
 @media (prefers-reduced-motion: reduce) {
   .panel-overlay.open,
   .panel-overlay.open .panel-surface {

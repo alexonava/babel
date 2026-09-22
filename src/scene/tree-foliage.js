@@ -23,13 +23,30 @@ export function createTreeFoliage(source, parent) {
     ),
   );
   geometry.computeVertexNormals();
-  const material = new MeshStandardMaterial({ color: 0x3c5140, roughness: 0.9, side: DoubleSide });
+  const material = new MeshStandardMaterial({ color: 0x3c5140, roughness: 0.96, side: DoubleSide });
   const mesh = new InstancedMesh(geometry, material, 3600);
   mesh.name = "estate-canopy-leaves";
   mesh.userData.excludeFromShot = true;
   const p = source.attributes.position,
     n = source.attributes.normal,
     indices = source.index;
+  // Weight by surface area so subdivisions and tiny canopy triangles do not
+  // attract more leaves than equally large, simpler parts of the source mesh.
+  const faceCount = Math.floor((indices ? indices.count : p.count) / 3),
+    areas = new Float64Array(faceCount),
+    a = new Vector3(),
+    b = new Vector3(),
+    c = new Vector3();
+  let totalArea = 0;
+  for (let face = 0; face < faceCount; face++) {
+    const start = face * 3;
+    a.fromBufferAttribute(p, indices ? indices.getX(start) : start);
+    b.fromBufferAttribute(p, indices ? indices.getX(start + 1) : start + 1);
+    c.fromBufferAttribute(p, indices ? indices.getX(start + 2) : start + 2);
+    const area = b.sub(a).cross(c.sub(a)).length() * 0.5;
+    if (Number.isFinite(area)) totalArea += area;
+    areas[face] = totalArea;
+  }
   let seed = 6019,
     count = 0,
     active = false,
@@ -46,8 +63,16 @@ export function createTreeFoliage(source, parent) {
     normal = new Vector3(),
     scale = new Vector3(),
     color = new Color();
-  for (let attempt = 0; attempt < 80000 && count < 3600; attempt++) {
-    const face = Math.floor((random() * (indices ? indices.count : p.count)) / 3) * 3;
+  for (let attempt = 0; totalArea > 0 && attempt < 80000 && count < 3600; attempt++) {
+    const sample = random() * totalArea;
+    let low = 0,
+      high = faceCount - 1;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (sample < areas[middle]) high = middle;
+      else low = middle + 1;
+    }
+    const face = low * 3;
     const u = Math.sqrt(random()),
       v = random(),
       weights = [1 - u, u * (1 - v), u * v];
@@ -78,7 +103,8 @@ export function createTreeFoliage(source, parent) {
     const size = 0.75 + random() * 0.85;
     matrix.compose(point, rotation, scale.set(size, size, size));
     mesh.setMatrixAt(count, matrix);
-    color.setRGB(0.68 + random() * 0.25, 0.77 + random() * 0.19, 0.67 + random() * 0.2);
+    const shade = 0.76 + random() * 0.12;
+    color.setRGB(shade, shade + 0.04, shade - 0.02);
     mesh.setColorAt(count++, color);
   }
   mesh.instanceMatrix.needsUpdate = true;
@@ -86,7 +112,7 @@ export function createTreeFoliage(source, parent) {
   mesh.computeBoundingSphere();
   parent.add(mesh);
   const update = () => {
-    mesh.visible = active && tier !== "low";
+    mesh.visible = active && tier !== "low" && count > 0;
     mesh.count = Math.min(count, tier === "balanced" ? 1800 : 3600);
   };
   update();

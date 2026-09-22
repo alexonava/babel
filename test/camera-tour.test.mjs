@@ -64,7 +64,7 @@ test("tour defaults to five seconds even when a link chooses its opening composi
   assert.equal(readTourInterval("?tour=20"), 20);
   assert.equal(readTourInterval("?view=tower&tour=5"), 5);
 });
-test("all eight views cycle at the selected interval with small drift and cached repeat framing", () => {
+test("the seven tour views skip Masonry study and wrap with small drift and cached repeat framing", () => {
   for (const interval of [3, 5]) {
     const f = setup(interval);
     f.render(0);
@@ -74,14 +74,16 @@ test("all eight views cycle at the selected interval with small drift and cached
     assert.ok(f.camera.position.distanceTo(firstPosition) > 0.1);
     assert.equal(f.camera.position.y, firstPosition.y);
     const names = [f.controller.shot.name];
-    for (let i = 1; i <= 8; i++) {
+    assert.equal(f.tour.state.total, 7);
+    assert.equal(f.tour.state.index, 1);
+    for (let i = 1; i <= 7; i++) {
       f.render(interval * i);
       names.push(f.controller.shot.name);
+      assert.equal(f.tour.state.index, (i % 7) + 1);
     }
     assert.deepEqual(names, [
       "The watch",
       "Threshold",
-      "Masonry study",
       "Gallery detail",
       "Portrait",
       "Lantern study",
@@ -122,7 +124,7 @@ test("pause, panels, reduced motion and developer control hold the tour without 
   f.tour.toggle();
   f.render(32);
   f.render(37);
-  assert.equal(f.controller.shot.name, "Masonry study");
+  assert.equal(f.controller.shot.name, "Gallery detail");
   f.dispose();
 });
 
@@ -142,7 +144,7 @@ test("the 20-second mode dwells long by default with an occasional 5-second wild
   assert.equal(f.controller.shot.name, "Threshold");
   assert.equal(f.tour.state.dwell, 5);
   f.render(25.02); // 5s wildcard dwell elapses; next roll (0.9) is not
-  assert.equal(f.controller.shot.name, "Masonry study");
+  assert.equal(f.controller.shot.name, "Gallery detail");
   assert.equal(f.tour.state.dwell, 20);
   f.dispose();
 });
@@ -162,7 +164,7 @@ test("unavailable subjects are skipped, loading holds, and disposal blocks later
   const f = setup();
   f.controller.setSubject("tree", null);
   f.controller.setStatus({ kind: "tree", status: "fallback" });
-  for (const t of [0, 5, 10, 15, 20]) f.render(t);
+  for (const t of [0, 5, 10, 15]) f.render(t);
   assert.equal(f.controller.shot.name, "The watch");
   f.controller.setStatus({ kind: "tower", status: "loading" });
   f.render(16);
@@ -174,5 +176,22 @@ test("unavailable subjects are skipped, loading holds, and disposal blocks later
   f.tour.next();
   f.render(99);
   assert.equal(f.controller.shot.name, "The watch");
+  f.dispose();
+});
+
+test("a retained Masonry comparison advances to Gallery detail without renumbering angles", () => {
+  const f = setup();
+  assert.equal(f.controller.setPreviewShot("tower", 2), true);
+  f.render(0);
+  assert.equal(f.controller.shot.name, "Masonry study");
+  assert.equal(f.tour.state.index, null);
+  f.render(5);
+  assert.equal(f.controller.shot.name, "Gallery detail");
+  assert.equal(f.controller.angle, 3);
+  assert.equal(f.tour.state.index, 3);
+  f.tour.next();
+  f.render(6);
+  assert.equal(f.controller.shot.name, "Portrait");
+  assert.equal(f.tour.state.index, 4);
   f.dispose();
 });

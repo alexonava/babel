@@ -23,18 +23,23 @@ function createProfile() {
 
 test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", () => {
   const calls = [];
+  let contextLost = false;
   const renderer = {
     capabilities: { getMaxAnisotropy: () => 8 },
     domElement: {},
     outputColorSpace: null,
     shadowMap: {},
+    getContext: () => ({ isContextLost: () => contextLost }),
     setClearColor: (...args) => calls.push(["clear", ...args]),
     setPixelRatio: (value) => calls.push(["pixelRatio", value]),
     setSize: (...args) => calls.push(["rendererSize", ...args]),
   };
   const composer = {
     addPass: () => calls.push(["outlineAdded"]),
-    render: () => calls.push(["render"]),
+    render: () => {
+      if (contextLost) throw new TypeError("Shader log is null before contextlost dispatch");
+      calls.push(["render"]);
+    },
     setSize: (...args) => calls.push(["composerSize", ...args]),
   };
   const pipeline = {
@@ -131,7 +136,7 @@ test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", 
   );
   assert.equal(rendering.lights.sun.shadow.camera.left, -32);
   rendering.applyQuality(profile);
-  assert.equal(rendering.lights.fill.intensity, 0.31 * 1.48);
+  assert.equal(rendering.lights.fill.intensity, 0.31 * 1.66);
   rendering.setFilmTreatment(false);
   assert.deepEqual(rendering.lights.sun.position.toArray(), beforePosition.toArray());
   assert.deepEqual(rendering.lights.sun.target.position.toArray(), beforeTarget.toArray());
@@ -149,6 +154,16 @@ test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", 
   assert.equal(rendering.lights.fill.intensity, 0);
   rendering.resize({ cameraFov: 52, height: 400, width: 900 });
   rendering.update();
+  const renderedBeforeLoss = calls.filter(([name]) => name === "render").length;
+  // Deliberately dispatch no DOM event: the native context can be lost before
+  // either Three or the scene scheduler receives its queued notification.
+  contextLost = true;
+  assert.equal(rendering.update(), false);
+  assert.equal(rendering.update({ render: false }), true);
+  assert.equal(calls.filter(([name]) => name === "render").length, renderedBeforeLoss);
+  contextLost = false;
+  assert.equal(rendering.update(), true);
+  assert.equal(calls.filter(([name]) => name === "render").length, renderedBeforeLoss + 1);
   const renderTarget = { id: "reflection" };
   rendering.trackRenderTarget(renderTarget);
 

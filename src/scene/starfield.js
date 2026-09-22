@@ -7,10 +7,13 @@ import {
   Vector3,
 } from "three";
 import { celestialTier, createCelestialClock, seededRandom } from "./solar-body.js";
+import { CELESTIAL_FIELD_GLSL, celestialClusterDirection } from "./celestial-field.js";
 export const STAR_COUNTS = Object.freeze({ high: 4200, balanced: 2600, low: 1200 });
 export function makeStarGeometry(seed = 92717) {
   const random = seededRandom(seed),
+    clusterRandom = seededRandom(seed ^ 0x9e3779b9),
     positions = [],
+    celestialPositions = [],
     colors = [],
     sizes = [],
     phases = [];
@@ -19,6 +22,18 @@ export function makeStarGeometry(seed = 92717) {
       azimuth = random() * Math.PI * 2,
       r = Math.sqrt(1 - y * y);
     positions.push(r * Math.cos(azimuth) * 180, y * 180, r * Math.sin(azimuth) * 180);
+    if (i >= STAR_COUNTS.low && i % 47 === 0) {
+      const radius = Math.sqrt(clusterRandom()) * 0.115,
+        angle = clusterRandom() * Math.PI * 2;
+      celestialPositions.push(
+        ...celestialClusterDirection(
+          0.17 + Math.cos(angle) * radius,
+          -0.04 + Math.sin(angle) * radius * 0.6,
+        )
+          .multiplyScalar(180)
+          .toArray(),
+      );
+    } else celestialPositions.push(...positions.slice(-3));
     const magnitude = Math.pow(random(), 6),
       temperature = random();
     const color =
@@ -30,13 +45,14 @@ export function makeStarGeometry(seed = 92717) {
   }
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("aCelestialPosition", new Float32BufferAttribute(celestialPositions, 3));
   geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
   geometry.setAttribute("aSize", new Float32BufferAttribute(sizes, 1));
   geometry.setAttribute("aPhase", new Float32BufferAttribute(phases, 1));
   geometry.computeBoundingSphere();
   return geometry;
 }
-export function createStarfield({ parent, camera, profile = {} }) {
+export function createStarfield({ parent, camera, profile = {}, nebulaLayers = { value: 0 } }) {
   const clock = createCelestialClock(),
     center = new Vector3();
   const material = new ShaderMaterial({
@@ -47,18 +63,37 @@ export function createStarfield({ parent, camera, profile = {} }) {
     depthWrite: false,
     fog: false,
     blending: AdditiveBlending,
-    uniforms: { uTime: { value: 0 }, uPixelRatio: { value: 1 }, uVisibility: { value: 1 } },
+    uniforms: {
+      uTime: { value: 0 },
+      uPixelRatio: { value: 1 },
+      uVisibility: { value: 1 },
+      // Borrowed from the sky: film activation, fallback and tiers change once.
+      uNebulaLayers: nebulaLayers,
+      uCelestialTier: { value: 1 },
+    },
     vertexShader: `
       attribute float aSize;attribute float aPhase;
+      attribute vec3 aCelestialPosition;
       uniform float uTime;uniform float uPixelRatio;uniform float uVisibility;
+      uniform float uNebulaLayers;uniform float uCelestialTier;
       varying vec3 vColor;
+      ${CELESTIAL_FIELD_GLSL}
       void main(){
-        float altitude=position.y/180.0;
+        bool cosmic=uNebulaLayers>.5 && uCelestialTier>.5;
+        vec3 starPosition=cosmic?aCelestialPosition:position;
+        float altitude=starPosition.y/180.0;
         float extinction=smoothstep(.015,.36,altitude);
+        if(cosmic){
+          vec3 direction=normalize(mat3(modelMatrix)*starPosition);
+          vec2 p=celestialPlane(direction);
+          float dust=celestialDust(p,celestialEnvelope(direction,p));
+          // Some stars are in front of the dust. Preserve that depth distinction.
+          extinction*=exp(-dust*1.8*step(.32,fract(aPhase*3.71)));
+        }
         float twinkle=1.0+.075*sin(uTime*(.65+.24*sin(aPhase))+aPhase)
                           +.035*sin(uTime*1.17+aPhase*7.0);
         vColor=color*extinction*twinkle*uVisibility;
-        gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(starPosition,1.0);
         gl_PointSize=aSize*uPixelRatio;
       }`,
     fragmentShader: `
@@ -87,6 +122,7 @@ export function createStarfield({ parent, camera, profile = {} }) {
       if (disposed) return false;
       material.uniforms.uPixelRatio.value = pixelRatio;
       tier = celestialTier(next);
+      material.uniforms.uCelestialTier.value = tier === "low" ? 0 : 1;
       root.geometry.setDrawRange(0, STAR_COUNTS[tier]);
       return true;
     },

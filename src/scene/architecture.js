@@ -36,6 +36,7 @@ const MATERIAL_PROFILES = Object.freeze({
   tower: {
     color: 0xe5e0d6,
     normalScale: 0.35,
+    roughness: 0.9,
     roughnessFloor: 0.9,
     saturation: 0.94,
     highlights: 0.18,
@@ -61,7 +62,9 @@ const MATERIAL_PROFILES = Object.freeze({
     emissive: 0x26351f,
     emissiveIntensity: 0.22,
     normalScale: 0.46,
-    roughnessFloor: 0.94,
+    roughness: 1,
+    roughnessFloor: 0.84,
+    roughnessCeiling: 0.97,
     highlights: 0.12,
   },
 });
@@ -281,15 +284,23 @@ function materialFor(asset, anisotropy, role) {
   try {
     material.color?.setHex(profile.color ?? 0xffffff);
     material.metalness = 0;
-    material.roughness = 0.94;
+    material.roughness = profile.roughness ?? 0.94;
     material.emissive.setHex(profile.emissive ?? 0);
     material.emissiveIntensity = profile.emissiveIntensity ?? 1;
     material.emissiveMap = null;
     material.vertexColors = false;
-    // A PBR roughness map multiplies the scalar; it can otherwise make even a
-    // 0.94 material glossy. Keep its variation above a matte per-role floor.
+    // Retain the tree map's variation within a matte range. The complete tower
+    // has no roughness map: keep its scalar direct rather than lifting .9 to .99.
+    // Other architecture roles retain their existing per-role matte treatment.
     // Compress bright baked edge detail in linear color without repainting maps.
     const roughnessFloor = profile.roughnessFloor ?? 0.86;
+    const roughnessCeiling = profile.roughnessCeiling ?? 1;
+    const directRoughness = role === "tower" && !material.roughnessMap;
+    const roughnessFragment =
+      "#include <roughnessmap_fragment>" +
+      (directRoughness
+        ? ""
+        : `\nroughnessFactor = mix(${roughnessFloor.toFixed(3)}, ${roughnessCeiling.toFixed(3)}, roughnessFactor);`);
     const uniforms = {
       babelSaturation: { value: profile.saturation ?? 1 },
       babelHighlights: { value: profile.highlights ?? 0 },
@@ -299,7 +310,7 @@ function materialFor(asset, anisotropy, role) {
       babelFilm: { value: 0 },
     };
     material.userData.babelGrade = { role, uniforms };
-    material.customProgramCacheKey = () => `babel-estate-material-v4-${role}-${roughnessFloor}`;
+    material.customProgramCacheKey = () => `babel-estate-material-v5-${role}-${roughnessFloor}-${roughnessCeiling}-${directRoughness}`;
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
       shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 babelLocal;").replace("#include <begin_vertex>", "#include <begin_vertex>\nbabelLocal = position;");
@@ -317,7 +328,7 @@ function materialFor(asset, anisotropy, role) {
         )
         .replace(
           "#include <roughnessmap_fragment>",
-          `#include <roughnessmap_fragment>\nroughnessFactor = mix(${roughnessFloor.toFixed(3)}, 1.0, roughnessFactor);`,
+          roughnessFragment,
         )
         .replace(
           "#include <map_fragment>",

@@ -32,6 +32,7 @@ export const DIRECTED_SHOTS = {
     },
     {
       name: "Masonry study",
+      tour: false, // Retain its comparison URL without including it in the tour.
       region: [0.26, 0.53],
       fov: 32,
       azimuth: 44,

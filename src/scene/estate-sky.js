@@ -1,4 +1,5 @@
 import { BackSide, Color, ShaderMaterial } from "three";
+import { CELESTIAL_FIELD_GLSL } from "./celestial-field.js";
 
 // Density lives on the existing fixed world-space sky shell, never camera-facing
 // cards. No extra render pass or image request; the baseline branch is retained.
@@ -16,6 +17,7 @@ export function createEstateSkyMaterial(config) {
       uTime: { value: 0 },
       uFilm: { value: 0 },
       uClouds: { value: 1 },
+      uNebulaLayers: { value: 0 },
     },
     vertexShader: `
 varying vec3 vWorldPosition;
@@ -26,7 +28,7 @@ gl_Position = projectionMatrix * viewMatrix * p;
 }`,
     fragmentShader: `
 uniform vec3 topColor, bottomColor, glowColor, sunDirection, sunColor;
-uniform float uTime, uFilm, uClouds;
+uniform float uTime, uFilm, uClouds, uNebulaLayers;
 varying vec3 vWorldPosition;
 float hash(vec2 p) { return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float noise(vec2 p) {
@@ -35,6 +37,20 @@ return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
 mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
 }
 float cloud(vec2 p) { return noise(p)*.57+noise(p*2.07+11.3)*.28+noise(p*4.19-3.7)*.15; }
+${CELESTIAL_FIELD_GLSL}
+vec3 nebula(vec3 direction) {
+  vec2 p=celestialPlane(direction);
+  float envelope=celestialEnvelope(direction,p);
+  if(envelope<.002) return vec3(0.0);
+  float density=noise(p*vec2(5.4,10.8)+3.7)*.64+noise(p*vec2(11.3,22.6)-9.1)*.36;
+  if(uNebulaLayers>2.5) density=mix(density,noise(p*vec2(23.1,39.0)+17.3),.17);
+  float emission=envelope*smoothstep(.24,.78,density);
+  float dust=celestialDust(p,envelope);
+  float core=exp(-dot((p-vec2(.17,-.04))*vec2(5.0,9.0),
+                     (p-vec2(.17,-.04))*vec2(5.0,9.0)));
+  vec3 color=mix(vec3(.1584,.1008,.2688),vec3(.2472,.1656,.1536),core*.48);
+  return color*emission*exp(-dust*2.5);
+}
 void main() {
 vec3 direction=normalize(vWorldPosition);
 float h=normalize(vWorldPosition+vec3(0,40,0)).y;
@@ -46,6 +62,9 @@ col+=sunColor*(pow(sunDot,8.0)*.225+pow(sunDot,32.0)*.152);
 if (uFilm>.5) {
 float altitude=direction.y;
 col=mix(vec3(.19,.205,.278),vec3(.023,.03,.071),smoothstep(-.10,.72,altitude));
+// Celestial radiance precedes the local atmospheric veil. Only this layer uses
+// the camera ray; the retained cloud mapping and baseline sky stay unchanged.
+if(uNebulaLayers>0.5) col+=nebula(normalize(vWorldPosition-cameraPosition));
 vec2 p=direction.xz*3.8+vec2(direction.y*2.2, direction.y*.8);
 float density=cloud(p+vec2(uTime*.00035,0));
 float lace=cloud(p*2.6+vec2(17.2,-9.1));

@@ -1,6 +1,6 @@
 # Scene modes and camera review
 
-The normal local experience opens on **The watch** (tower, angle 1), with the existing five-second tour. The eight shots remain four tower views and four tree views. These controls are defined by source, not by the numeric orbit guidance in older notes.
+The normal local experience opens on **The watch** (tower, angle 1), with the existing five-second tour. The seven tour shots comprise three tower views and four tree views. Masonry study is excluded from the tour; its explicit comparison URL remains available. These controls are defined by source, not by the numeric orbit guidance in older notes.
 
 ## Directed views
 
@@ -12,14 +12,14 @@ Append a query to the local preview, for example:
 | --- | --- |
 | view=tower&angle=1 | The watch |
 | view=tower&angle=2 | Threshold |
-| view=tower&angle=3 | Masonry study |
+| view=tower&angle=3 | Masonry study (comparison only; excluded from tour) |
 | view=tower&angle=4 | Gallery detail |
 | view=tree&angle=1 | Portrait |
 | view=tree&angle=2 | Lantern study |
 | view=tree&angle=3 | Close-up |
 | view=tree&angle=4 | Root and lantern |
 
-Explicit view/angle selects the opening composition; add tour=0 to hold it. Tour timing accepts 3, 5, and 20 seconds. Twenty-second mode has a 20% chance of a five-second wildcard dwell, sampled at each shot. Pause and Next view remain available. Panels, developer camera control, and reduced motion suspend automatic cycling; missing subjects are skipped.
+Explicit view/angle selects the opening composition; add tour=0 to hold it. Tour timing accepts 3, 5, and 20 seconds. Twenty-second mode has a 20% chance of a five-second wildcard dwell, sampled at each shot. The tour runs without a visible shot label or control strip. Panels, developer camera control, and reduced motion suspend automatic cycling; missing subjects are skipped.
 
 The camera fits authored focal volumes into the responsive composition area. Portrait overrides are intentional. Edit [directed-shots.js](../src/scene/directed-shots.js) for shot intent, [cinematic.js](../src/scene/cinematic.js) for fitting, and [camera-tour.js](../src/scene/camera-tour.js) for timing.
 
