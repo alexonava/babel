@@ -254,9 +254,9 @@ test("Cloudflare preview credentials run separately from pull-request build code
     /- name: Deploy to Cloudflare Pages[\s\S]*?env:[\s\S]*?CLOUDFLARE_API_TOKEN:/,
   );
   assert.match(preview, /\n  build:\r?\n[\s\S]*?npm run build:dist/);
-  assert.match(preview, /actions\/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f/);
+  assert.match(preview, /actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/);
   assert.match(preview, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
-  assert.match(preview, /actions\/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53/);
+  assert.match(preview, /actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/);
   assert.match(
     preview,
     /npm install --global --ignore-scripts --no-audit --no-fund wrangler@4\.114\.0/,
@@ -420,7 +420,7 @@ test("Cloudflare audit is scheduled, manual, least-privilege, and sanitized", as
   assert.match(workflow, /Public DNS\/TLS reachability/);
   assert.doesNotMatch(workflow, /cat "\$raw_project"/);
   assert.doesNotMatch(workflow, /set -x/);
-  assert.match(workflow, /actions\/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f/);
+  assert.match(workflow, /actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/);
   assert.match(workflow, /retention-days:\s*14/);
   assert.match(operations, /extracts only each request's final response-header block/);
   assert.match(operations, /effective host exactly `alexnava\.me`/);
