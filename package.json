@@ -20,8 +20,8 @@
     "format": "prettier --write \"src/**/*.js\" \"*.html\" \"*.css\" \"*.md\""
   },
   "devDependencies": {
-    "esbuild": "^0.28.1",
-    "prettier": "^3.9.6",
+    "esbuild": "^0.28.2",
+    "prettier": "^3.9.9",
     "three": "0.160.1",
     "wrangler": "^4.135.0"
   },
