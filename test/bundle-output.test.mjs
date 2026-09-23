@@ -529,6 +529,29 @@ test("estate map artwork is hashed, responsive and under 200 KiB combined", asyn
   assert.ok(total <= 200 * 1024);
 });
 
+test("the stylesheet is published minified", async () => {
+  const cssName = (await readdir(path.join(distDir, "css"))).find((name) => /^styles\.[a-f0-9]{8}\.css$/.test(name));
+  const css = await readFile(path.join(distDir, "css", cssName), "utf8");
+  const source = await readFile(path.join(projectRoot, "styles.css"), "utf8");
+  assert.ok(css.length < source.length * 0.9, `${css.length} bytes from ${source.length} of source`);
+  assert.equal(css.trimEnd().split("\n").length, 1, "minified CSS keeps no line breaks");
+  assert.doesNotMatch(css, /\/\*/, "minified CSS keeps no comments");
+});
+
+test("hosting icons and the nested security.txt are published intact", async () => {
+  for (const file of [
+    "favicon.ico",
+    "apple-touch-icon.png",
+    "icon-192.png",
+    "icon-512.png",
+    "icon-maskable-512.png",
+    "manifest.webmanifest",
+    ".well-known/security.txt",
+  ]) {
+    assert.deepEqual(await readFile(path.join(distDir, file)), await readFile(path.join(projectRoot, file)), file);
+  }
+});
+
 test("sitemap lastmod follows the page's dateModified rather than the build date", async () => {
   const sitemap = await readFile(path.join(distDir, "sitemap.xml"), "utf8");
   const dateModified = (await readFile(path.join(projectRoot, "index.md"), "utf8")).match(

@@ -25,7 +25,6 @@ import {
   MirroredRepeatWrapping,
   Raycaster,
   RepeatWrapping,
-  Scene,
   Sphere,
   SphereGeometry,
   SRGBColorSpace,
@@ -44,7 +43,6 @@ import {
   createSceneResizeController,
   createShaderWarmup,
   createVisitorHold,
-  hasMeaningfulScalarChange,
 } from "./runtime.js";
 import {
   createSceneSubsystemRegistry,
@@ -80,8 +78,6 @@ function setSrgbTexture(texture) {
       groundHeight: groundHeight,
       smoothstep01: smoothstep01,
       supportsWebGL: supportsWebGL,
-      wrappedDistance: wrappedDistance,
-      wrap01: wrap01,
       GROUND_SURFACE_MATERIAL: GROUND_SURFACE_MATERIAL,
       TOWER_SURFACE_MATERIALS: TOWER_SURFACE_MATERIALS,
       PLANT_PALETTE: plantPalette,
@@ -273,19 +269,16 @@ function setSrgbTexture(texture) {
     const cameraTour = tourInterval ? createCameraTour({ camera: cinematic, interval: tourInterval,
       invalidate: () => frameScheduler?.invalidate() }) : null;
     if (cameraTour) subsystemRegistry.register({ dispose: () => cameraTour.dispose() });
-    function isLowPower() {
-      return state.profile.isLow;
-    }
-    function chooseAnisotropy(arg53, arg54) {
-      const tmpV26 = state.profile.anisotropy || {
-        min: arg53,
-        max: arg54,
+    function chooseAnisotropy(minimum, maximum) {
+      const profileRange = state.profile.anisotropy || {
+        min: minimum,
+        max: maximum,
       };
-      const result84 = Math.max(arg53, tmpV26.min ?? arg53);
-      const result85 = Math.min(arg54, tmpV26.max ?? arg54);
+      const lowPowerAnisotropy = Math.max(minimum, profileRange.min ?? minimum);
+      const fullAnisotropy = Math.min(maximum, profileRange.max ?? maximum);
       return Math.max(
         1,
-        Math.min(renderer.capabilities.getMaxAnisotropy(), state.lowPower ? result84 : result85),
+        Math.min(renderer.capabilities.getMaxAnisotropy(), state.lowPower ? lowPowerAnisotropy : fullAnisotropy),
       );
     }
     function createMarbleMaterial(textures = {}) {
@@ -396,9 +389,6 @@ function setSrgbTexture(texture) {
       (skyShell.material.depthWrite = !1),
       atmosphereSystem.root.add(skyShell));
     atmosphereSystem.setSkyMaterial(skyShell.material);
-    // The retired 400-stamp solar texture consumed five random values per stamp.
-    // Preserve the downstream terrain/cloud seed sequence during this bounded edit.
-    for (let solarSeedOffset = 0; solarSeedOffset < 2000; solarSeedOffset += 1) Math.random();
     const solarBody = createSolarBody({
       parent: atmosphereSystem.root, camera,
       position: new Vector3(...WORLD.SUN_POSITION), profile: state.profile,
@@ -421,12 +411,12 @@ function setSrgbTexture(texture) {
     const environmentRoot = environmentSystem.root;
     const circleGeometry = new CircleGeometry(WORLD.GROUND_RADIUS, circleSegments, 0, 2 * Math.PI),
       groundPositions = circleGeometry.attributes.position;
-    for (let num425 = 0; num425 < groundPositions.count; num425 += 1) {
-      const result56 = groundPositions.getX(num425),
-        result57 = groundPositions.getY(num425);
+    for (let vertexIndex = 0; vertexIndex < groundPositions.count; vertexIndex += 1) {
+      const localX = groundPositions.getX(vertexIndex),
+        localY = groundPositions.getY(vertexIndex);
       // CircleGeometry's local +Y becomes world -Z after its -X quarter turn.
       // Sample in world coordinates so fallback assets seat on this surface.
-      groundPositions.setZ(num425, groundHeight(result56, -result57));
+      groundPositions.setZ(vertexIndex, groundHeight(localX, -localY));
     }
     circleGeometry.computeVertexNormals();
     let groundSurface = null;
@@ -778,26 +768,26 @@ function setSrgbTexture(texture) {
       });
     }
     function cloudViewFade(
-      arg126,
-      arg127,
-      arg128,
-      arg129,
-      arg130,
-      arg131 = 0.92,
+      point,
+      fadeStartDistance,
+      fadeDistanceRange,
+      sightlineClearance,
+      sightlineFadeRange,
+      sightlineExtent = 0.92,
       minOpacity = 0.14,
     ) {
-      const result91 = cloudCameraVector.copy(arg126).distanceTo(camera.position),
-        result92 = clamp01((result91 - arg127) / arg128);
+      const cameraDistance = cloudCameraVector.copy(point).distanceTo(camera.position),
+        distanceFade = clamp01((cameraDistance - fadeStartDistance) / fadeDistanceRange);
       cloudViewVector.copy(cloudLookTarget).sub(camera.position);
-      const result93 = cloudViewVector.length();
-      if (!(result93 > 1e-3)) return result92;
-      (cloudViewVector.multiplyScalar(1 / result93),
-        cloudOffsetVector.copy(arg126).sub(camera.position));
-      const result94 = cloudOffsetVector.dot(cloudViewVector);
-      if (result94 <= 0 || result94 >= result93 * arg131) return result92;
-      const result95 = cloudOffsetVector.addScaledVector(cloudViewVector, -result94).length(),
-        result96 = clamp01((result95 - arg129) / arg130);
-      return Math.max(minOpacity, Math.min(result92, result96));
+      const sightlineLength = cloudViewVector.length();
+      if (!(sightlineLength > 1e-3)) return distanceFade;
+      (cloudViewVector.multiplyScalar(1 / sightlineLength),
+        cloudOffsetVector.copy(point).sub(camera.position));
+      const alongSightline = cloudOffsetVector.dot(cloudViewVector);
+      if (alongSightline <= 0 || alongSightline >= sightlineLength * sightlineExtent) return distanceFade;
+      const sightlineOffset = cloudOffsetVector.addScaledVector(cloudViewVector, -alongSightline).length(),
+        sightlineFade = clamp01((sightlineOffset - sightlineClearance) / sightlineFadeRange);
+      return Math.max(minOpacity, Math.min(distanceFade, sightlineFade));
     }
     function applySceneSize({ width, height }) {
       qualityState.holdSampling();
@@ -829,9 +819,9 @@ function setSrgbTexture(texture) {
         };
       },
     });
-    // viewport.height is refreshed inside tmpV89 (the resize handler) on every
-    // resize, so reading it inside the scroll handler avoids a layout-flushing
-    // window.innerHeight access per scroll event.
+    // viewport.height is refreshed inside applySceneSize (the resize handler)
+    // on every resize, so reading it inside the scroll handler avoids a
+    // layout-flushing window.innerHeight access per scroll event.
     const onWindowResize = () => resizeController.resize();
     const onFontsLoaded = () => { cinematicArea = measureCinematicArea(viewport.width, viewport.height); invalidateContent(); };
     document.fonts?.addEventListener?.("loadingdone", onFontsLoaded);
@@ -849,7 +839,7 @@ function setSrgbTexture(texture) {
     let debugRenderWindowStart = null;
     let firstFrameDrawn = false;
     function updateSceneFrame({
-      deltaSeconds: result97,
+      deltaSeconds,
       elapsedSeconds: elapsedTime,
       sampleDeltaSeconds,
       timestamp,
@@ -866,32 +856,32 @@ function setSrgbTexture(texture) {
       if (adaptiveProfile) applyActiveQualityProfile(adaptiveProfile, "adaptive");
       const activeProfile = state.profile,
         cameraProfile = compositionState.profile.camera || fallbackComposition.camera,
-        tmpV55 = 1;
+        orbitMotionScale = 1;
       viewport.scroll = reducedMotion
         ? viewport.scrollTarget
         : viewport.scroll + 0.025 * (viewport.scrollTarget - viewport.scroll);
-      const tmpV56 = activeProfile.isLow ? 0.055 : 0.06,
-        num490 = elapsedTime * (0.95 * tmpV56) * tmpV55,
-        num491 = 0.09 * Math.sin(3 * num490) + 0.05 * Math.sin(2 * num490),
-        num492 = orbitStartAngle + num490 - num491,
-        num493 = cameraProfile.orbitBase - cameraProfile.orbitScrollDelta * viewport.scroll,
-        num494 =
+      const orbitSpeed = activeProfile.isLow ? 0.055 : 0.06,
+        orbitTravel = elapsedTime * (0.95 * orbitSpeed) * orbitMotionScale,
+        orbitWobble = 0.09 * Math.sin(3 * orbitTravel) + 0.05 * Math.sin(2 * orbitTravel),
+        orbitAngle = orbitStartAngle + orbitTravel - orbitWobble,
+        scrolledOrbitBase = cameraProfile.orbitBase - cameraProfile.orbitScrollDelta * viewport.scroll,
+        orbitHeight =
           cameraProfile.heightBase +
           cameraProfile.heightScrollDelta * viewport.scroll +
-          0.45 * Math.sin(0.28 * elapsedTime) * tmpV55 +
-          0.6 * Math.sin(0.13 * elapsedTime) * tmpV55,
-        num495 = cameraProfile.lookAtBase + cameraProfile.lookAtScrollDelta * viewport.scroll,
-        num496 = cameraProfile.orbitScale * (num493 - cameraProfile.orbitTrim);
+          0.45 * Math.sin(0.28 * elapsedTime) * orbitMotionScale +
+          0.6 * Math.sin(0.13 * elapsedTime) * orbitMotionScale,
+        lookAtHeight = cameraProfile.lookAtBase + cameraProfile.lookAtScrollDelta * viewport.scroll,
+        orbitDistance = cameraProfile.orbitScale * (scrolledOrbitBase - cameraProfile.orbitTrim);
       const tourPhase = cameraTour?.update({ elapsedSeconds: elapsedTime, reducedMotion,
         developer: Boolean(scene.devMode?.active), panelOpen: document.body.hasAttribute("data-panel-open") }) ?? null;
       rendering.postprocessPipeline.setFade?.(cameraTour?.fade ?? 0);
       const cinematicApplied = cinematic.apply({ width: viewport.width, height: viewport.height,
         elapsedSeconds: elapsedTime, reducedMotion, developer: Boolean(scene.devMode?.active), tourPhase, fallbackFov: cameraProfile.fov || 45 });
-      if (scene.devMode?.active && typeof scene.devMode.update === "function") scene.devMode.update(camera, result97);
-      else if (!cinematicApplied) { camera.position.set(Math.cos(num492) * num496, num494, Math.sin(num492) * num496); camera.lookAt(0, num495, 0); }
+      if (scene.devMode?.active && typeof scene.devMode.update === "function") scene.devMode.update(camera, deltaSeconds);
+      else if (!cinematicApplied) { camera.position.set(Math.cos(orbitAngle) * orbitDistance, orbitHeight, Math.sin(orbitAngle) * orbitDistance); camera.lookAt(0, lookAtHeight, 0); }
       cloudAnchor.position.x = camera.position.x;
       cloudAnchor.position.z = camera.position.z;
-      if (cinematicApplied) cloudLookTarget.copy(cinematic.target); else cloudLookTarget.set(0, num495, 0);
+      if (cinematicApplied) cloudLookTarget.copy(cinematic.target); else cloudLookTarget.set(0, lookAtHeight, 0);
       subsystemRegistry.update({
           elapsedSeconds: elapsedTime,
           reducedMotion,

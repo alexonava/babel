@@ -160,6 +160,51 @@ test("estate layers preserve artwork proportions without masking labels", async 
   assert.match(css, /\.scene-entry\[hidden\], \[data-scene-fallback\]\[hidden\] \{ display: none; \}/);
 });
 
+test("paper and estate surfaces are declared once, without retired layers", async () => {
+  const css = await readStyles();
+  // Retired treatments: the loading ritual, the direct-estate homepage, the
+  // hero kicker, and the glass panel card that panels.js keeps only as a
+  // selector fallback. The .scene-home body class no longer scopes any rule,
+  // so a later .scene-home layer cannot quietly override the rules below.
+  for (const retired of [
+    /loading-ritual/,
+    /\.hero-kicker/,
+    /\.scene-home\b/,
+    /\.estate-home(?!-map)\b/,
+    /\.estate-main\b/,
+    /\.estate-identity\b/,
+    /data-estate-fallback/,
+    /\.panel-card\b/,
+    /\.panel-footnote\b/,
+  ]) {
+    assert.doesNotMatch(css, retired);
+  }
+  // Each surface has one top-level block of its own (shared selector lists
+  // aside); media queries only adjust it.
+  for (const selector of [
+    ".panel-parchment",
+    ".panel-parchment__sheet",
+    ".panel-parchment__sheet::before",
+    ".panel-parchment__sheet::after",
+    ".panel-parchment__content",
+    ".panel-parchment__sheet .eyebrow",
+    ".panel-parchment__sheet h2",
+    ".panel-parchment__sheet .panel-body",
+    ".panel-estate",
+    ".estate-map",
+    ".estate-title",
+    ".estate-destination span",
+    ".panel-estate .panel-close",
+    ".not-found .story-shell",
+    ".not-found .story-shell h1",
+    ".not-found .back-link",
+  ]) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const blocks = css.match(new RegExp(`(?<!,\\s*)^${escaped}\\s*\\{`, "gm")) || [];
+    assert.equal(blocks.length, 1, `${selector} has one top-level block`);
+  }
+});
+
 test("external links that open in a new tab declare rel=noopener", async () => {
   const html = await readIndexHtml();
   const externalAnchors = html.match(/<a[^>]*target="_blank"[^>]*>/g) || [];
@@ -244,9 +289,12 @@ test("first-paint hero, action cursors, microcopy, and short-landscape labels st
     /@media \(orientation: landscape\) and \(max-height: 500px\)[\s\S]*?\.btn-icon-label\s*\{[^}]*opacity:\s*1;/,
   );
   assert.match(styles, /\.btn-icon-label\s*\{[^}]*opacity:\s*1;/);
-  assert.match(
-    styles,
-    /\.panel-parchment__sheet\s*\{[^}]*min-height:\s*clamp\(280px, 36vh, 380px\);/,
+  // The one top-level sheet rule holds every paper's height at all widths.
+  assert.match(cssRule(styles, ".panel-parchment__sheet"), /min-height:\s*370px;/);
+  assert.doesNotMatch(
+    styles.replace(/\n\.panel-parchment__sheet\s*\{[^}]*\}/, ""),
+    /\.panel-parchment__sheet\s*\{[^}]*min-height/,
+    "no later or media rule overrides the paper height",
   );
   assert.match(
     styles,
@@ -261,9 +309,12 @@ test("first-paint hero, action cursors, microcopy, and short-landscape labels st
     .map((match) => match[1].match(/(?:^|[;\s])color:\s*([^;]+);/)?.[1])
     .filter(Boolean);
   assert.deepEqual(eyebrowColors, ["#60492e"], "the paper eyebrow ink that renders is #60492e");
+  const paperBody = cssRule(styles, ".panel-parchment__sheet .panel-body");
+  assert.match(paperBody, /color:\s*#211c16;/);
+  assert.match(paperBody, /font:\s*400 17px\/1\.65 var\(--font-body\);/);
   assert.match(
-    styles,
-    /\.panel-parchment__sheet \.panel-footnote\s*\{[^}]*color:\s*#55493a;[^}]*font-size:\s*12px;/,
+    mediaBlock(styles, "(max-width: 600px)"),
+    /\.panel-parchment__sheet \.panel-body\s*\{[^}]*font-size:\s*16px;/,
   );
 });
 
@@ -392,9 +443,11 @@ test("landmarks and heading levels describe the page structure", async () => {
   for (const token of classTokens) {
     assert.match(styles, new RegExp(`\\.${token}(?![\\w-])`), `404 class "${token}" has no styles`);
   }
-  for (const selector of [/\.story-shell h1,\s*\.story-shell h2,\s*\.panel-card h2\s*\{/, /\.story-shell h1,\s*\.story-shell h2\s*\{/]) {
-    assert.match(styles, selector);
-  }
+  // The 404 heading is an h1, so its display face lives on that rule alone.
+  const notFoundHeading = cssRule(styles, ".not-found .story-shell h1");
+  assert.match(notFoundHeading, /font-family:\s*var\(--font-display\);/);
+  assert.match(notFoundHeading, /font-weight:\s*500;/);
+  assert.doesNotMatch(styles, /\.story-shell h2/);
 });
 
 test("social previews describe the share image", async () => {
@@ -590,14 +643,23 @@ test("dialog polish keeps readable ink, touch cues and paper-safe controls", asy
   assert.ok(contrast("#211c16", "#e8ddc8") >= 4.5);
 
   const touch = mediaBlock(styles, "(hover: none), (pointer: coarse)");
-  assert.match(touch, /\.scene-home \.panel-estate \.estate-destination span\s*\{[^}]*text-decoration:\s*underline;[^}]*rgba\(72, 53, 30, 0\.35\)/);
+  assert.match(touch, /\.estate-destination span\s*\{[^}]*text-decoration:\s*underline;[^}]*rgba\(72, 53, 30, 0\.35\)/);
   assert.match(touch, /\.panel-estate \.estate-destination:active\s*\{[^}]*background:\s*rgba\(78, 54, 26, 0\.08\);/);
+  // The touch underline shares the base label rule's specificity, so it must
+  // follow that rule in source order to keep winning.
+  const baseLabel = styles.search(/^\.estate-destination span\s*\{/m);
+  const touchLabel = styles.search(
+    /@media \(hover: none\), \(pointer: coarse\)\s*\{[^@]*?\.estate-destination span\s*\{[^}]*text-decoration:\s*underline;/,
+  );
+  assert.ok(baseLabel >= 0 && touchLabel > baseLabel, "the touch underline follows the base label rule");
   const unscopedHover = styles
     .replace(/@media \(hover: hover\)\s*\{[^{}]*\{[^}]*\}\s*\}/g, "")
     .match(/\.estate-destination:hover span/);
   assert.equal(unscopedHover, null, "the map underline follows real hover only");
 
-  assert.match(styles, /:is\(\.estate-home, \.scene-home\) \.panel-parchment \.panel-close \{ margin: 30px; \}/);
+  // 30px clears the 24px deckled edge, so Back sits wholly on the paper.
+  assert.match(cssRule(styles, ".panel-parchment .panel-back"), /margin:\s*30px;/);
+  assert.doesNotMatch(styles, /\.panel-parchment \.panel-close\s*\{/, "no second margin rule for Back");
   const glow = cssRule(styles, ".bottom-btn--icon::before");
   assert.match(glow, /z-index:\s*-1;/);
   assert.match(glow, /pointer-events:\s*none;/);

@@ -1,4 +1,4 @@
-import { build } from "esbuild";
+import { build, transform } from "esbuild";
 import { copyFile, cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -29,8 +29,13 @@ const SPLIT_OUTDIR = join(__dirname, ".cache", "split-scripts");
 const STATIC_FILES = [
   "LICENSE",
   "favicon.svg",
+  "favicon.ico",
   "icon.svg",
   "icon-maskable.svg",
+  "apple-touch-icon.png",
+  "icon-192.png",
+  "icon-512.png",
+  "icon-maskable-512.png",
   "manifest.webmanifest",
   "og.png",
   "robots.txt",
@@ -39,6 +44,7 @@ const STATIC_FILES = [
   "index.md",
   "_headers",
   "_redirects",
+  ".well-known/security.txt",
 ];
 const STATIC_FILE_ALIASES = [{ source: "site-agents.md", destination: "AGENTS.md" }];
 const STATIC_DIRS = ["fonts", "images"];
@@ -63,7 +69,9 @@ export const BUILD_INPUT_FILES = [
   "package.json",
   "package-lock.json",
 ];
-export const BUILD_INPUT_DIRS = ["src", ...STATIC_DIRS, "tools"];
+// The watcher follows root files without recursion, so a nested static file's
+// directory is watched as a whole.
+export const BUILD_INPUT_DIRS = ["src", ...STATIC_DIRS, ".well-known", "tools"];
 
 const scriptBuildOptions = (entry, split = false) => ({
   entryPoints: [join(__dirname, entry)],
@@ -276,13 +284,24 @@ async function writePayload(DIST_DIR) {
       `/images/${name.replace(/\.webp$/, `.${sha8(bytes)}.webp`)}`,
     );
   }
-  const cssHash = sha8(cssSrc);
+  // Minify after rewriting, then hash the published bytes. Without a browser
+  // target esbuild lowers no syntax, and url() paths pass through unresolved.
+  const { code: css } = await transform(cssSrc, {
+    loader: "css",
+    minify: true,
+    logLevel: "warning",
+  });
+  const cssHash = sha8(css);
   const cssHashedName = `styles.${cssHash}.css`;
   const cssHashedUrl = `/css/${cssHashedName}`;
-  await writeFile(join(DIST_CSS_DIR, cssHashedName), cssSrc);
+  await writeFile(join(DIST_CSS_DIR, cssHashedName), css);
 
+  // copyFile creates no directories; .well-known/security.txt needs its own.
   await Promise.all(
-    STATIC_FILES.map((file) => copyFile(join(__dirname, file), join(DIST_DIR, file))),
+    STATIC_FILES.map(async (file) => {
+      await mkdir(dirname(join(DIST_DIR, file)), { recursive: true });
+      await copyFile(join(__dirname, file), join(DIST_DIR, file));
+    }),
   );
   await Promise.all(
     STATIC_FILE_ALIASES.map(({ source, destination }) =>

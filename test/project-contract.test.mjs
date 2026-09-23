@@ -330,6 +330,99 @@ test("Cloudflare audit is scheduled, manual, least-privilege, and sanitized", as
   );
 });
 
+test("Cloudflare audit checks dashboard-owned edge settings outside the rollback path", async () => {
+  const workflow = await readProjectFile(".github/workflows/cloudflare-audit.yml");
+  const smoke = await readProjectFile(".github/scripts/smoke-pages.sh");
+  const deploy = await readProjectFile(".github/workflows/deploy.yml");
+  const operations = await readProjectFile("OPERATIONS.md");
+
+  const edgeStart = workflow.indexOf("\n  edge-settings:");
+  assert.ok(edgeStart > workflow.indexOf("\n  audit:"), "edge checks run as a separate job");
+  const edge = workflow.slice(edgeStart);
+  assert.match(edge, /^\s+edge-settings:\r?\n\s+if:\s*github\.ref == 'refs\/heads\/main'/);
+  assert.match(edge, /\n\s+permissions:\s*\{\}\r?\n/);
+  assert.doesNotMatch(edge, /secrets\.|environment:/, "edge checks need no credentials");
+  assert.match(edge, /browser_ua="Mozilla\/5\.0 [^"\r\n]*Chrome\/[^"\r\n]*"/);
+  assert.match(edge, /--user-agent "\$browser_ua"/);
+  assert.match(edge, /--header 'Accept: text\/html,application\/xhtml\+xml/);
+  assert.match(edge, /--max-redirs 0/);
+
+  // Email obfuscation, injected third-party scripts and appended no-store.
+  assert.match(edge, /grep -Fq 'href="mailto:alexonava@gmail\.com"'/);
+  assert.match(edge, /! grep -Fq '\/cdn-cgi\/l\/email-protection'/);
+  assert.match(edge, /grep -oiE '<script\[\^>\]\*>'/);
+  assert.match(edge, /\[ "\$host" != "\$origin_host" \]/);
+  assert.match(edge, /html_cache_control,,\}" == \*no-store\*/);
+
+  // Fingerprinted assets: app, CSS, the named scene entry and its static chunks.
+  assert.match(edge, /\/scripts\/app\\\.\[a-f0-9\]\{8\}\\\.js/);
+  assert.match(edge, /\/css\/styles\\\.\[a-f0-9\]\{8\}\\\.css/);
+  assert.match(edge, /name="babel:scene-script"/);
+  assert.match(
+    edge,
+    /\(from\|import\)\[\[:space:\]\]\*/,
+    "only static imports name checked chunks",
+  );
+  assert.match(edge, /\^\/scripts\/scene\\\.shared\\\.\[a-f0-9\]\{8\}\\\.js\$/);
+  assert.match(edge, /cache_control,,\}" != \*immutable\*/);
+  assert.match(edge, /cache_control,,\}" == \*no-store\*/);
+
+  // A fingerprinted GLB must come back compressed.
+  assert.match(edge, /\/images\/architecture\/tower-high\\\.\[a-f0-9\]\{8\}\\\.glb/);
+  assert.match(edge, /--header 'Accept-Encoding: br, gzip'/);
+  assert.match(edge, /200:br \| 200:gzip\)/);
+
+  // Every failure is collected and reported before the job fails.
+  assert.match(edge, /failures\+=\(/);
+  assert.match(edge, /Cloudflare dashboard checklist in OPERATIONS\.md/);
+  assert.match(edge, /if \[ "\$\{#failures\[@\]\}" -gt 0 \]; then[\s\S]*?exit 1/);
+  assert.match(edge, /GITHUB_STEP_SUMMARY/);
+
+  // Rollback cannot fix dashboard settings, so none of this reaches the smoke path.
+  for (const rollbackPath of [smoke, deploy]) {
+    assert.doesNotMatch(
+      rollbackPath,
+      /no-store|email-protection|Accept-Encoding|cloudflareinsights/i,
+    );
+    assert.doesNotMatch(rollbackPath, /cloudflare-audit|edge-settings/);
+  }
+
+  const checklistStart = operations.search(/^## Cloudflare dashboard checklist\r?$/m);
+  assert.ok(checklistStart > 0, "OPERATIONS must keep the Cloudflare dashboard checklist");
+  const checklistEnd = operations.indexOf("\n## ", checklistStart + 1);
+  const checklist = operations.slice(
+    checklistStart,
+    checklistEnd === -1 ? undefined : checklistEnd,
+  );
+  for (const item of [
+    /no-store/,
+    /Email Address Obfuscation/,
+    /<!--email_off-->/,
+    /Web Analytics/,
+    /Observatory/,
+    /model\/gltf-binary/,
+    /application\/octet-stream/,
+    /HTTP\/3/,
+    /AI crawlers/,
+    /HSTS preload/,
+    /`edge-settings` audit job asserts items 1–4/,
+  ]) {
+    assert.match(checklist, item);
+  }
+  assert.match(operations, /These checks deliberately stay out of `smoke-pages\.sh`/);
+});
+
+test("OPERATIONS separates CI Lighthouse from the local live-scene gate", async () => {
+  const operations = await readProjectFile("OPERATIONS.md");
+
+  assert.match(operations, /CI Lighthouse runs on GPU-less GitHub-hosted runners/);
+  assert.match(
+    operations,
+    /The CI check therefore audits the static poster delivery path, not the live scene\./,
+  );
+  assert.match(operations, /measuring it locally on GPU hardware for each release/);
+});
+
 test("canonical Pages hostname workflow is exact, protected, and idempotent", async () => {
   const workflow = await readProjectFile(".github/workflows/cloudflare-canonical-hostname.yml");
   const script = await readProjectFile(
@@ -396,21 +489,39 @@ test("static headers separate immutable fingerprints from revalidated stable ass
     /^https?:\/\//m,
     "absolute URL patterns are not supported in the Pages _headers file",
   );
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   for (const stablePath of [
     "/favicon.svg",
+    "/favicon.ico",
     "/icon.svg",
     "/icon-maskable.svg",
+    "/apple-touch-icon.png",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/icon-maskable-512.png",
     "/manifest.webmanifest",
     "/og.png",
     "/robots.txt",
     "/sitemap.xml",
     "/LICENSE",
+    "/.well-known/security.txt",
     "/fonts/*",
   ]) {
-    const escapedPath = stablePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     assert.match(
       headers,
-      new RegExp(`${escapedPath}\\r?\\n\\s+Cache-Control: public, max-age=604800, must-revalidate`),
+      new RegExp(
+        `^${escape(stablePath)}\\r?\\n\\s+Cache-Control: public, max-age=604800, must-revalidate`,
+        "m",
+      ),
+    );
+  }
+  for (const textPath of ["/LICENSE", "/.well-known/security.txt"]) {
+    assert.match(
+      headers,
+      new RegExp(
+        `^${escape(textPath)}\\r?\\n\\s+Cache-Control[^\\r\\n]*\\r?\\n\\s+Content-Type: text/plain; charset=utf-8`,
+        "m",
+      ),
     );
   }
   for (const fingerprintedPath of [
@@ -418,12 +529,187 @@ test("static headers separate immutable fingerprints from revalidated stable ass
     "/scripts/app.*.js",
     "/scripts/scene.*.js",
   ]) {
-    const escapedPath = fingerprintedPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     assert.match(
       headers,
-      new RegExp(`${escapedPath}\\r?\\n\\s+Cache-Control: public, max-age=31536000, immutable`),
+      new RegExp(
+        `${escape(fingerprintedPath)}\\r?\\n\\s+Cache-Control: public, max-age=31536000, immutable`,
+      ),
     );
   }
+  // Fingerprinted artwork and models sit beside their revalidated stable
+  // copies, so these rules detach the /images/* Cache-Control they also match.
+  for (const fingerprintedPath of [
+    "/images/:name.:hash.webp",
+    "/images/architecture/:name.:hash.glb",
+  ]) {
+    assert.match(
+      headers,
+      new RegExp(
+        `^${escape(fingerprintedPath)}\\r?\\n\\s+! Cache-Control\\r?\\n\\s+Cache-Control: public, max-age=31536000, immutable`,
+        "m",
+      ),
+    );
+  }
+});
+
+// Cloudflare Pages applies every matching _headers rule in file order: "! Name"
+// deletes the value so far and a repeated header joins with ", ". A splat
+// matches any characters; a :placeholder matches any except "/".
+function parsePagesHeaders(text) {
+  const rules = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("/")) {
+      const pattern = line
+        .split("*")
+        .map((part) => part.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&"))
+        .join(".*")
+        .replace(/:[A-Za-z]\w*/g, "[^/]+");
+      rules.push({ pattern: new RegExp(`^${pattern}$`), set: [], unset: [] });
+    } else if (line.startsWith("! ")) {
+      rules.at(-1).unset.push(line.slice(2).trim().toLowerCase());
+    } else {
+      const colon = line.indexOf(":");
+      const name = line.slice(0, colon).trim().toLowerCase();
+      rules.at(-1).set.push([name, line.slice(colon + 1).trim()]);
+    }
+  }
+  return (pathname) => {
+    const headers = new Map();
+    const declared = new Set();
+    for (const rule of rules.filter(({ pattern }) => pattern.test(pathname))) {
+      for (const name of rule.unset) headers.delete(name);
+      for (const [name, value] of rule.set) {
+        const joined = declared.has(name) && headers.has(name);
+        headers.set(name, joined ? `${headers.get(name)}, ${value}` : value);
+        declared.add(name);
+      }
+    }
+    return headers;
+  };
+}
+
+test("Pages header rules resolve one cache policy for stable and fingerprinted paths", async () => {
+  const headersFor = parsePagesHeaders(await readProjectFile("_headers"));
+  const cacheControl = (pathname) => headersFor(pathname).get("cache-control");
+  const immutable = "public, max-age=31536000, immutable";
+  const revalidated = "public, max-age=604800, must-revalidate";
+  const hash = "0123abcd";
+
+  for (const pathname of ["/index.html", "/404.html"]) {
+    assert.equal(cacheControl(pathname), "public, max-age=0, must-revalidate", pathname);
+  }
+  for (const pathname of [
+    `/css/styles.${hash}.css`,
+    `/scripts/app.${hash}.js`,
+    `/scripts/scene.${hash}.js`,
+    `/scripts/scene.shared.${hash}.js`,
+    `/scripts/scene.developer-tools.${hash}.js`,
+  ]) {
+    assert.equal(cacheControl(pathname), immutable, pathname);
+  }
+  for (const pathname of [
+    "/favicon.ico",
+    "/apple-touch-icon.png",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/icon-maskable-512.png",
+    "/.well-known/security.txt",
+    "/LICENSE",
+    "/fonts/instrument-sans-400.woff2",
+  ]) {
+    assert.equal(cacheControl(pathname), revalidated, pathname);
+  }
+  for (const pathname of ["/LICENSE", "/.well-known/security.txt", "/llms.txt"]) {
+    assert.equal(headersFor(pathname).get("content-type"), "text/plain; charset=utf-8", pathname);
+  }
+
+  // Every source image keeps a revalidated stable URL. The build publishes
+  // name.HASH.ext copies of top-level artwork and of the architecture models;
+  // only those are immutable, while nested material maps are never hashed.
+  let fingerprintable = 0;
+  const images = path.join(projectRoot, "images");
+  for (const entry of await readdir(images, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const relative = path
+      .relative(images, path.join(entry.parentPath, entry.name))
+      .split(path.sep)
+      .join("/");
+    const stable = `/images/${relative}`;
+    const hashed = stable.replace(/\.(\w+)$/, `.${hash}.$1`);
+    const hashedByBuild = /^(?:[^/]+\.webp|architecture\/[^/]+\.glb)$/.test(relative);
+    fingerprintable += hashedByBuild;
+    assert.equal(cacheControl(stable), revalidated, stable);
+    assert.equal(cacheControl(hashed), hashedByBuild ? immutable : revalidated, hashed);
+    assert.equal(headersFor(hashed).get("x-content-type-options"), "nosniff", hashed);
+  }
+  assert.ok(fingerprintable >= 23, "posters, paper, estate maps, nav icons and 12 models");
+});
+
+test("hosting files publish security.txt, raster icons and a stable manifest id", async () => {
+  const buildScript = await readProjectFile("build.mjs");
+  const indexHtml = await readProjectFile("index.html");
+  const manifest = JSON.parse(await readProjectFile("manifest.webmanifest"));
+  const securityTxt = await readProjectFile(".well-known/security.txt");
+
+  // RFC 9116 requires Contact and Expires, recommended under a year out. The
+  // check fails a month early so the renewal ships while the live file is valid.
+  assert.match(securityTxt, /^Contact: mailto:alexonava@gmail\.com$/m);
+  assert.match(securityTxt, /^Preferred-Languages: en$/m);
+  assert.match(securityTxt, /^Canonical: https:\/\/alexnava\.me\/\.well-known\/security\.txt$/m);
+  const expires = securityTxt.match(/^Expires: (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)$/m);
+  assert.ok(expires, "security.txt needs an RFC 3339 UTC Expires field");
+  const day = 24 * 60 * 60 * 1000;
+  const remaining = Date.parse(expires[1]) - Date.now();
+  assert.ok(
+    remaining > 30 * day,
+    `security.txt expires ${expires[1]}: move Expires in .well-known/security.txt up to a year ahead`,
+  );
+  assert.ok(remaining <= 366 * day, "security.txt Expires should stay under a year ahead");
+  assert.match(buildScript, /"\.well-known\/security\.txt"/);
+
+  for (const [file, size, opaque] of [
+    ["apple-touch-icon.png", 180, true],
+    ["icon-192.png", 192, false],
+    ["icon-512.png", 512, false],
+    ["icon-maskable-512.png", 512, true],
+  ]) {
+    const png = await readFile(path.join(projectRoot, file));
+    assert.equal(png.toString("latin1", 1, 4), "PNG", file);
+    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [size, size], file);
+    // Full-bleed icons carry no alpha: iOS and maskable launchers crop them.
+    if (opaque) {
+      assert.ok([2, 3].includes(png[25]) && !png.includes("tRNS"), `${file} must be opaque`);
+    }
+    assert.match(buildScript, new RegExp(`"${file.replaceAll(".", "\\.")}"`));
+  }
+  const ico = await readFile(path.join(projectRoot, "favicon.ico"));
+  assert.deepEqual([ico.readUInt16LE(0), ico.readUInt16LE(2)], [0, 1], "favicon.ico is an icon");
+  const icoSizes = Array.from({ length: ico.readUInt16LE(4) }, (_, i) => ico[6 + i * 16]);
+  assert.deepEqual(
+    icoSizes.sort((a, b) => a - b),
+    [16, 32, 48],
+  );
+  assert.match(buildScript, /"favicon\.ico"/);
+
+  assert.equal(manifest.id, "/");
+  assert.deepEqual(
+    manifest.icons.map(({ src, type, sizes, purpose }) => [src, type, sizes, purpose]),
+    [
+      ["/icon.svg", "image/svg+xml", "any", "any"],
+      ["/icon-maskable.svg", "image/svg+xml", "any", "maskable"],
+      ["/icon-192.png", "image/png", "192x192", "any"],
+      ["/icon-512.png", "image/png", "512x512", "any"],
+      ["/icon-maskable-512.png", "image/png", "512x512", "maskable"],
+    ],
+  );
+  // The ICO fallback precedes the SVG, which browsers then prefer.
+  assert.match(
+    indexHtml,
+    /<link rel="icon" href="\/favicon\.ico" sizes="32x32" \/>\s*<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml" \/>/,
+  );
+  assert.match(indexHtml, /<link rel="apple-touch-icon" href="\/apple-touch-icon\.png" \/>/);
 });
 
 test("production deploy is workflow-owned and explicitly publishes main", async () => {

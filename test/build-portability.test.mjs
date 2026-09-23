@@ -23,14 +23,19 @@ test("CSS asset URLs and bytes are portable across checkout line endings", async
   try {
     await cp(path.join(projectRoot, "build.mjs"), path.join(fixture, "build.mjs"));
     await cp(path.join(projectRoot, "tools"), path.join(fixture, "tools"), { recursive: true });
-    for (const dir of ["src", "fonts", "images/architecture"]) {
+    for (const dir of ["src", "fonts", "images/architecture", ".well-known"]) {
       await mkdir(path.join(fixture, dir), { recursive: true });
     }
     for (const file of [
       "LICENSE",
       "favicon.svg",
+      "favicon.ico",
       "icon.svg",
       "icon-maskable.svg",
+      "apple-touch-icon.png",
+      "icon-192.png",
+      "icon-512.png",
+      "icon-maskable-512.png",
       "manifest.webmanifest",
       "og.png",
       "robots.txt",
@@ -39,6 +44,7 @@ test("CSS asset URLs and bytes are portable across checkout line endings", async
       "index.md",
       "_headers",
       "_redirects",
+      ".well-known/security.txt",
       "site-agents.md",
     ]) {
       await writeFile(path.join(fixture, file), "fixture\n");
@@ -104,8 +110,16 @@ test("CSS asset URLs and bytes are portable across checkout line endings", async
       );
     }
 
+    assert.ok(lf.bytes.length < Buffer.byteLength(lfSource), "the stylesheet is minified");
+    assert.equal(
+      await readFile(path.join(fixture, "dist", ".well-known", "security.txt"), "utf8"),
+      "fixture\n",
+      "nested static files are copied into their own directory",
+    );
+
     const edited = await buildCss(`${lfSource}\n.portability-fixture { color: #123456; }\n`);
     assert.notEqual(edited.name, lf.name, "a real CSS change must still invalidate its URL");
+    assert.ok(edited.bytes.toString("utf8").includes(".portability-fixture{color:#123456}"));
     const publishedHtml = await readFile(path.join(fixture, "dist", "index.html"));
     await writeFile(path.join(fixture, "src", "app.js"), "export const broken = ;");
     await assert.rejects(
