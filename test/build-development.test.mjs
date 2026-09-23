@@ -8,7 +8,7 @@ import { publishBuild, validateOutputDirectory } from "../tools/build-output.mjs
 import { createRebuildQueue, isBuildInput, startWatching } from "../tools/watch.mjs";
 import { assertPortAvailable, parseDevOptions } from "../tools/dev.mjs";
 import { spawnOwned } from "../tools/owned-process.mjs";
-import { BUILD_INPUT_FILES, BUILD_INPUT_DIRS } from "../build.mjs";
+import { BUILD_INPUT_FILES, BUILD_INPUT_DIRS, contentDateModified } from "../build.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scratchRoot = path.join(projectRoot, ".tmp-preview-review");
@@ -165,6 +165,20 @@ test("watch classification covers every published input and ignores generated ou
   ]) {
     assert.equal(isBuildInput(file, inputs), false, `${file} must not create a rebuild loop`);
   }
+});
+
+test("sitemap lastmod reads dateModified only from index.md front matter", () => {
+  assert.equal(
+    contentDateModified("---\ntitle: A\ndateModified: 2026-09-11\n---\n# A\n"),
+    "2026-09-11",
+  );
+  assert.equal(
+    contentDateModified('\uFEFF---\r\ndateModified: "2026-01-02"\r\n---\r\n'),
+    "2026-01-02",
+  );
+  assert.equal(contentDateModified("fixture\n"), undefined, "missing front matter falls back");
+  assert.equal(contentDateModified("---\ntitle: A\n---\ndateModified: 2026-09-11\n"), undefined);
+  assert.equal(contentDateModified("---\ndateModified: September\n---\n"), undefined);
 });
 
 test(

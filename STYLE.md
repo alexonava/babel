@@ -54,11 +54,11 @@ The direct-estate homepage and the earlier pair of About/Contact entry icons rem
 - Lift shadow detail through the existing cool fill and hemisphere lighting. Preserve the warm sun and lantern accents, dark recesses and ground contact; do not add lights or flatten the scene with ambient brightness.
 - The nebula is a still, restrained blue-violet field with dark dust and a faint peach core. Its small star cluster reuses the existing star population; sky and stars share dust placement and attenuation. Keep it behind the identity and architecture without turning it into an animated foreground effect.
 - Reuse the sky shell and star draw with no extra render pass. High uses three nebula noise octaves, balanced two; low and inactive film/fallback paths retain the quiet baseline sky. Existing cloud motion and reduced-motion behavior remain separate from the still nebula.
-- Keep the current terrain textures and their high/balanced resolutions. Compare live views before refreshing landscape and portrait posters; the final static image must represent the accepted live appearance.
+- Keep the current terrain textures and their high/balanced resolutions. Compare live views before refreshing landscape and portrait posters and the og.png share card; each final static image must represent the accepted live appearance.
 
 ## Cinematic UI baseline
 
-- Preserve the preferred original name treatment: Cormorant at 700 weight, #f7f1ea, and its soft halo. Parchment headings retain the refined 500 weight. Keep the existing title scale, line heights, and copy.
+- Preserve the preferred original name treatment: Cormorant at 700 weight, #f7f1ea, and its soft halo. The name renders the variable font's true 700 master with synthetic bold disabled. Parchment headings retain the refined 500 weight. Keep the existing title scale, line heights, and copy.
 - Foreground hierarchy is the preserved warm-white name, soft off-white intro, pale stone navigation labels, then neutral-gray metadata. Gold belongs to the sun and material details, not secondary UI text. UI controls use the shared surface/line/focus tokens; avoid bright blue chrome or glossy buttons.
 - The camera tour runs without a visible shot label or control strip. Preserve default five-second cycling and reduced-motion/panel pauses; comparison timing remains available through URL parameters.
 - Keep model icons at 80% brightness, baked into the images without an additional CSS brightness filter. Labels stay visible and independent of the image; hover lift remains restrained.

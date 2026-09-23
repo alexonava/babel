@@ -29,6 +29,21 @@ export function cinematicSafeArea(width, height, hero, nav) {
     height: Math.max(120, bottom - top),
   };
 }
+// Page-coordinate layout box from the offsetParent chain. Unlike
+// getBoundingClientRect it ignores scroll and CSS transforms (the hero's reveal
+// and scroll fade), so those cannot reframe the camera. Not for fixed elements.
+export function layoutRect(element) {
+  if (!element) return undefined;
+  let left = 0,
+    top = 0;
+  for (let node = element; node; node = node.offsetParent) {
+    left += node.offsetLeft || 0;
+    top += node.offsetTop || 0;
+  }
+  const width = element.offsetWidth || 0,
+    height = element.offsetHeight || 0;
+  return { left, top, right: left + width, bottom: top + height, width, height, x: left, y: top };
+}
 // Largest dolly-in fraction of the fitted distance within one shot.
 export const PUSH_IN = 0.045;
 export function createCinematicCamera({

@@ -354,3 +354,12 @@ test("estate map artwork is hashed, responsive and under 200 KiB combined", asyn
   }
   assert.ok(total <= 200 * 1024);
 });
+
+test("sitemap lastmod follows the page's dateModified rather than the build date", async () => {
+  const sitemap = await readFile(path.join(distDir, "sitemap.xml"), "utf8");
+  const dateModified = (await readFile(path.join(projectRoot, "index.md"), "utf8")).match(
+    /^dateModified: (\d{4}-\d{2}-\d{2})\r?$/m,
+  )[1];
+  assert.match(sitemap, new RegExp(`<lastmod>${dateModified}</lastmod>`));
+  assert.doesNotMatch(sitemap, /<changefreq>|<priority>/, "search engines ignore these hints");
+});

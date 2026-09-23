@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # The scene relies on r160 legacy light units (renderer._useLegacyLights),
+      # which later releases remove; upgrade three only with a deliberate visual re-review.
+      - dependency-name: "three"
 
   - package-ecosystem: github-actions
     directory: /

@@ -200,6 +200,14 @@ function createEvent(type, properties = {}) {
   };
 }
 
+// Overlay listeners see bubbled pointer events: the press, the release, and a
+// click on their nearest common ancestor, which is the overlay after a drag.
+function pointerClick(overlay, down = overlay, up = down) {
+  overlay.dispatchEvent(createEvent("pointerdown", { target: down }));
+  overlay.dispatchEvent(createEvent("pointerup", { target: up }));
+  overlay.dispatchEvent(createEvent("click", { target: down === up ? down : overlay }));
+}
+
 function queryAll(nodes, selector) {
   const matches = [];
   for (const node of nodes) {
@@ -678,7 +686,7 @@ test("each estate destination returns directly to its own trigger on close, back
       destination.panel.dispatchEvent(createEvent("click", { target: destination.copy }));
       assert.equal(destination.panel.hidden, false, "clicking the writing area keeps the dialog open");
       if (closeBy === "button") destination.close.dispatchEvent(createEvent("click"));
-      else if (closeBy === "backdrop") destination.panel.dispatchEvent(createEvent("click"));
+      else if (closeBy === "backdrop") pointerClick(destination.panel);
       else document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
       assert.equal(destination.panel.hidden, true);
       assert.equal(destination.panel.inert, true);
@@ -751,7 +759,7 @@ test("panel initialization is idempotent without duplicate listeners or toggled-
   for (const item of Object.values(dom.destinations)) {
     assert.equal(listenerCount(item.button), 1);
     assert.equal(listenerCount(item.close), 1);
-    assert.equal(listenerCount(item.panel), 1);
+    assert.equal(listenerCount(item.panel), 3, "backdrop pointerdown, pointerup, and click");
     item.button.dispatchEvent(createEvent("click"));
     assert.equal(item.panel.hidden, false);
     item.close.dispatchEvent(createEvent("click"));
@@ -874,7 +882,7 @@ function createSceneEstateDom(options = {}) {
 
 function dismissPanel(document, panel, close, method) {
   if (method === "button") close.dispatchEvent(createEvent("click"));
-  else if (method === "backdrop") panel.dispatchEvent(createEvent("click"));
+  else if (method === "backdrop") pointerClick(panel);
   else document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
 }
 
@@ -922,6 +930,32 @@ test("scene About opens the map first and each category returns through its dest
       for (const node of dom.backgrounds) assert.equal(node.inert, false);
     }
   }
+});
+
+test("drag-selecting between the paper and backdrop keeps the dialog open", async () => {
+  const dom = createSceneEstateDom();
+  const { document, about, destinations: { contact } } = dom;
+  await loadPanels(dom.window, document);
+  about.entry.dispatchEvent(createEvent("click"));
+  contact.button.dispatchEvent(createEvent("click"));
+  pointerClick(contact.panel, contact.link, contact.panel);
+  assert.equal(contact.panel.hidden, false, "selecting the email out onto the backdrop keeps Contact open");
+  pointerClick(contact.panel, contact.panel, contact.copy);
+  assert.equal(contact.panel.hidden, false, "a selection started on the backdrop keeps Contact open");
+  contact.panel.dispatchEvent(createEvent("pointerdown"));
+  contact.panel.dispatchEvent(createEvent("click", { target: contact.copy }));
+  assert.equal(contact.panel.hidden, false, "a backdrop press that clicks the copy keeps Contact open");
+  contact.panel.dispatchEvent(createEvent("click"));
+  assert.equal(contact.panel.hidden, false, "each click consumes its press");
+  pointerClick(contact.panel);
+  assert.equal(contact.panel.hidden, true, "a press and click on the backdrop still dismiss");
+  assert.equal(about.panel.hidden, false);
+  assert.equal(document.activeElement, contact.button);
+  pointerClick(about.panel, about.map, about.panel);
+  assert.equal(about.panel.hidden, false, "the About map ignores a drag onto its backdrop");
+  pointerClick(about.panel);
+  assert.equal(about.panel.hidden, true);
+  assert.equal(document.activeElement, about.entry);
 });
 
 test("the nested estate traps keyboard focus among Close and its three destinations", async () => {
@@ -1012,7 +1046,7 @@ test("repeated initialization while a child is open preserves nested navigation 
   for (const item of Object.values(destinations)) {
     assert.equal(listenerCount(item.button), 1);
     assert.equal(listenerCount(item.close), 1);
-    assert.equal(listenerCount(item.panel), 1);
+    assert.equal(listenerCount(item.panel), 3);
   }
   assert.equal(document.activeElement, destinations.experience.close);
   document.dispatchEvent(createEvent("keydown", { key: "Escape" }));

@@ -101,6 +101,12 @@ async function buildScriptBundle(entry, architecture) {
   return out.text;
 }
 
+// Reads the YYYY-MM-DD dateModified from index.md front matter, if present.
+export function contentDateModified(markdown) {
+  const frontMatter = markdown.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+  return frontMatter.match(/^dateModified:\s*["']?(\d{4}-\d{2}-\d{2})["']?\s*$/m)?.[1];
+}
+
 function rewriteHtml(src, { appPath, cssPath, scenePath, posterPaths }) {
   // Match source refs with or without a ?v=NNN query,
   // so stale query strings in source can't drift away from the real hashed path.
@@ -191,14 +197,16 @@ async function writePayload(DIST_DIR) {
     await writeFile(join(DIST_DIR, name), rewritten);
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  // lastmod reports when the content changed, matching the JSON-LD dateModified,
+  // so an unrelated rebuild does not advertise a fresh page.
+  const lastmod =
+    contentDateModified(await readFile(join(__dirname, "index.md"), "utf8")) ??
+    new Date().toISOString().slice(0, 10);
   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://alexnava.me/</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>1.0</priority>
+    <lastmod>${lastmod}</lastmod>
   </url>
 </urlset>
 `;

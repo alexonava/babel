@@ -15,6 +15,7 @@ import {
   cinematicSafeArea,
   createCinematicCamera,
   createQuietScene,
+  layoutRect,
 } from "../src/scene/cinematic.js";
 import { DIRECTED_SHOTS } from "../src/scene/directed-shots.js";
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} != ${b}`);
@@ -177,6 +178,28 @@ test("short landscape uses a side-by-side safe area instead of backing out below
   assert.equal(area.top, 32);
   assert.ok(area.top + area.height < 285);
   assert.ok(area.height >= 200);
+});
+
+test("hero layout rect ignores scroll and transforms so the safe area cannot drift", () => {
+  const body = { offsetLeft: 0, offsetTop: 0, offsetParent: null };
+  const section = { offsetLeft: 16, offsetTop: 0, offsetParent: body };
+  const hero = {
+    offsetLeft: 0,
+    offsetTop: 72,
+    offsetWidth: 358,
+    offsetHeight: 160,
+    offsetParent: section,
+    getBoundingClientRect() {
+      throw new Error("scrolled/transformed viewport rect must not be read");
+    },
+  };
+  const rect = layoutRect(hero);
+  assert.deepEqual(rect, { left: 16, top: 72, right: 374, bottom: 232, width: 358, height: 160, x: 16, y: 72 });
+  assert.equal(layoutRect(null), undefined);
+  // Matches the untransformed, unscrolled viewport rect the safe area expects.
+  const nav = { top: 734 };
+  assert.deepEqual(cinematicSafeArea(390, 844, rect, nav), cinematicSafeArea(390, 844, { right: 374, bottom: 232 }, nav));
+  assert.deepEqual(cinematicSafeArea(1440, 900, rect, nav), cinematicSafeArea(1440, 900, { right: 374, bottom: 232 }, nav));
 });
 
 test("all angle variants retain safe portrait framing at both arc limits", () => {

@@ -7,6 +7,7 @@
     ".site-shell",
     "main",
     ".bottom-bar",
+    ".site-footer",
     ".site-copyright",
   ];
   const FOCUSABLE_SELECTOR = 'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
@@ -233,10 +234,19 @@
       });
 
       panels.forEach((panel) => {
+        // A drag-select between the paper and the backdrop clicks their common
+        // ancestor, so only a press and release both on the backdrop dismiss.
+        let pressedBackdrop = false;
+        listen(panel, "pointerdown", (event) => {
+          pressedBackdrop = event.target === panel;
+        });
+        listen(panel, "pointerup", (event) => {
+          if (event.target !== panel) pressedBackdrop = false;
+        });
         listen(panel, "click", (event) => {
-          if (event.target === panel) {
-            closePanel();
-          }
+          const dismiss = pressedBackdrop && event.target === panel;
+          pressedBackdrop = false;
+          if (dismiss) closePanel();
         });
       });
 

@@ -26,7 +26,7 @@
 
     <meta property="og:image:height" content="630" />
 
-    <meta property="og:image:alt" content="Alex Nava." />
+    <meta property="og:image:alt" content="Alex Nava — a stone watchtower under a night sky" />
 
     <meta name="twitter:card" content="summary_large_image" />
 
@@ -36,7 +36,7 @@
 
     <meta name="twitter:image" content="https://alexnava.me/og.png" />
 
-    <meta name="twitter:image:alt" content="Alex Nava." />
+    <meta name="twitter:image:alt" content="Alex Nava — a stone watchtower under a night sky" />
 
     <meta name="theme-color" content="#0b1020" />
 
@@ -113,20 +113,6 @@
 
       rel="preload"
 
-      href="/fonts/instrument-sans-600.woff2"
-
-      as="font"
-
-      type="font/woff2"
-
-      crossorigin
-
-    />
-
-    <link
-
-      rel="preload"
-
       href="/fonts/cormorant-garamond-500.woff2"
 
       as="font"
@@ -183,11 +169,11 @@
         <h2>About</h2>
         <nav class="estate-text-nav" aria-label="Categories"><a href="#profile-text">Profile</a> &middot; <a href="#experience-text">Experience</a> &middot; <a href="#contact-text">Contact</a></nav>
 
-        <section class="estate-text-section" tabindex="-1" id="profile-text"><h2>Profile</h2><p>This is my personal corner of the web. A little about me and what I’m working on.</p></section>
+        <section class="estate-text-section" tabindex="-1" id="profile-text"><h3>Profile</h3><p>This is my personal corner of the web. A little about me and what I’m working on.</p></section>
 
-        <section class="estate-text-section" tabindex="-1" id="experience-text"><h2>Experience</h2><p>My background is in analytics, reporting, remediation, and controls, across banking and health analytics.</p></section>
+        <section class="estate-text-section" tabindex="-1" id="experience-text"><h3>Experience</h3><p>My background is in analytics, reporting, remediation, and controls, across banking and health analytics.</p></section>
 
-        <section class="estate-text-section" tabindex="-1" id="contact-text"><h2>Contact</h2><p>You can reach me at <a href="mailto:alexonava@gmail.com">alexonava@gmail.com</a></p></section>
+        <section class="estate-text-section" tabindex="-1" id="contact-text"><h3>Contact</h3><p>You can reach me at <!--email_off--><a href="mailto:alexonava@gmail.com">alexonava@gmail.com</a><!--/email_off--></p></section>
 
       </div>
 
@@ -203,7 +189,9 @@
         <img class="btn-icon" src="/images/nav-about.webp" alt="" width="256" height="256" /><img class="btn-icon btn-icon--active" src="/images/nav-about-active.webp" alt="" width="256" height="256" />
       </button>
     </nav>
-    <p class="site-copyright">&copy; 2026 Alex Nava</p>
+    <footer class="site-footer">
+      <p class="site-copyright">&copy; 2026 Alex Nava</p>
+    </footer>
 
     <div class="panel-overlay" id="panel-about" role="dialog" aria-modal="true" aria-labelledby="panel-about-title" hidden>
       <div class="panel-estate panel-surface" tabindex="-1">
@@ -259,7 +247,7 @@
 
               You can reach me at<br />
 
-              <a href="mailto:alexonava@gmail.com">alexonava@gmail.com</a>
+              <!--email_off--><a href="mailto:alexonava@gmail.com">alexonava@gmail.com</a><!--/email_off-->
 
             </p>
 
@@ -318,21 +306,6 @@
       </div>
 
     </div>
-
-
-
-    <aside class="dev-mode-hud" id="dev-mode-hud" hidden aria-hidden="true">
-      <div class="dev-mode-hud__row"><span>pos</span><span data-field="pos">0, 0, 0</span></div>
-      <div class="dev-mode-hud__row"><span>vel</span><span data-field="vel">0, 0, 0</span></div>
-      <div class="dev-mode-hud__row"><span>speed</span><span data-field="speed">0</span></div>
-      <div class="dev-mode-hud__row"><span>yaw</span><span data-field="yaw">0&deg;</span></div>
-      <div class="dev-mode-hud__row"><span>mode</span><span data-field="mode">idle</span></div>
-      <div class="dev-mode-hud__row">
-        <span>grounded</span><span data-field="grounded">yes</span>
-      </div>
-      <div class="dev-mode-hud__row"><span>autoRun</span><span data-field="autoRun">off</span></div>
-      <div class="dev-mode-hud__row"><span>ground</span><span data-field="ground">0</span></div>
-    </aside>
 
     <script defer src="/scripts/app.js"></script>
   </body>

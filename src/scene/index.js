@@ -6,7 +6,7 @@ import { resolveSceneModes } from "./scene-modes.js";
 import { createLegacyWorld } from "./legacy-world.js";
 import { createDeferredWorld } from "./deferred-world.js";
 import { createFilmScene } from "./film-scene.js";
-import { chooseCinematicView, chooseCinematicAngle, cinematicSafeArea, createCinematicCamera, createQuietScene } from "./cinematic.js";
+import { chooseCinematicView, chooseCinematicAngle, cinematicSafeArea, createCinematicCamera, createQuietScene, layoutRect } from "./cinematic.js";
 import { configureMudShading } from "./mud-ground.js";
 import { createHillSilhouette } from "./hill-silhouette.js";
 import { createPropScale } from "./prop-scale.js";
@@ -222,8 +222,10 @@ function setSrgbTexture(texture) {
     scene.cinematicSelection ??= chooseCinematicView(window.location.search);
     scene.cinematicAngle ??= chooseCinematicAngle(window.location.search, scene.cinematicSelection);
     let cinematicArea;
+    // The hero uses layout geometry so scroll and its reveal/fade transforms do
+    // not reframe the camera; the fixed bottom bar keeps its viewport rect.
     const measureCinematicArea = (width, height) => cinematicSafeArea(width, height,
-      document.getElementById("hero-minimal")?.getBoundingClientRect(), document.querySelector(".bottom-bar")?.getBoundingClientRect());
+      layoutRect(document.getElementById("hero-minimal")), document.querySelector(".bottom-bar")?.getBoundingClientRect());
     const cinematic = createCinematicCamera({ camera, fog: homeScene.fog, selected: scene.cinematicSelection, angle: scene.cinematicAngle, film: filmEnabled,
       getSafeArea: (width, height) => cinematicArea || measureCinematicArea(width, height),
       getGroundY: (x, z) => groundHeight(x, z) + groundSurface.getWorldPosition(new Vector3()).y });
@@ -830,7 +832,9 @@ function setSrgbTexture(texture) {
       if (!document.hidden) frameScheduler.resume();
     };
     document.addEventListener("visibilitychange", onDocumentVisibilityChange);
-    if (scene.devMode && typeof scene.devMode.attach === "function") {
+    // The developer camera hides all page UI, so only diagnostic sessions
+    // (?sceneDebug=1) get its activation key. dispose() is safe without attach.
+    if (qualityControls.debug && scene.devMode && typeof scene.devMode.attach === "function") {
       scene.devMode.attach({
         THREE,
         camera,

@@ -1,0 +1,121 @@
+<!doctype html>
+<!--
+  Source for the 1200x630 social card /og.png. Not published; it reads the repo fonts and landscape
+  poster through relative URLs. Regenerate from the repository root after a poster refresh
+  (msedge returns before the file is written, so wait for it, e.g. PowerShell Start-Process -Wait):
+    msedge --headless=new --disable-gpu --hide-scrollbars --allow-file-access-from-files
+      --force-device-scale-factor=1 --window-size=1200,630 --virtual-time-budget=3000
+      --user-data-dir=<scratch>\edge-profile --screenshot=<scratch>\og-raw.png
+      file:///<repo>/tools/og-card.html
+    magick <scratch>\og-raw.png -alpha off -kmeans 256 -unique-colors <scratch>\og-pal.png
+    magick <scratch>\og-raw.png -alpha off -dither FloydSteinberg -define dither:diffusion-amount=80%
+      -remap <scratch>\og-pal.png -strip -define png:compression-level=9 PNG8:og.png
+  Keep og.png opaque, exactly 1200x630 and under 300 KB, then re-scrape it with LinkedIn Post Inspector.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Alex Nava social card</title>
+    <style>
+      @font-face {
+        font-family: "Cormorant Garamond";
+        font-style: normal;
+        font-weight: 300 700;
+        font-display: block;
+        src: url("../fonts/cormorant-garamond-500.woff2") format("woff2");
+      }
+
+      @font-face {
+        font-family: "Instrument Sans";
+        font-style: normal;
+        font-weight: 400 700;
+        font-display: block;
+        src: url("../fonts/instrument-sans-400.woff2") format("woff2");
+      }
+
+      html,
+      body {
+        width: 1200px;
+        height: 630px;
+        margin: 0;
+        overflow: hidden;
+        background: #0c1016;
+      }
+
+      .card {
+        position: relative;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+        /* 1600x900 poster covers at 0.75 scale; the vertical slack keeps the roof clear of the top. */
+        background: #0c1016 url("../images/scene-poster-landscape.webp") center 30% / cover
+          no-repeat;
+      }
+
+      /* Matches the hero's soft left-side scrim so the identity stays legible over the sky. */
+      .card::before {
+        position: absolute;
+        inset: 0;
+        content: "";
+        background: radial-gradient(
+          ellipse 640px 520px at 190px 330px,
+          rgba(7, 10, 18, 0.58) 0%,
+          rgba(7, 10, 18, 0.3) 44%,
+          rgba(7, 10, 18, 0) 72%
+        );
+      }
+
+      .name,
+      .intro,
+      .site {
+        position: absolute;
+        left: 84px;
+        margin: 0;
+      }
+
+      .name {
+        top: 139px;
+        font:
+          700 106px/0.94 "Cormorant Garamond",
+          Georgia,
+          serif;
+        letter-spacing: -0.015em;
+        color: #f7f1ea;
+        text-shadow: 0 0 44px rgba(198, 208, 202, 0.1);
+      }
+
+      .name span {
+        display: block;
+      }
+
+      .intro {
+        top: 366px;
+        font:
+          400 24px/31px "Instrument Sans",
+          system-ui,
+          sans-serif;
+        color: #deddd9;
+        text-shadow: 0 2px 12px rgba(4, 7, 12, 0.65);
+      }
+
+      .site {
+        top: 557px;
+        left: 88px;
+        font:
+          400 16px/1 "Instrument Sans",
+          system-ui,
+          sans-serif;
+        letter-spacing: 0.1em;
+        color: #b4b5b3;
+        text-shadow: 0 2px 8px rgba(7, 10, 14, 0.42);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1 class="name"><span>Alex</span><span>Nava</span></h1>
+      <p class="intro">A little about me and<br />what I’m working on.</p>
+      <p class="site">alexnava.me</p>
+    </main>
+  </body>
+</html>

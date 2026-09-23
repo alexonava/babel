@@ -1,11 +1,12 @@
 // Developer-mode (first-person, grounded character) for the babel hero scene.
 //
-// Press Backquote (`) to take over the orbital camera as a first-person
-// character: WASD walks horizontally relative to where you're looking, Q/E
-// strafe (aliases of A/D — matches the standing. project), Space jumps,
-// R toggles autoRun, and you hold left-mouse-button and drag to look around.
-// Whatever the screen center points at gets a brass outline.
-// Press Backquote again to return to the orbital camera.
+// With ?sceneDebug=1, press Backquote (`) to take over the orbital camera as a
+// first-person character: WASD walks horizontally relative to where you're
+// looking, Q/E strafe (aliases of A/D — matches the standing. project), Space
+// jumps, R toggles autoRun, and you hold left-mouse-button and drag to look
+// around. Whatever the screen center points at gets a brass outline.
+// Press Backquote again to return to the orbital camera. The key is ignored
+// while a panel is open, because developer mode hides all page UI.
 //
 // Movement model is hand-rolled Newtonian, ported from the standing. project's
 // LocalMovementController (yards -> feet, x3, no R3F scaffolding). No physics
@@ -15,9 +16,11 @@
 // Drag-to-look (rather than pointer lock) is intentional: cursor stays
 // available for DevTools, copying text, and clicking UI while inspecting.
 //
-// The module is bundled into scripts/scene.HASH.js but does nothing until the
-// user presses the activation key. Inactive cost is one keydown listener.
-// Touch devices are silently ignored (no equivalent of click-and-drag look).
+// The module is bundled into scripts/scene.HASH.js, but initHomeScene only
+// attaches it for ?sceneDebug=1 sessions; otherwise it registers nothing.
+// Attached, it does nothing until the activation key; inactive cost is one
+// keydown listener. The debug HUD is built on first entry, not shipped in the
+// page markup. Touch devices are silently ignored (no click-and-drag look).
 //
 // Pure-function helpers (mouse-delta math, velocity-vector math, motion
 // integration, ground clamp, hit picking) are exposed via
@@ -39,9 +42,22 @@
   let raycaster = null;
   let euler = null;
 
-  // Debug HUD: looked up once at attach() so update() doesn't re-query each
-  // frame. Field elements keyed by their data-field attribute.
+  // Debug HUD: resolved once on first entry so update() doesn't re-query each
+  // frame. An existing #dev-mode-hud is reused; otherwise one is built from
+  // HUD_ROWS ([data-field, default text]) and removed again on dispose().
+  // Field elements keyed by their data-field attribute.
+  const HUD_ROWS = [
+    ["pos", "0, 0, 0"],
+    ["vel", "0, 0, 0"],
+    ["speed", "0"],
+    ["yaw", "0°"],
+    ["mode", "idle"],
+    ["grounded", "yes"],
+    ["autoRun", "off"],
+    ["ground", "0"],
+  ];
   let hudRoot = null;
+  let hudCreated = false;
   const hudFields = Object.create(null);
 
   // Per-session state.
@@ -72,6 +88,11 @@
     if (target.isContentEditable) return true;
     const tag = target.tagName;
     return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
+
+  // panels.js marks <body data-panel-open> while any dialog is open.
+  function isPanelOpen() {
+    return document.body?.hasAttribute?.("data-panel-open") === true;
   }
 
   function clamp(value, lo, hi) {
@@ -246,18 +267,44 @@
     raycaster = new THREE.Raycaster();
     euler = new THREE.Euler(0, 0, 0, "YXZ");
 
+    if (isTouchDevice()) return;
+
+    globalAbort = new AbortController();
+    window.addEventListener("keydown", onActivationKey, { signal: globalAbort.signal });
+  }
+
+  function ensureHud() {
+    if (hudRoot) return hudRoot;
     hudRoot = document.getElementById("dev-mode-hud");
     if (hudRoot) {
       const nodes = hudRoot.querySelectorAll("[data-field]");
       for (let i = 0; i < nodes.length; i += 1) {
         hudFields[nodes[i].getAttribute("data-field")] = nodes[i];
       }
+      return hudRoot;
     }
-
-    if (isTouchDevice()) return;
-
-    globalAbort = new AbortController();
-    window.addEventListener("keydown", onActivationKey, { signal: globalAbort.signal });
+    if (!document.body || typeof document.createElement !== "function") return null;
+    hudRoot = document.createElement("aside");
+    hudRoot.id = "dev-mode-hud";
+    hudRoot.className = "dev-mode-hud";
+    hudRoot.hidden = true;
+    hudRoot.setAttribute("aria-hidden", "true");
+    for (const [name, text] of HUD_ROWS) {
+      const row = document.createElement("div");
+      const label = document.createElement("span");
+      const field = document.createElement("span");
+      row.className = "dev-mode-hud__row";
+      label.textContent = name;
+      field.setAttribute("data-field", name);
+      field.textContent = text;
+      row.appendChild(label);
+      row.appendChild(field);
+      hudRoot.appendChild(row);
+      hudFields[name] = field;
+    }
+    document.body.appendChild(hudRoot);
+    hudCreated = true;
+    return hudRoot;
   }
 
   function fmt(n, digits = 1) {
@@ -281,6 +328,9 @@
     if (event.repeat) return;
     if (event.code !== ACTIVATION_KEY) return;
     if (isFormTarget(event.target)) return;
+    // Entering hides all page UI, so never cover an open dialog. Leaving only
+    // reveals UI and stays available.
+    if (!devMode.active && isPanelOpen()) return;
     event.preventDefault();
     if (devMode.active) {
       exit();
@@ -317,7 +367,7 @@
     jumpRequested = false;
     autoRun = false;
 
-    if (hudRoot) hudRoot.hidden = false;
+    if (ensureHud()) hudRoot.hidden = false;
     if (document.body) document.body.classList.add("dev-mode-active");
 
     sessionAbort = new AbortController();
@@ -495,6 +545,8 @@
     requestOutlinePass = null;
     raycaster = null;
     euler = null;
+    if (hudCreated) hudRoot?.remove();
+    hudCreated = false;
     hudRoot = null;
     for (const field of Object.keys(hudFields)) {
       delete hudFields[field];

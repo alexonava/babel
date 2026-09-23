@@ -41,6 +41,6 @@ The camera fits authored focal volumes into the responsive composition area. Por
 
 ## Accessibility and diagnostics
 
-Without overrides, reduced motion/data, unavailable WebGL, and software rendering retain the static poster path. An explicit quality=low, quality=balanced, quality=high, or sceneDebug=1 requests the diagnostic live path when WebGL is available; it is not a way to bypass release gates. A live reduced-motion review holds camera motion. The Backquote key activates the desktop developer camera; it does not define visitor framing.
+Without overrides, reduced motion/data, unavailable WebGL, and software rendering retain the static poster path. An explicit quality=low, quality=balanced, quality=high, or sceneDebug=1 requests the diagnostic live path when WebGL is available; it is not a way to bypass release gates. A live reduced-motion review holds camera motion. With sceneDebug=1, the Backquote key activates the desktop developer camera and its debug HUD; the key does nothing for ordinary visits and is ignored while a panel is open. The developer camera does not define visitor framing.
 
 See [OPERATIONS.md](../OPERATIONS.md) for the exact delivery and release policy. Historical QA snapshots live in [history](history/README.md); their ports, scores, camera numbers, and publication claims refer to their original run.

@@ -22,7 +22,7 @@
   "devDependencies": {
     "esbuild": "^0.28.1",
     "prettier": "^3.9.6",
-    "three": "^0.160.0",
+    "three": "0.160.1",
     "wrangler": "^4.114.0"
   },
   "overrides": {
