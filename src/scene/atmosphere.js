@@ -170,14 +170,14 @@ export function createSceneAtmosphere({
       film = Boolean(active);
       applySkyQuality();
       applyCloudVisibility();
-      if (pointField) pointField.material.size = pointSize * (film ? 0.55 : 1);
+      if (pointField) pointField.material.size = pointSize * (film ? 0.85 : 1);
       return true;
     },
     setPointField(points) {
       pointField = points || null;
       if (pointField) {
         pointSize = pointField.material.size;
-        pointField.material.size = pointSize * (film ? 0.55 : 1);
+        pointField.material.size = pointSize * (film ? 0.85 : 1);
       }
     },
     toggleClouds() {
@@ -190,7 +190,7 @@ export function createSceneAtmosphere({
         skyMaterial.uniforms.uTime.value = elapsedSeconds;
       if (pointField) {
         pointField.rotation.y = 0.02 * elapsedSeconds;
-        pointField.material.opacity = (lowPower ? 0.42 : 0.5) * visibilityScale * (film ? 0.4 : 1);
+        pointField.material.opacity = (lowPower ? 0.42 : 0.5) * visibilityScale * (film ? 0.8 : 1);
       }
       return true;
     },

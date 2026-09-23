@@ -248,7 +248,6 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
       ? {
           ...baseline,
           bloomStrength: 0.2,
-          celMix: 0,
           contrast: 1.015,
           grainStrength: 0.008,
           highlightWarmMix: 0.12,
@@ -265,7 +264,7 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
     bloomPass.strength = settings.bloomStrength ?? 0.18;
     gradingPass.enabled = gradingEnabled;
     gradingPass.uniforms.uCelMix.value = settings.celMix ?? 0.24;
-    gradingPass.uniforms.uInkMix.value = film ? 0 : 0.14;
+    gradingPass.uniforms.uInkMix.value = 0.14;
     gradingPass.uniforms.uContrast.value = settings.contrast ?? 1.06;
     gradingPass.uniforms.uHighlightWarmMix.value = settings.highlightWarmMix ?? 0.14;
     gradingPass.uniforms.uShadowCoolMix.value = settings.shadowCoolMix ?? 0.25;

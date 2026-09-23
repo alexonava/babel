@@ -393,8 +393,9 @@ test("film grading survives quality changes and restores the current profile wit
   pipeline.setFilmTreatment(true);
   pipeline.setTextProtection(true, 0.3);
   assert.equal(pipeline.composer.passes.length, 4);
-  assert.equal(g.uCelMix.value, 0);
-  assert.equal(g.uInkMix.value, 0);
+  // The owner restored the cel banding and ink contour on the default film look.
+  assert.equal(g.uCelMix.value, 0.24);
+  assert.equal(g.uInkMix.value, 0.14);
   assert.equal(g.uContrast.value, 1.015);
   assert.equal(g.uHighlightWarmMix.value, 0.12);
   assert.equal(g.uShadowCoolMix.value, 0.16);
@@ -403,7 +404,7 @@ test("film grading survives quality changes and restores the current profile wit
   assert.equal(v.uVignetteStrength.value, 0.12);
   pipeline.setQualityProfile({ ...profile, postprocessBloom: false });
   assert.equal(pipeline.passes.bloom.enabled, false);
-  assert.equal(g.uCelMix.value, 0);
+  assert.equal(g.uCelMix.value, 0.24);
   assert.equal(v.uTextProtection.value, 1);
   pipeline.setFilmTreatment(false);
   assert.equal(g.uCelMix.value, 0.24);
