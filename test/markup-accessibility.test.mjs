@@ -564,7 +564,8 @@ test("category copy stays minimal and matches its Markdown equivalent", async ()
   const profile = "This is my personal corner of the web.";
   const experience = "Analytics, reporting, remediation, and controls, across banking and health.";
   for (const [id, sentence] of [["profile", profile], ["experience", experience]]) {
-    assert.match(html, new RegExp(`id="${id}-text"><h3>[^<]+</h3><p>${sentence.replace(/\./g, "\\.")}</p></section>`));
+    const escaped = sentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(html, new RegExp(`id="${id}-text"><h3>[^<]+</h3><p>${escaped}</p></section>`));
     assert.ok(html.includes(`<p class="panel-body">${sentence}</p>`), `${id} dialog copy`);
     assert.ok(markdown.includes(`\n${sentence}\n`), `${id} Markdown copy`);
   }
