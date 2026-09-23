@@ -8,10 +8,13 @@ function clampFrameSeconds(value, maximum) {
 /**
  * Owns scene frame scheduling without owning any Three.js resources.
  *
- * Animated mode schedules continuously. Reduced-motion mode freezes elapsed
- * scene time and renders only after invalidate(). A separate per-rAF sample is
- * retained when frameStride > 1 so the quality governor does not mistake a
- * deliberate 30fps render cap for 30fps frame pressure.
+ * Animated mode schedules continuously. Reduced-motion and still modes freeze
+ * elapsed scene time and render only after invalidate(); still mode leaves the
+ * reported reducedMotion preference alone. While any named hold is set nothing
+ * renders or schedules, as when isRenderable() fails; releasing the last hold
+ * resumes with a fresh delta. A separate per-rAF sample is retained when
+ * frameStride > 1 so the quality governor does not mistake a deliberate 30fps
+ * render cap for 30fps frame pressure.
  */
 export function createSceneFrameScheduler({
   cancelFrame = globalThis.cancelAnimationFrame?.bind(globalThis),
@@ -43,19 +46,28 @@ export function createSceneFrameScheduler({
   let frameHandle = null;
   let frameTick = 0;
   let hasRendered = false;
+  const holds = new Set();
   let lastTimestamp = null;
   let maxSampleDeltaSeconds = 0;
   let pendingDeltaSeconds = 0;
   let renderAccumulatorSeconds = 0;
   let prefersReducedMotion = Boolean(reducedMotion);
+  let still = false;
 
   function isAnimated() {
-    return !prefersReducedMotion || forceAnimation;
+    return (!prefersReducedMotion && !still) || forceAnimation;
   }
 
   function schedule() {
-    if (!active || frameHandle !== null) return;
+    if (!active || holds.size > 0 || frameHandle !== null) return;
     frameHandle = requestFrame(update);
+  }
+
+  function cancel() {
+    if (frameHandle !== null && typeof cancelFrame === "function") {
+      cancelFrame(frameHandle);
+    }
+    frameHandle = null;
   }
 
   function resetTiming() {
@@ -67,10 +79,16 @@ export function createSceneFrameScheduler({
     hasRendered = false;
   }
 
+  function resume() {
+    resetTiming();
+    dirty = true;
+    schedule();
+  }
+
   function update(timestamp = now()) {
     frameHandle = null;
     if (!active) return;
-    if (!isRenderable()) {
+    if (holds.size > 0 || !isRenderable()) {
       resetTiming();
       return;
     }
@@ -132,10 +150,8 @@ export function createSceneFrameScheduler({
   return {
     dispose() {
       active = false;
-      if (frameHandle !== null && typeof cancelFrame === "function") {
-        cancelFrame(frameHandle);
-      }
-      frameHandle = null;
+      holds.clear();
+      cancel();
       resetTiming();
     },
     getState() {
@@ -144,16 +160,37 @@ export function createSceneFrameScheduler({
         dirty,
         elapsedSeconds,
         forceAnimation,
+        held: holds.size > 0,
         reducedMotion: prefersReducedMotion,
         scheduled: frameHandle !== null,
+        still,
       };
     },
     invalidate() {
       dirty = true;
       schedule();
     },
-    resume() {
+    resume,
+    setHold(reason, held) {
+      const wasHeld = holds.size > 0;
+      if (held) holds.add(reason);
+      else holds.delete(reason);
+      if (holds.size > 0 && !wasHeld) {
+        cancel();
+        resetTiming();
+      } else if (holds.size === 0 && wasHeld) {
+        resume();
+      }
+      return holds.size > 0;
+    },
+    setStill(value) {
+      const next = Boolean(value);
+      if (still === next) return;
+      const wasAnimated = isAnimated();
+      still = next;
+      if (isAnimated() === wasAnimated) return;
       resetTiming();
+      if (wasAnimated) return;
       dirty = true;
       schedule();
     },
@@ -181,6 +218,197 @@ export function createSceneFrameScheduler({
       schedule();
     },
     update,
+  };
+}
+
+/**
+ * Holds scene rendering behind an open dialog through the scheduler's "panel"
+ * hold. sync() runs whenever isOpen() may have changed: the hold starts delayMs
+ * after a dialog opens, once its dim overlay has faded in, and ends with the
+ * last dialog, calling onRelease. A resize clears the canvas, so redraw()
+ * releases the hold only until frameRendered() reports the next drawn frame.
+ */
+export function createPanelHold({
+  clearTimer = globalThis.clearTimeout?.bind(globalThis),
+  delayMs = 450,
+  isOpen,
+  onRelease = () => {},
+  scheduler,
+  setTimer = globalThis.setTimeout?.bind(globalThis),
+}) {
+  let held = false;
+  let redrawing = false;
+  let timer = null;
+
+  function setHeld(next) {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+    if (held === next) return;
+    held = next;
+    scheduler.setHold("panel", next);
+  }
+
+  return {
+    get held() {
+      return held;
+    },
+    sync() {
+      if (!isOpen()) {
+        const released = held || redrawing;
+        redrawing = false;
+        setHeld(false);
+        if (released) onRelease();
+      } else if (!held && !redrawing && timer === null) {
+        timer = setTimer(() => setHeld(true), delayMs);
+      }
+    },
+    redraw() {
+      if (!held) return;
+      redrawing = true;
+      setHeld(false);
+    },
+    frameRendered() {
+      if (!redrawing) return;
+      redrawing = false;
+      if (isOpen()) setHeld(true);
+    },
+    dispose() {
+      if (timer !== null) clearTimer(timer);
+      timer = null;
+      redrawing = false;
+    },
+  };
+}
+
+/**
+ * Holds scene rendering for a visitor's pause through the scheduler's
+ * "visitor" hold, which composes with the dialog's "panel" hold. A pause
+ * before the reveal waits for it and keeps the first revealed frame; a later
+ * pause draws one more frame, so a tour dip settles clear, then holds. As with
+ * createPanelHold(), redraw() releases the hold only until frameRendered()
+ * reports the next drawn frame. suspend() lifts the hold while the developer
+ * camera runs, keeping the pause, and draws one frame before it returns.
+ * Releasing a held pause calls onRelease.
+ */
+export function createVisitorHold({ onRelease = () => {}, scheduler }) {
+  let disposed = false;
+  let held = false;
+  let paused = false;
+  let redrawing = false;
+  let revealed = false;
+  let suspended = false;
+
+  function setHeld(next) {
+    if (held === next) return;
+    held = next;
+    scheduler.setHold("visitor", next);
+  }
+
+  function release() {
+    const released = held || redrawing;
+    redrawing = false;
+    setHeld(false);
+    if (released) onRelease();
+  }
+
+  return {
+    get held() {
+      return held;
+    },
+    get paused() {
+      return paused;
+    },
+    set(value) {
+      const next = Boolean(value);
+      if (disposed || paused === next) return paused;
+      paused = next;
+      if (!paused) release();
+      else if (revealed) {
+        redrawing = true;
+        scheduler.invalidate();
+      }
+      return paused;
+    },
+    // Called once the frame that shows the canvas has drawn.
+    reveal() {
+      if (disposed || revealed) return;
+      revealed = true;
+      if (paused && !suspended) setHeld(true);
+    },
+    redraw() {
+      if (disposed || !held) return;
+      redrawing = true;
+      setHeld(false);
+    },
+    frameRendered() {
+      if (!redrawing) return;
+      redrawing = false;
+      if (paused && !suspended) setHeld(true);
+    },
+    suspend(value) {
+      const next = Boolean(value);
+      if (disposed || suspended === next) return;
+      suspended = next;
+      if (suspended) release();
+      else if (paused && revealed) {
+        redrawing = true;
+        scheduler.invalidate();
+      }
+    },
+    dispose() {
+      disposed = true;
+      redrawing = false;
+    },
+  };
+}
+
+/**
+ * Links new scene programs through compile() in a task of its own, instead of
+ * in a blocking first draw or inside the commit that added them. pending counts
+ * warm-ups not yet settled. A subject passed to warm() stays hidden until its
+ * programs are ready. Program keys count visible lights (the tree carries two),
+ * so every waiting subject is shown for the synchronous compile and hidden again
+ * before any draw. compile() resolves true once linked; a false result, a
+ * rejection or a throw still settles the warm-up, as not ready.
+ */
+export function createShaderWarmup({
+  compile,
+  schedule = (task) => globalThis.setTimeout(task, 0),
+}) {
+  let pending = 0;
+  const waiting = new Set();
+
+  return {
+    get pending() {
+      return pending;
+    },
+    warm(subject = null, onSettled = () => {}) {
+      pending += 1;
+      if (subject) {
+        subject.visible = false;
+        waiting.add(subject);
+      }
+      schedule(() => {
+        waiting.forEach((object) => { object.visible = true; });
+        let compiled;
+        try {
+          compiled = compile();
+        } catch {
+          compiled = false;
+        }
+        waiting.forEach((object) => { object.visible = false; });
+        Promise.resolve(compiled)
+          .then((ready) => ready === true, () => false)
+          .then((ready) => {
+            pending -= 1;
+            if (subject) {
+              waiting.delete(subject);
+              subject.visible = true;
+            }
+            onSettled(ready);
+          });
+      });
+    },
   };
 }
 

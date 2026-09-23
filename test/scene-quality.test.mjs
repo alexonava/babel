@@ -209,6 +209,13 @@ test("quality profiles expose the postprocess tier matrix", async () => {
     [low.postprocessGrading, low.postprocessBloom, low.postprocessVignette, low.postprocessGrain],
     [true, false, false, false],
   );
+  assert.deepEqual(
+    [high.postprocessSamples, balanced.postprocessSamples, low.postprocessSamples],
+    [4, 0, 0],
+    "only high multisamples the composer targets",
+  );
+  assert.deepEqual([high.dprCap, balanced.dprCap, low.dprCap], [1.5, 1.25, 1]);
+  assert.equal("antialias" in high, false, "the renderer never multisamples the final quad");
   assert.equal(high.lighting.directionalIntensity, 3.25);
   assert.equal(high.lighting.fillIntensity, 0.46);
   assert.equal(high.lighting.practicalIntensityScale, 1.08);
@@ -305,6 +312,102 @@ test("quality governor drops to low under sustained stress and ignores invalid s
   assert.equal(governor.sample(Number.NaN, 0), null, "NaN frame times are ignored");
 });
 
+function drive(governor, clock, frameMs, count, floorTier) {
+  const changes = [];
+  for (let frame = 0; frame < count; frame += 1) {
+    clock.now += frameMs;
+    const tier = governor.sample(frameMs, clock.now, floorTier);
+    if (tier) changes.push({ tier, at: clock.now });
+  }
+  return changes;
+}
+
+test("quality governor recovers to the initial tier at a 60 Hz display floor", async () => {
+  const scene = await loadQuality(createContext());
+  for (const [displayMs, label] of [[1000 / 60, "60 Hz"], [1000 / 120, "120 Hz"]]) {
+    const governor = scene.createSceneQualityGovernor({ initialTier: "high" });
+    const clock = { now: 0 };
+    const [downgrade] = drive(governor, clock, 40, 240);
+    assert.equal(downgrade?.tier, "balanced");
+    // 16.7 ms can never beat the former fixed 15 ms recovery threshold.
+    const changes = drive(governor, clock, displayMs, 2000);
+    assert.deepEqual(
+      changes.map(({ tier }) => tier),
+      ["high"],
+      `${label} frames recover exactly once`,
+    );
+    assert.ok(changes[0].at - downgrade.at >= 10000, "recovery keeps its 10 s delay");
+    assert.equal(governor.getTier(), "high");
+  }
+});
+
+test("quality governor never recovers while frames stay beyond the display floor", async () => {
+  const scene = await loadQuality(createContext());
+  const governor = scene.createSceneQualityGovernor({ initialTier: "high" });
+  const clock = { now: 0 };
+  const changes = drive(governor, clock, 40, 3000, "balanced");
+  assert.deepEqual(
+    changes.map(({ tier }) => tier),
+    ["balanced"],
+    "a raised floor holds sustained 40 ms stress at balanced without oscillating",
+  );
+});
+
+// Frame cost follows the governor's current tier, as it does on a device.
+function driveCosts(governor, clock, costs, count, floorTier) {
+  const changes = [];
+  for (let frame = 0; frame < count; frame += 1) {
+    const frameMs = costs[governor.getTier()];
+    clock.now += frameMs;
+    const tier = governor.sample(frameMs, clock.now, floorTier);
+    if (tier) changes.push({ tier, at: clock.now });
+  }
+  return changes;
+}
+
+test("quality governor never reads a capped or GPU-bound steady rate as headroom", async () => {
+  const scene = await loadQuality(createContext());
+  for (const [costs, floorTier, expected, label] of [
+    [{ high: 1000 / 30, balanced: 1000 / 30, low: 1000 / 30 }, "balanced", ["balanced"], "30 Hz cap"],
+    [{ high: 1000 / 30, balanced: 1000 / 30, low: 1000 / 30 }, "low", ["balanced", "low"], "30 Hz cap"],
+    [{ high: 40, balanced: 28, low: 25 }, "balanced", ["balanced"], "28 ms at balanced"],
+    [{ high: 40, balanced: 28, low: 25 }, "low", ["balanced", "low"], "25 ms at low"],
+    [{ high: 45, balanced: 28, low: 25 }, "balanced", ["balanced"], "45/28 ms"],
+    [{ high: 33, balanced: 25, low: 22 }, "balanced", ["balanced"], "33/25 ms"],
+  ]) {
+    const governor = scene.createSceneQualityGovernor({ initialTier: "high" });
+    const changes = driveCosts(governor, { now: 0 }, costs, 12000, floorTier);
+    assert.deepEqual(
+      changes.map(({ tier }) => tier),
+      expected,
+      `${label} with a ${floorTier} floor steps down once per tier and never climbs back`,
+    );
+  }
+});
+
+test("quality governor backs off and then stops recovering when the heavier tier oscillates", async () => {
+  const scene = await loadQuality(createContext());
+  const governor = scene.createSceneQualityGovernor({ initialTier: "high" });
+  const clock = { now: 0 };
+  // Balanced keeps up with a 60 Hz display; high does not.
+  const costs = { high: 40, balanced: 1000 / 60, low: 1000 / 60 };
+  const changes = driveCosts(governor, clock, costs, 8000, "balanced");
+  assert.deepEqual(
+    changes.map(({ tier }) => tier),
+    ["balanced", "high", "balanced", "high", "balanced"],
+  );
+  const firstRecovery = changes[1].at - changes[0].at;
+  const secondRecovery = changes[3].at - changes[2].at;
+  assert.ok(firstRecovery >= 10000 && firstRecovery < 20000);
+  assert.ok(secondRecovery >= 2 * firstRecovery - 100, "one oscillation doubles the wait");
+  assert.equal(
+    drive(governor, clock, 1000 / 60, 6000, "balanced").length,
+    0,
+    "two oscillations end recovery",
+  );
+  assert.equal(governor.getTier(), "balanced");
+});
+
 test("fixed-tier governor ignores samples entirely", async () => {
   const scene = await loadQuality(createContext());
   const governor = scene.createSceneQualityGovernor({ initialTier: "high", overrideTier: "low" });
@@ -370,9 +473,9 @@ test("selectSceneQualityTier forces low when saveData is set", async () => {
   assert.equal(tier, "low");
 });
 
-test("resolveEffectiveDprCap caps touch-primary devices with hidden deviceMemory", async () => {
+test("resolveEffectiveDprCap caps every touch-primary device at 1.25", async () => {
   const scene = await loadQuality(createContext());
-  const profile = { dprCap: 2 };
+  const profile = scene.getSceneQualityProfile("high");
 
   assert.equal(
     scene.resolveEffectiveDprCap(profile, {
@@ -380,8 +483,8 @@ test("resolveEffectiveDprCap caps touch-primary devices with hidden deviceMemory
       navigatorInfo: { hardwareConcurrency: 8 },
       caps: { maxTextureSize: 8192, maxAnisotropy: 8 },
     }),
-    2,
-    "unknown deviceMemory + touch primary keeps DPR 2 on flagship caps",
+    1.25,
+    "flagship touch hardware is capped at 1.25",
   );
   assert.equal(
     scene.resolveEffectiveDprCap(profile, {
@@ -397,13 +500,17 @@ test("resolveEffectiveDprCap caps touch-primary devices with hidden deviceMemory
       touchPrimary: true,
       navigatorInfo: { deviceMemory: 8 },
     }),
-    2,
-    "known deviceMemory keeps the base cap",
+    1.25,
+    "known deviceMemory is capped at 1.25 too",
   );
   assert.equal(
     scene.resolveEffectiveDprCap(profile, { touchPrimary: false, navigatorInfo: {} }),
-    2,
+    1.5,
     "desktop devices keep the base cap",
+  );
+  assert.equal(
+    scene.resolveEffectiveDprCap(scene.getSceneQualityProfile("balanced"), { touchPrimary: false }),
+    1.25,
   );
   assert.equal(
     scene.resolveEffectiveDprCap({ dprCap: 1 }, { touchPrimary: true, navigatorInfo: {} }),
@@ -480,7 +587,8 @@ test("createSceneQualityState exposes profile, governor, and live sample handoff
 
   assert.equal(state.initialTier, "high");
   assert.equal(state.getTier(), "high");
-  assert.equal(state.getProfile().dprCap, 2);
+  assert.equal(state.getProfile().dprCap, 1.5);
+  assert.equal(state.getProfile().postprocessSamples, 4);
 
   // Warmup: first 59 frames return null regardless (streak check gated on a full sample window).
   for (let frame = 0; frame < 59; frame += 1) {
@@ -493,5 +601,103 @@ test("createSceneQualityState exposes profile, governor, and live sample handoff
   }
   assert.ok(downgrade, "governor returns the downgraded profile once the streak is complete");
   assert.equal(state.getTier(), "balanced");
-  assert.equal(downgrade.dprCap, 1.5);
+  assert.equal(downgrade.dprCap, 1.25);
+  assert.equal(downgrade.postprocessSamples, 0);
+});
+
+function driveRevealed(state, clock, frameMs, count, profile) {
+  const steps = [];
+  let current = profile;
+  for (let frame = 0; frame < count; frame += 1) {
+    clock.now += frameMs;
+    const next = state.sampleRevealed({
+      frameMs,
+      nowMs: clock.now,
+      timestamp: clock.now,
+      profile: current,
+    });
+    if (!next) continue;
+    current = next;
+    steps.push({ tier: next.tier, dprCap: state.resolveDprCap(next), governor: state.getTier() });
+  }
+  return { steps, profile: current };
+}
+
+test("a revealed scene's low step lowers only the pixel ratio, and recovery restores it", async () => {
+  const scene = await loadQuality(createContext());
+  const options = {
+    navigatorInfo: { hardwareConcurrency: 8 },
+    caps: { maxTextureSize: 8192, maxAnisotropy: 16 },
+    saveData: false,
+  };
+  const phone = scene.createSceneQualityState({
+    ...options,
+    viewport: { width: 390, height: 844 },
+    touchPrimary: true,
+  });
+  assert.equal(phone.initialTier, "balanced");
+  const clock = { now: 0 };
+  const start = phone.getProfile();
+  assert.equal(phone.resolveDprCap(start), 1.25);
+
+  const pressure = driveRevealed(phone, clock, 40, 600, start);
+  assert.deepEqual(pressure.steps, [{ tier: "balanced", dprCap: 1, governor: "low" }]);
+  assert.equal(pressure.profile, start, "the visuals keep the current profile");
+  assert.equal(phone.resolveDprCap(phone.getProfile("balanced")), 1, "a resize keeps the relief");
+
+  const recovered = driveRevealed(phone, clock, 1000 / 60, 1200, pressure.profile);
+  assert.deepEqual(recovered.steps, [{ tier: "balanced", dprCap: 1.25, governor: "balanced" }]);
+
+  const desktop = scene.createSceneQualityState({
+    ...options,
+    viewport: { width: 1440, height: 900 },
+    touchPrimary: false,
+  });
+  const sustained = driveRevealed(desktop, { now: 0 }, 40, 900, desktop.getProfile());
+  assert.deepEqual(sustained.steps, [
+    { tier: "balanced", dprCap: 1.25, governor: "balanced" },
+    { tier: "balanced", dprCap: 1, governor: "low" },
+  ]);
+  assert.equal(sustained.profile.isLow, false, "the revealed visuals never descend to low");
+});
+
+test("revealed sampling waits three seconds after the first frame and after each hold", async () => {
+  const scene = await loadQuality(createContext());
+  const state = scene.createSceneQualityState({
+    navigatorInfo: { deviceMemory: 8, hardwareConcurrency: 8 },
+    viewport: { width: 1440, height: 900 },
+    caps: { maxTextureSize: 8192, maxAnisotropy: 8 },
+    touchPrimary: false,
+    saveData: false,
+  });
+  const profile = state.getProfile();
+  const firstStep = (from, holdAt = null) => {
+    for (let timestamp = from; timestamp < from + 20000; timestamp += 40) {
+      if (timestamp === holdAt) state.holdSampling();
+      if (state.sampleRevealed({ frameMs: 40, nowMs: timestamp, timestamp, profile })) {
+        return timestamp - from;
+      }
+    }
+    return null;
+  };
+  // 3 s held, then a 60-sample window, 60 warm-up samples and a 120-frame streak.
+  const unheld = 240 * 40;
+  assert.equal(firstStep(0), 3000 + unheld - 40);
+
+  const held = scene.createSceneQualityState({
+    navigatorInfo: { deviceMemory: 8, hardwareConcurrency: 8 },
+    viewport: { width: 1440, height: 900 },
+    caps: { maxTextureSize: 8192, maxAnisotropy: 8 },
+    touchPrimary: false,
+    saveData: false,
+  });
+  let sampled = 0;
+  for (let timestamp = 0; timestamp < 6000; timestamp += 40) {
+    if (timestamp === 4000) held.holdSampling();
+    const before = held.governor.getAverageFrameTime();
+    held.sampleRevealed({ frameMs: 40 + timestamp / 1000, nowMs: timestamp, timestamp, profile });
+    if (held.governor.getAverageFrameTime() !== before) sampled += 1;
+  }
+  // Sampled from 3000 ms until the hold at 4000 ms; the next 3 s are skipped.
+  assert.equal(sampled, 25);
 });

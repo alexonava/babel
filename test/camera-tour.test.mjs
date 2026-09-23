@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BoxGeometry, Group, Mesh, MeshBasicMaterial, PerspectiveCamera } from "three";
 import { createCinematicCamera } from "../src/scene/cinematic.js";
-import { createCameraTour, readTourInterval } from "../src/scene/camera-tour.js";
+import { createCameraTour, DEFAULT_TOUR_INTERVAL, readTourInterval } from "../src/scene/camera-tour.js";
 
 function setup(interval = 5, random = Math.random) {
   const camera = new PerspectiveCamera(),
@@ -54,15 +54,20 @@ function setup(interval = 5, random = Math.random) {
   };
 }
 
-test("tour defaults to five seconds even when a link chooses its opening composition", () => {
+test("tour defaults to the 20-second dwell even when a link chooses its opening composition", () => {
+  assert.equal(DEFAULT_TOUR_INTERVAL, 20);
   for (const query of ["", "?quality=high", "?view=tower", "?angle=1", "?view=tree&angle=6"])
-    assert.equal(readTourInterval(query), 5);
+    assert.equal(readTourInterval(query), 20);
   for (const query of ["?tour=0", "?tour=1", "?tour=nan", "?tour=100"])
     assert.equal(readTourInterval(query), 0);
   assert.equal(readTourInterval("?tour=3"), 3);
   assert.equal(readTourInterval("?tour=5"), 5);
   assert.equal(readTourInterval("?tour=20"), 20);
   assert.equal(readTourInterval("?view=tower&tour=5"), 5);
+  const f = setup();
+  assert.equal(createCameraTour({ camera: f.controller }).state.interval, 20);
+  assert.equal(createCameraTour({ camera: f.controller, interval: 7 }).state.interval, 20);
+  f.dispose();
 });
 test("the seven tour views skip Masonry study and wrap with small drift and cached repeat framing", () => {
   for (const interval of [3, 5]) {
@@ -110,6 +115,25 @@ test("pause, panels, reduced motion and developer control hold the tour without 
     assert.equal(f.controller.shot.name, "Threshold");
     f.dispose();
   }
+  // A hold that lands mid-dip shows the held shot undimmed, then the same dip
+  // resumes and completes its cut once released.
+  for (const flag of ["panelOpen", "developer"]) {
+    const f = setup();
+    f.render(0);
+    f.render(4.9);
+    const dip = f.tour.fade;
+    assert.ok(dip > 0.5, "the dip before a cut is under way");
+    f.render(5, { [flag]: true });
+    assert.equal(f.tour.fade, 0);
+    f.render(40, { [flag]: true });
+    assert.equal(f.tour.fade, 0);
+    assert.equal(f.controller.shot.name, "The watch");
+    f.render(41);
+    assert.equal(f.tour.fade, dip);
+    f.render(41.2);
+    assert.equal(f.controller.shot.name, "Threshold");
+    f.dispose();
+  }
   const f = setup();
   f.render(0);
   f.render(2);
@@ -125,6 +149,50 @@ test("pause, panels, reduced motion and developer control hold the tour without 
   f.render(32);
   f.render(37);
   assert.equal(f.controller.shot.name, "Gallery detail");
+  f.dispose();
+});
+
+test("setPaused holds the current shot undimmed mid-dip and resumes from that clear frame without catch-up", () => {
+  const f = setup();
+  f.render(0);
+  f.render(4.9);
+  const dip = f.tour.fade;
+  assert.ok(dip > 0.5, "the dip before a cut is under way");
+  f.tour.setPaused(true);
+  f.tour.setPaused(true);
+  assert.equal(f.tour.state.paused, true);
+  assert.equal(f.tour.fade, 0, "a paused dip shows the shot undimmed");
+  f.render(5);
+  f.render(90);
+  assert.equal(f.tour.fade, 0);
+  assert.equal(f.controller.shot.name, "The watch");
+  f.tour.toggle();
+  assert.equal(f.tour.state.paused, false, "toggle shares the pause state");
+  f.render(91);
+  assert.equal(f.tour.fade, 0, "the first resumed frame matches the clear paused frame");
+  assert.equal(f.controller.shot.name, "The watch", "the paused time is not counted");
+  f.render(91.2);
+  assert.ok(Math.abs(f.tour.fade - dip) < 1e-9, "the interrupted dip restarts from clear");
+  assert.equal(f.controller.shot.name, "The watch");
+  f.render(91.35);
+  assert.equal(f.controller.shot.name, "Threshold", "the cut then completes");
+
+  // A pause during the fade-in after a cut resumes fully faded in and keeps
+  // the rest of the dwell.
+  f.render(91.55);
+  assert.ok(f.tour.fade > 0.5, "the fade-in after a cut is under way");
+  f.tour.setPaused(true);
+  f.render(120);
+  f.tour.setPaused(false);
+  f.render(121);
+  assert.equal(f.tour.fade, 0);
+  f.render(125.5);
+  assert.equal(f.controller.shot.name, "Threshold");
+  f.render(125.6);
+  assert.equal(f.controller.shot.name, "Gallery detail");
+  f.tour.dispose();
+  f.tour.setPaused(true);
+  assert.equal(f.tour.state.paused, false, "disposal blocks later pauses");
   f.dispose();
 });
 

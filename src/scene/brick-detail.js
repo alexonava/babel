@@ -259,9 +259,10 @@ export function createBrickDetailController({
     return true;
   }
 
-  function applyQuality(nextProfile = {}) {
-    if (disposed || nextProfile.tier === currentTier) return false;
-    currentTier = nextProfile.tier;
+  function applyQuality(nextProfile = {}, context = {}) {
+    const tier = context?.assetTier ?? nextProfile.tier;
+    if (disposed || tier === currentTier) return false;
+    currentTier = tier;
     const nextEligible =
       !disabled && originals.length > 0 && ["high", "balanced"].includes(currentTier);
     if (nextEligible === eligible) {

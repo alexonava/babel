@@ -10,4 +10,6 @@ import "./scene/quality.js";
 import "./ui/hero.js";
 import "./ui/panels.js";
 import "./ui/scene-menu.js";
+import "./ui/scene-controls.js";
+import "./ui/deep-links.js";
 import "./main.js";

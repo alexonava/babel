@@ -215,3 +215,147 @@ test("mud shading compiles only in mud mode and restores the baseline shader", a
   assert.deepEqual(baseline, original);
   material.dispose();
 });
+
+const FILM_CHUNKS = [
+  "#include <roughnessmap_fragment>",
+  "#include <normal_fragment_maps>",
+  "#include <lights_fragment_end>",
+  "#include <fog_fragment>",
+].join("\n");
+
+test("each ground shading has its own program cache key; the slate's shading needs film and no grass", async () => {
+  const { configureMudShading, SLATE_WET, SLATE_DETAIL } = await import("../src/scene/mud-ground.js");
+  const grass = { grassColorMap: {}, grassMaskMap: {}, grassTile: 9 };
+  const material = new MeshStandardMaterial();
+  const compile = (...args) => {
+    configureMudShading(material, ...args);
+    const shader = {
+      uniforms: {},
+      vertexShader: "#include <begin_vertex>",
+      fragmentShader: FILM_CHUNKS,
+    };
+    material.onBeforeCompile(shader);
+    return { key: material.customProgramCacheKey(), fragment: shader.fragmentShader };
+  };
+  for (const [args, key, slate] of [
+    [[false], "ground-baseline", false],
+    [[false, false, false, null, { slate: true }], "ground-baseline", false],
+    [[true, false], "mud-world-variation-v1", false],
+    [[true, true], "mud-quiet-earth-v2", false],
+    [[true, true, false, null, { slate: true }], "mud-quiet-earth-v2", false],
+    [[true, true, true], "moonlit-earth-v2", false],
+    [[true, true, true, grass], "moonlit-earth-grass-v1", false],
+    [[false, true, true, grass, { slate: true }], "moonlit-earth-grass-v1", false],
+    [[false, true, true, null, { slate: true }], "moonlit-slate-v1", true],
+  ]) {
+    const compiled = compile(...args);
+    assert.equal(compiled.key, key, JSON.stringify(args));
+    assert.equal(compiled.fragment.includes("slateWet"), slate, key);
+    assert.equal(compiled.fragment.includes("slateDetailN"), slate, key);
+  }
+  const { fragment } = compile(false, true, true, null, { slate: true });
+  // The film specular clamp stays; the wet term only relaxes it, within the
+  // brief's 1 + 1.6 bound, and at half of it so distant ground stays dark.
+  assert.match(fragment, /reflectedLight\.directSpecular \*= mix\(\.12, \.22, damp\);/);
+  assert.match(fragment, /reflectedLight\.directSpecular \*= 1\.0 \+ 0\.8\*slateWet;/);
+  assert.ok(SLATE_WET.specular <= 1.6);
+  assert.match(fragment, /float slateWet = clamp\([^;]*\)\*\(1\.0-worn\);/, "the worn footing, roots and path stay dry");
+  assert.match(fragment, /roughnessFactor = mix\(roughnessFactor, 0\.5, slateWet\*0\.75\);/);
+  assert.match(fragment, /diffuseColor\.rgb \*= 1\.0 - 0\.14\*slateWet;/);
+  // A low, mostly neutral grazing reflection: not the fog's full blue.
+  assert.match(
+    fragment,
+    /#ifdef USE_FOG\s*float slateFresnel = pow\(1\.0 - saturate\(dot\(geometryNormal, geometryViewDir\)\), 5\.0\);\s*vec3 slateSheen = mix\(fogColor, vec3\(dot\(fogColor, vec3\(\.2126,\.7152,\.0722\)\)\), 0\.6\);\s*reflectedLight\.indirectSpecular \+= slateSheen\*\(slateWet\*slateFresnel\*0\.15\);/,
+  );
+  assert.ok(SLATE_WET.fresnel <= 0.2, "the grazing sheen stays low behind the intro text and in the distance");
+  assert.ok(fragment.indexOf("slateWet = ") > fragment.indexOf("float worn ="), "wetness follows the worn mask");
+  // Close detail: the same normal map again, finer and turned, faded out with
+  // view distance, and only where the tangent-space normal map is bound.
+  const detail = fragment.slice(fragment.indexOf("#include <normal_fragment_maps>"), fragment.indexOf("#include <lights_fragment_end>"));
+  assert.match(detail, /#ifdef USE_NORMALMAP_TANGENTSPACE\s*mat2 slateTurn = mat2\(0\.8000, 0\.6000, -0\.6000, 0\.8000\);/);
+  assert.match(detail, /texture2D\(normalMap, slateTurn\*vNormalMapUv\*3\.7\)/);
+  assert.match(detail, /float slateNear = 1\.0 - smoothstep\(6\.0, 18\.0, length\(vViewPosition\)\);/);
+  assert.match(detail, /mapN\.xy \+= \(slateDetailN\.xy\*slateTurn\)\*\(0\.7\*slateNear\);\s*normal = normalize\(tbn\*mapN\);\s*#endif/);
+  assert.equal((fragment.match(/texture2D\(normalMap/g) || []).length, 1, "one extra normal-map fetch");
+  assert.ok(SLATE_DETAIL.scale > 3 && SLATE_DETAIL.scale % 1 !== 0, "a non-integer ratio keeps the detail off the base tile's mirror seams");
+  material.dispose();
+});
+
+test("the film ground material follows the mode, so loading and fallback surfaces match", async () => {
+  const { filmGroundSurface, FILM_EARTH_SURFACE } = await import("../src/scene/mud-ground.js");
+  globalThis.window ??= { BabelSite: {} };
+  await import("../src/scene/palette.js");
+  const surface = globalThis.window.BabelSite.scene.GROUND_SURFACE_MATERIAL;
+  assert.equal(surface.filmColor, 0x5c5048);
+  assert.equal(FILM_EARTH_SURFACE.color, 0x615447);
+  const slate = { color: surface.filmColor, roughness: 0.98, metalness: 0, slate: true };
+  const earthTone = { color: 0x615447, roughness: 0.93, metalness: 0, slate: false };
+  const mud = { color: 0xffffff, roughness: 1, metalness: 0, slate: false };
+  for (const [input, expected, label] of [
+    // The default film slate, with its maps or with the procedural loading/fallback surface.
+    [{ film: true, slate: true }, slate, "slate film"],
+    // ground=desert, ground=procedural and the ground=earth loading/fallback surface.
+    [{ film: true, slate: false }, earthTone, "earth-tone film comparisons"],
+    // ground=earth once its maps load: untinted mud maps.
+    [{ film: true, slate: false, muddy: true }, mud, "muddy earth"],
+    [{ film: true, slate: true, muddy: true }, mud, "mud never takes the slate"],
+    // Without film (before activation, legacy or comparison pages).
+    [{ film: false, slate: true }, { color: 0x5d6574, roughness: 0.98, metalness: 0.02, slate: false }, "non-film"],
+    [{ film: false, slate: false, muddy: true }, mud, "non-film mud"],
+  ])
+    assert.deepEqual(filmGroundSurface({ ...input, surface }), expected, label);
+});
+
+test("both ground shading call sites take the slate flag from the mode-derived surface", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const index = await readFile(new URL("../src/scene/index.js", import.meta.url), "utf8");
+  assert.match(index, /const slateGround = modes\.ground === "slate";/);
+  // onGrassChange
+  assert.match(
+    index,
+    /onGrassChange\(grassDetail\) \{[^}]*const \{ slate \} = filmGroundSurface\(\{ muddy: currentGroundMuddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL \}\);\s*configureMudShading\(material, currentGroundMuddy, quietSetting, filmActive, currentGrass, \{ slate \}\);/,
+  );
+  // onDetailChange: tint, roughness and metalness all come from the same surface.
+  assert.match(
+    index,
+    /const surface = filmGroundSurface\(\{ muddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL \}\);[^]*?configureMudShading\(material, muddy, quietSetting, filmActive, currentGrass, \{ slate: surface\.slate \}\);[^]*?material\.roughness = surface\.roughness;\s*material\.metalness = surface\.metalness;\s*material\.color\.setHex\(surface\.color\);/,
+  );
+  assert.equal((index.match(/configureMudShading\(/g) || []).length, 2);
+});
+
+test("the wet hollows restate the terrain dune field exactly", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const vm = await import("node:vm");
+  const { configureMudShading, terrainDune, TERRAIN_DUNE_TERMS } = await import("../src/scene/mud-ground.js");
+  const window = { BabelSite: {} };
+  vm.runInNewContext(await readFile(new URL("../src/scene/helpers.js", import.meta.url), "utf8"), { window, Math });
+  const { groundHeight } = window.BabelSite.scene;
+  let samples = 0;
+  for (let x = -190; x <= 190; x += 7.3)
+    for (let z = -190; z <= 190; z += 6.1) {
+      // Outside the tower and tree terraces, the ground height is the dune field.
+      if (Math.hypot(x, z) < 20 || Math.hypot(x - 55.1, z - 36.1) < 14) continue;
+      assert.ok(Math.abs(groundHeight(x, z) - terrainDune(x, z)) < 1e-12, `${x},${z}`);
+      samples++;
+    }
+  assert.ok(samples > 2500);
+  // The shader carries the same terms, in world x/z.
+  const material = new MeshStandardMaterial();
+  configureMudShading(material, false, true, true, null, { slate: true });
+  const shader = { uniforms: {}, vertexShader: "#include <begin_vertex>", fragmentShader: FILM_CHUNKS };
+  material.onBeforeCompile(shader);
+  // Evaluated per vertex (the dune field spans 100+ units over 3-unit quads);
+  // fragments read the interpolated height.
+  const dune = shader.vertexShader.match(/vSlateDune = (.*);/)[1];
+  assert.match(shader.fragmentShader, /varying float vSlateDune;[^]*float slateHollow = 1\.0 - smoothstep\(-3\.2, -1\.0, vSlateDune\);/);
+  assert.equal(dune.split(" + ").length, TERRAIN_DUNE_TERMS.length);
+  const glsl = new Function("x", "z", `const vMudWorld = { xz: [x, z] };
+    const vec2 = (a, b) => [a, b];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+    const { sin, cos } = Math;
+    return ${dune};`);
+  for (const [x, z] of [[-120, 40], [0, 0], [55.1, 36.1], [73, -91], [150, 150]]) {
+    assert.ok(Math.abs(glsl(x, z) - terrainDune(x, z)) < 1e-9, `${x},${z}`);
+  }
+  material.dispose();
+});

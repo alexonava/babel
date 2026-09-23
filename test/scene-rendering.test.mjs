@@ -4,7 +4,6 @@ import { createSceneRendering } from "../src/scene/rendering.js";
 
 function createProfile() {
   return {
-    antialias: true,
     lighting: {
       ambientIntensity: 0.22,
       directionalIntensity: 2.9,
@@ -24,14 +23,21 @@ function createProfile() {
 test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", () => {
   const calls = [];
   let contextLost = false;
+  let rendererOptions = null;
+  let rendererRatio = 1;
+  let composerRatio = 1;
   const renderer = {
     capabilities: { getMaxAnisotropy: () => 8 },
     domElement: {},
     outputColorSpace: null,
     shadowMap: {},
     getContext: () => ({ isContextLost: () => contextLost }),
+    getPixelRatio: () => rendererRatio,
     setClearColor: (...args) => calls.push(["clear", ...args]),
-    setPixelRatio: (value) => calls.push(["pixelRatio", value]),
+    setPixelRatio: (value) => {
+      rendererRatio = value;
+      calls.push(["pixelRatio", value]);
+    },
     setSize: (...args) => calls.push(["rendererSize", ...args]),
   };
   const composer = {
@@ -39,6 +45,10 @@ test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", 
     render: () => {
       if (contextLost) throw new TypeError("Shader log is null before contextlost dispatch");
       calls.push(["render"]);
+    },
+    setPixelRatio: (value) => {
+      composerRatio = value;
+      calls.push(["composerPixelRatio", value]);
     },
     setSize: (...args) => calls.push(["composerSize", ...args]),
   };
@@ -63,7 +73,10 @@ test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", 
     },
     createOutlinePass: () => outline,
     createPipeline: () => pipeline,
-    createRenderer: () => renderer,
+    createRenderer: (options) => {
+      rendererOptions = options;
+      return renderer;
+    },
     disposeResources(options) {
       disposedOptions = options;
       return { geometries: 1 };
@@ -101,7 +114,15 @@ test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", 
   assert.equal(rendering.lights.fill.intensity, 0.58);
   assert.equal(rendering.ensureOutlinePass(), outline);
   assert.equal(rendering.ensureOutlinePass(), outline);
+  assert.equal(rendererOptions.antialias, false, "only the composer targets multisample");
   rendering.applyQuality(profile, { pixelRatio: 1.5 });
+  assert.equal(rendererRatio, 1.5);
+  assert.equal(composerRatio, rendererRatio, "composer targets follow the canvas pixel ratio");
+  assert.equal(
+    calls.some((entry) => entry[0] === "postprocessSize"),
+    false,
+    "the ink contour's CSS-pixel texels ignore the pixel ratio",
+  );
   assert.equal(rendering.lights.fill.intensity, 0.31);
   rendering.setGroundedLighting(true);
   assert.equal(rendering.lights.sun.color.getHex(), 0xd9e2f2);
@@ -173,9 +194,20 @@ test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", 
     calls.find((entry) => entry[0] === "pixelRatio"),
     ["pixelRatio", 1.5],
   );
+  assert.equal(composerRatio, 1.5, "applyQuality without a ratio keeps the composer's");
   assert.deepEqual(
-    calls.find((entry) => entry[0] === "postprocessSize"),
+    calls.findLast((entry) => entry[0] === "composerSize"),
+    ["composerSize", 900, 400],
+  );
+  assert.deepEqual(
+    calls.findLast((entry) => entry[0] === "postprocessSize"),
     ["postprocessSize", 900, 400],
+    "grading texels are CSS pixels",
+  );
+  assert.equal(
+    calls.some((entry) => entry[0] === "outlineSize"),
+    false,
+    "the composer sizes the outline pass in device pixels",
   );
   assert.ok(calls.some((entry) => entry[0] === "render"));
   assert.deepEqual(rendering.dispose(), { geometries: 1 });
@@ -184,4 +216,148 @@ test("scene rendering owns quality, sizing, rendering, and disposal lifecycle", 
   assert.deepEqual(disposedOptions.renderTargets, [renderTarget]);
   assert.equal(outline.enabled, false);
   assert.deepEqual(outline.selectedObjects, []);
+});
+
+test("static shadows redraw the sun map only after reported changes", () => {
+  const listeners = {};
+  const renderer = {
+    capabilities: { getMaxAnisotropy: () => 8 },
+    domElement: {
+      addEventListener: (name, handler) => (listeners[name] = handler),
+      removeEventListener: (name) => delete listeners[name],
+    },
+    shadowMap: {},
+    setClearColor() {},
+    setPixelRatio() {},
+    setSize() {},
+  };
+  const pipeline = {
+    composer: { addPass() {}, render() {}, setPixelRatio() {}, setSize() {} },
+    setQualityProfile() {},
+  };
+  const profile = createProfile();
+  const rendering = createSceneRendering({
+    container: { appendChild() {} },
+    createPipeline: () => pipeline,
+    createRenderer: () => renderer,
+    disposeResources: () => ({}),
+    height: 600,
+    lighting: {
+      ambientColor: 0xffffff,
+      ambientIntensity: 0.22,
+      directionalColor: 0xffffff,
+      directionalIntensity: 2.9,
+      directionalPosition: { x: 21, y: 29, z: 23 },
+      fogColor: 0x222222,
+      fogFar: 150,
+      fogNear: 62,
+      hemisphereGroundColor: 0x111111,
+      hemisphereIntensity: 0.71,
+      hemisphereSkyColor: 0x888888,
+    },
+    profile,
+    threeExports: {},
+    width: 800,
+    world: {
+      CAMERA_FAR: 210,
+      CAMERA_FOV: 48,
+      CAMERA_NEAR: 0.5,
+      FILL_LIGHT_POSITION: [-20, 14, -18],
+      SHADOW_CAMERA_FAR: 120,
+      SHADOW_CAMERA_HALF_EXTENT: 34,
+      SHADOW_CAMERA_NEAR: 0.5,
+    },
+  });
+  const shadow = rendering.lights.sun.shadow;
+  // Three clears needsUpdate after drawing the map; model that consumption.
+  const redraws = (change) => {
+    shadow.needsUpdate = false;
+    change();
+    return shadow.needsUpdate;
+  };
+
+  assert.equal(shadow.autoUpdate, true, "legacy/animated scenes keep per-frame shadows");
+  rendering.setStaticShadows(true);
+  assert.equal(shadow.autoUpdate, false);
+  assert.equal(shadow.needsUpdate, true, "the first static frame draws the map");
+
+  assert.equal(redraws(() => rendering.applyQuality(profile)), true);
+  assert.equal(redraws(() => rendering.resize({ height: 400, width: 900 })), true);
+  assert.equal(redraws(() => rendering.setFilmTreatment(true)), true);
+  const focus = rendering.lights.sun.target.position.clone().set(55, 8, 36);
+  assert.equal(redraws(() => rendering.focusFilmShadow(focus, 12)), true);
+  assert.equal(
+    redraws(() => rendering.focusFilmShadow(focus.clone(), 12)),
+    false,
+    "an unchanged shot focus keeps the drawn map",
+  );
+  assert.equal(redraws(() => rendering.focusFilmShadow(focus.clone().setX(0), 12)), true);
+  assert.equal(redraws(() => rendering.setGroundedLighting(true)), true);
+  assert.equal(redraws(() => rendering.invalidateShadows()), true);
+  assert.equal(redraws(() => listeners.webglcontextrestored?.({})), true);
+  assert.equal(redraws(() => rendering.update()), false, "an ordinary frame keeps the map");
+
+  rendering.setStaticShadows(false);
+  assert.equal(shadow.autoUpdate, true, "a legacy world restores per-frame redraws");
+  rendering.dispose();
+  assert.equal(rendering.setStaticShadows(true), false);
+  assert.equal(shadow.autoUpdate, true);
+});
+
+test("the outline pass exists only when the developer tools supply its factory", () => {
+  const added = [];
+  const rendering = createSceneRendering({
+    container: { appendChild() {} },
+    createPipeline: () => ({
+      composer: { addPass: (pass) => added.push(pass), render() {}, setPixelRatio() {}, setSize() {} },
+      setQualityProfile() {},
+    }),
+    createRenderer: () => ({ domElement: {}, shadowMap: {}, setClearColor() {} }),
+    disposeResources: () => ({}),
+    height: 600,
+    lighting: {
+      ambientColor: 0xffffff,
+      ambientIntensity: 0.22,
+      directionalColor: 0xffffff,
+      directionalIntensity: 2.9,
+      directionalPosition: { x: 21, y: 29, z: 23 },
+      fogColor: 0x222222,
+      fogFar: 150,
+      fogNear: 62,
+      hemisphereGroundColor: 0x111111,
+      hemisphereIntensity: 0.71,
+      hemisphereSkyColor: 0x888888,
+    },
+    profile: createProfile(),
+    threeExports: {},
+    width: 800,
+    world: {
+      CAMERA_FAR: 210,
+      CAMERA_FOV: 48,
+      CAMERA_NEAR: 0.5,
+      FILL_LIGHT_POSITION: [-20, 14, -18],
+      SHADOW_CAMERA_FAR: 120,
+      SHADOW_CAMERA_HALF_EXTENT: 34,
+      SHADOW_CAMERA_NEAR: 0.5,
+    },
+  });
+
+  // Visitors' rendering carries no OutlinePass constructor of its own.
+  assert.equal(rendering.ensureOutlinePass(), null);
+  assert.equal(rendering.outlinePass, null);
+  assert.deepEqual(added, []);
+
+  const outline = { hiddenEdgeColor: { set() {} }, visibleEdgeColor: { set() {} } };
+  const created = [];
+  const factory = (size, homeScene, camera) => {
+    created.push([size.x, size.y, homeScene, camera]);
+    return outline;
+  };
+  assert.equal(rendering.ensureOutlinePass(factory), outline);
+  assert.equal(rendering.ensureOutlinePass(factory), outline, "the pass is created once");
+  assert.deepEqual(created, [[800, 600, rendering.homeScene, rendering.camera]]);
+  assert.deepEqual(added, [outline]);
+  assert.equal(outline.enabled, false, "the pass waits for a developer-camera target");
+  rendering.dispose();
+  assert.equal(rendering.ensureOutlinePass(factory), null, "a disposed rendering adds no pass");
 });

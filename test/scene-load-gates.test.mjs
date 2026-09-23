@@ -10,6 +10,17 @@ const projectRoot = path.resolve(testDir, "..");
 const mainSourcePath = path.join(projectRoot, "src", "main.js");
 const qualitySourcePath = path.join(projectRoot, "src", "scene", "quality.js");
 const webglProbePath = path.join(projectRoot, "src", "shared", "webgl-probe.js");
+// The UI bundle names only each tier's tower and tree (build.mjs).
+const ARCHITECTURE_URLS = Object.fromEntries(
+  ["high", "balanced"].map((tier) => [
+    tier,
+    Object.fromEntries(
+      ["tower", "tree"].map((role) => [role, `/images/architecture/${role}-${tier}.0123abcd.glb`]),
+    ),
+  ]),
+);
+// Hardware limits that select the high tier on a desktop-sized viewport.
+const CAPABLE = { maxAnisotropy: 16, maxTextureSize: 8192, prefetch: true };
 
 function createScriptElement(onRemove) {
   const listeners = new Map();
@@ -54,8 +65,15 @@ function createMutableChangeTarget(initialMatches = false) {
 }
 
 function createContext({
+  hardwareConcurrency,
   height = 720,
+  hidden = false,
+  initResult = true,
   logger = console,
+  maxAnisotropy = 1,
+  maxTextureSize = 0,
+  modulePreloads,
+  prefetch = false,
   reducedMotion = false,
   saveData = false,
   scriptOutcomes = ["load"],
@@ -67,7 +85,12 @@ function createContext({
 } = {}) {
   const host = { hidden: false };
   const scripts = [];
+  const links = [];
+  const events = [];
+  const fetches = [];
   const domContentLoadedListeners = new Set();
+  const visibilityListeners = new Set();
+  const pendingScripts = [];
   const idleCallbacks = [];
   const motionQuery = createMutableChangeTarget(reducedMotion);
   const dataQuery = createMutableChangeTarget(saveData);
@@ -104,17 +127,29 @@ function createContext({
     },
     requestAnimationFrame() {},
   };
-  const navigator = { connection };
+  const navigator = { connection, hardwareConcurrency };
+  const loadScript = (script) => {
+    window.BabelSite.scene.initHomeScene = () => initResult;
+    script.dispatch("load");
+  };
   const document = {
+    hidden,
     readyState: "loading",
     head: {
       appendChild(script) {
+        if (script.rel === "modulepreload") {
+          links.push(script);
+          events.push(`modulepreload:${script.href}`);
+          return;
+        }
         scriptAppendCount += 1;
         scripts.push(script);
+        events.push("script");
         const outcome = scriptOutcomes.shift() || "load";
         if (outcome === "load") {
-          window.BabelSite.scene.initHomeScene = () => true;
-          script.dispatch("load");
+          loadScript(script);
+        } else if (outcome === "pending") {
+          pendingScripts.push(script);
         } else {
           script.dispatch("error", new Error("Simulated scene script failure"));
         }
@@ -122,8 +157,13 @@ function createContext({
     },
     addEventListener(type, handler) {
       if (type === "DOMContentLoaded") domContentLoadedListeners.add(handler);
+      if (type === "visibilitychange") visibilityListeners.add(handler);
+    },
+    removeEventListener(type, handler) {
+      if (type === "visibilitychange") visibilityListeners.delete(handler);
     },
     createElement(tagName) {
+      if (tagName === "link") return { tagName: "LINK" };
       if (tagName === "script") {
         return createScriptElement((script) => {
           const index = scripts.indexOf(script);
@@ -136,10 +176,14 @@ function createContext({
             webglProbeCount += 1;
             if (!webgl) return null;
             return {
+              MAX_TEXTURE_SIZE: 0x0d33,
               RENDERER: 0x1f01,
               getExtension(name) {
                 if (name === "WEBGL_debug_renderer_info") {
                   return { UNMASKED_RENDERER_WEBGL: 0x9246 };
+                }
+                if (name === "EXT_texture_filter_anisotropic") {
+                  return { MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0x84ff };
                 }
                 if (name === "WEBGL_lose_context") {
                   return {
@@ -154,6 +198,8 @@ function createContext({
                 if (parameter === 0x9246 || parameter === 0x1f01) {
                   return softwareRenderer || "ANGLE (NVIDIA GeForce)";
                 }
+                if (parameter === 0x0d33) return maxTextureSize;
+                if (parameter === 0x84ff) return maxAnisotropy;
                 return null;
               },
             };
@@ -173,6 +219,8 @@ function createContext({
           },
         };
       }
+      const preloadMatch = selector.match(/^link\[rel="modulepreload"\]\[href="(.+)"\]$/);
+      if (preloadMatch) return links.find((link) => link.href === preloadMatch[1]) || null;
       const dynamicScriptMatch = selector.match(/^script\[data-dynamic-src="(.+)"\]$/);
       if (dynamicScriptMatch) {
         return scripts.find((script) => script.dataset.dynamicSrc === dynamicScriptMatch[1]) || null;
@@ -181,16 +229,35 @@ function createContext({
     },
   };
 
+  const context = {
+    window,
+    document,
+    navigator,
+    console: logger,
+    URLSearchParams,
+    requestAnimationFrame: window.requestAnimationFrame,
+    setTimeout() {},
+  };
+  // The build names the scene entry's statically imported chunks in the UI bundle.
+  if (modulePreloads) context.__BABEL_SCENE_MODULE_PRELOADS__ = modulePreloads;
+  // The build defines the hashed model manifest in the UI bundle; fetch is
+  // recorded and left pending, as a download in flight.
+  if (prefetch) {
+    Object.assign(context, {
+      __BABEL_ARCHITECTURE_PREFETCH_URLS__: ARCHITECTURE_URLS,
+      AbortController,
+      fetch(url, options) {
+        events.push(`fetch:${url}`);
+        fetches.push({ url, options });
+        return new Promise(() => {});
+      },
+    });
+  }
+
   return {
-    context: {
-      window,
-      document,
-      navigator,
-      console: logger,
-      URLSearchParams,
-      requestAnimationFrame: window.requestAnimationFrame,
-      setTimeout() {},
-    },
+    context,
+    events,
+    fetches,
     host,
     connection,
     dataQuery,
@@ -201,7 +268,18 @@ function createContext({
     async flushIdleCallbacks() {
       await Promise.all(idleCallbacks.splice(0).map((callback) => callback()));
     },
+    loadPendingScripts() {
+      pendingScripts.splice(0).forEach(loadScript);
+    },
+    setHidden(value) {
+      document.hidden = Boolean(value);
+      for (const handler of [...visibilityListeners]) handler({ type: "visibilitychange" });
+    },
+    get visibilityListenerCount() {
+      return visibilityListeners.size;
+    },
     motionQuery,
+    links,
     scripts,
     getScriptAppendCount: () => scriptAppendCount,
     getContextLossCount: () => contextLossCount,
@@ -354,6 +432,43 @@ test("scene loader reads the inert metadata content as the deferred bundle URL",
   assert.equal(loaded, true);
   assert.equal(scripts.length, 1);
   assert.equal(scripts[0].src, "/scripts/scene.content-hash.js");
+  // The split scene entry imports its chunks, so it must load as an ES module
+  // (deferred by nature; a classic defer flag would be meaningless).
+  assert.equal(scripts[0].type, "module");
+  assert.equal(scripts[0].defer, undefined);
+});
+
+test("scene loader preloads the entry's static chunks beside the module script, once", async () => {
+  const shared = "/scripts/scene.shared.0123abcd.js";
+  const harness = createContext({
+    logger: { warn() {} },
+    modulePreloads: [shared],
+    sceneUrl: "/scripts/scene.content-hash.js",
+    scriptOutcomes: ["error", "load"],
+  });
+  await loadMainWithQuality(harness.context);
+
+  assert.equal(await harness.context.window.BabelSite.ensureSceneReady(), false);
+  // The preload starts with the entry request rather than after the entry
+  // has downloaded and been parsed.
+  assert.deepEqual(harness.events.slice(0, 2), [`modulepreload:${shared}`, "script"]);
+  assert.equal(harness.links.length, 1);
+  assert.equal(harness.links[0].rel, "modulepreload");
+  assert.equal(harness.links[0].href, shared);
+
+  // A retry appends the entry again but reuses the earlier preload link.
+  assert.equal(await harness.context.window.BabelSite.ensureSceneReady(), true);
+  assert.equal(harness.getScriptAppendCount(), 2);
+  assert.equal(harness.links.length, 1);
+  assert.equal(harness.scripts[0].type, "module");
+});
+
+test("without a build-defined chunk list the scene loader adds no preload", async () => {
+  const harness = createContext();
+  await loadMainWithQuality(harness.context);
+  assert.equal(await harness.context.window.BabelSite.ensureSceneReady(), true);
+  assert.equal(harness.links.length, 0);
+  assert.equal(harness.scripts.length, 1);
 });
 
 test("scene loader removes a failed script so a later call can retry", async () => {
@@ -393,4 +508,114 @@ test("scene gate has no user-agent, Lighthouse, or phone-viewport escape hatch",
 
   assert.doesNotMatch(source, /userAgent|Lighthouse|Chrome-Lighthouse/i);
   assert.doesNotMatch(source, /shortSide|longSide|phoneViewport/);
+});
+
+test("the live scene requests its startup tier's tower and tree at low priority after its bundle", async () => {
+  for (const [options, tier] of [
+    [{}, "high"],
+    [{ hardwareConcurrency: 4 }, "balanced"],
+    [{ search: "?quality=balanced" }, "balanced"],
+    [{ reducedMotion: true, search: "?quality=high" }, "high"],
+  ]) {
+    const harness = createContext({ ...CAPABLE, ...options });
+    await loadMainWithQuality(harness.context);
+
+    assert.equal(await harness.context.window.BabelSite.ensureSceneReady(), true);
+
+    const urls = [ARCHITECTURE_URLS[tier].tower, ARCHITECTURE_URLS[tier].tree];
+    assert.deepEqual(harness.events, ["script", ...urls.map((url) => `fetch:${url}`)]);
+    for (const { options: init } of harness.fetches) {
+      assert.equal(init.priority, "low");
+      assert.equal(init.signal.aborted, false);
+    }
+    const prefetched = harness.context.window.BabelSite.scene.prefetched;
+    assert.deepEqual([...prefetched.keys()], urls);
+    assert.equal(typeof prefetched.get(urls[0]).abort, "function");
+    assert.equal(typeof prefetched.get(urls[0]).response.then, "function");
+
+    assert.equal(await harness.context.window.BabelSite.ensureSceneReady(), true);
+    assert.equal(harness.fetches.length, 2, "an initialized scene requests nothing again");
+  }
+});
+
+test("static poster paths, the low tier and comparison models make no early model request", async () => {
+  for (const options of [
+    { reducedMotion: true },
+    { saveData: true },
+    { softwareRenderer: "Google SwiftShader" },
+    { webgl: false },
+    { search: "?quality=low" },
+    { saveData: true, search: "?sceneDebug=1" },
+    { search: "?architecture=assembled" },
+    { search: "?architecture=classic" },
+    { maxTextureSize: 0 },
+  ]) {
+    const harness = createContext({ ...CAPABLE, ...options });
+    await loadMainWithQuality(harness.context);
+
+    await harness.context.window.BabelSite.ensureSceneReady();
+
+    assert.equal(harness.fetches.length, 0, JSON.stringify(options));
+    assert.equal(harness.context.window.BabelSite.scene.prefetched, undefined);
+  }
+});
+
+test("a failed scene bundle or initialization releases the early model requests", async () => {
+  for (const options of [
+    { logger: { warn() {} }, scriptOutcomes: ["error", "load"] },
+    { initResult: false },
+  ]) {
+    const harness = createContext({ ...CAPABLE, ...options });
+    await loadMainWithQuality(harness.context);
+
+    assert.equal(await harness.context.window.BabelSite.ensureSceneReady(), false);
+
+    assert.equal(harness.host.hidden, true);
+    assert.equal(harness.fetches.length, 2);
+    assert.ok(harness.fetches.every(({ options: init }) => init.signal.aborted));
+    assert.equal(harness.context.window.BabelSite.scene.prefetched.size, 0);
+  }
+
+  const retry = createContext({
+    ...CAPABLE,
+    logger: { warn() {} },
+    scriptOutcomes: ["error", "load"],
+  });
+  await loadMainWithQuality(retry.context);
+  await retry.context.window.BabelSite.ensureSceneReady();
+  assert.equal(await retry.context.window.BabelSite.ensureSceneReady(), true);
+  assert.equal(retry.fetches.length, 2, "a retried bundle leaves model requests to the scene");
+});
+
+test("a hidden page requests models only if it is shown while the bundle still loads", async () => {
+  const urls = [ARCHITECTURE_URLS.high.tower, ARCHITECTURE_URLS.high.tree];
+  const shown = createContext({ ...CAPABLE, hidden: true, scriptOutcomes: ["pending"] });
+  await loadMainWithQuality(shown.context);
+  const ready = shown.context.window.BabelSite.ensureSceneReady();
+  assert.equal(shown.fetches.length, 0, "a background tab downloads no models");
+  shown.setHidden(true);
+  assert.equal(shown.fetches.length, 0);
+  shown.setHidden(false);
+  assert.deepEqual(
+    shown.fetches.map(({ url }) => url),
+    urls,
+    "shown before the scene initializes, the page requests the startup tier's models",
+  );
+  assert.equal(shown.visibilityListenerCount, 0);
+  shown.loadPendingScripts();
+  assert.equal(await ready, true);
+  assert.deepEqual([...shown.context.window.BabelSite.scene.prefetched.keys()], urls);
+
+  for (const options of [{}, { logger: { warn() {} }, scriptOutcomes: ["error"] }]) {
+    const settled = createContext({ ...CAPABLE, ...options, hidden: true });
+    await loadMainWithQuality(settled.context);
+    await settled.context.window.BabelSite.ensureSceneReady();
+    assert.equal(settled.visibilityListenerCount, 0, JSON.stringify(options));
+    settled.setHidden(false);
+    assert.equal(
+      settled.fetches.length,
+      0,
+      "an initialized scene requests its own models at its first frame; a failed one needs none",
+    );
+  }
 });

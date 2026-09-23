@@ -132,6 +132,10 @@ class FakeElement {
     this.document.activeElement = this;
   }
 
+  click() {
+    this.dispatchEvent(createEvent("click"));
+  }
+
   contains(node) {
     if (node === this) return true;
     return this.children.some((child) => child.contains(node));
@@ -200,6 +204,14 @@ function createEvent(type, properties = {}) {
   };
 }
 
+// Overlay listeners see bubbled pointer events: the press, the release, and a
+// click on their nearest common ancestor, which is the overlay after a drag.
+function pointerClick(overlay, down = overlay, up = down) {
+  overlay.dispatchEvent(createEvent("pointerdown", { target: down }));
+  overlay.dispatchEvent(createEvent("pointerup", { target: up }));
+  overlay.dispatchEvent(createEvent("click", { target: down === up ? down : overlay }));
+}
+
 function queryAll(nodes, selector) {
   const matches = [];
   for (const node of nodes) {
@@ -259,6 +271,9 @@ function matchesSimpleSelector(element, selector) {
   }
   if (selector.startsWith("#")) {
     return element.id === selector.slice(1);
+  }
+  if (/^(\.[\w-]+)+$/.test(selector)) {
+    return selector.slice(1).split(".").every((name) => element.classList.contains(name));
   }
   return false;
 }
@@ -678,7 +693,7 @@ test("each estate destination returns directly to its own trigger on close, back
       destination.panel.dispatchEvent(createEvent("click", { target: destination.copy }));
       assert.equal(destination.panel.hidden, false, "clicking the writing area keeps the dialog open");
       if (closeBy === "button") destination.close.dispatchEvent(createEvent("click"));
-      else if (closeBy === "backdrop") destination.panel.dispatchEvent(createEvent("click"));
+      else if (closeBy === "backdrop") pointerClick(destination.panel);
       else document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
       assert.equal(destination.panel.hidden, true);
       assert.equal(destination.panel.inert, true);
@@ -751,7 +766,7 @@ test("panel initialization is idempotent without duplicate listeners or toggled-
   for (const item of Object.values(dom.destinations)) {
     assert.equal(listenerCount(item.button), 1);
     assert.equal(listenerCount(item.close), 1);
-    assert.equal(listenerCount(item.panel), 1);
+    assert.equal(listenerCount(item.panel), 3, "backdrop pointerdown, pointerup, and click");
     item.button.dispatchEvent(createEvent("click"));
     assert.equal(item.panel.hidden, false);
     item.close.dispatchEvent(createEvent("click"));
@@ -874,7 +889,7 @@ function createSceneEstateDom(options = {}) {
 
 function dismissPanel(document, panel, close, method) {
   if (method === "button") close.dispatchEvent(createEvent("click"));
-  else if (method === "backdrop") panel.dispatchEvent(createEvent("click"));
+  else if (method === "backdrop") pointerClick(panel);
   else document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
 }
 
@@ -922,6 +937,32 @@ test("scene About opens the map first and each category returns through its dest
       for (const node of dom.backgrounds) assert.equal(node.inert, false);
     }
   }
+});
+
+test("drag-selecting between the paper and backdrop keeps the dialog open", async () => {
+  const dom = createSceneEstateDom();
+  const { document, about, destinations: { contact } } = dom;
+  await loadPanels(dom.window, document);
+  about.entry.dispatchEvent(createEvent("click"));
+  contact.button.dispatchEvent(createEvent("click"));
+  pointerClick(contact.panel, contact.link, contact.panel);
+  assert.equal(contact.panel.hidden, false, "selecting the email out onto the backdrop keeps Contact open");
+  pointerClick(contact.panel, contact.panel, contact.copy);
+  assert.equal(contact.panel.hidden, false, "a selection started on the backdrop keeps Contact open");
+  contact.panel.dispatchEvent(createEvent("pointerdown"));
+  contact.panel.dispatchEvent(createEvent("click", { target: contact.copy }));
+  assert.equal(contact.panel.hidden, false, "a backdrop press that clicks the copy keeps Contact open");
+  contact.panel.dispatchEvent(createEvent("click"));
+  assert.equal(contact.panel.hidden, false, "each click consumes its press");
+  pointerClick(contact.panel);
+  assert.equal(contact.panel.hidden, true, "a press and click on the backdrop still dismiss");
+  assert.equal(about.panel.hidden, false);
+  assert.equal(document.activeElement, contact.button);
+  pointerClick(about.panel, about.map, about.panel);
+  assert.equal(about.panel.hidden, false, "the About map ignores a drag onto its backdrop");
+  pointerClick(about.panel);
+  assert.equal(about.panel.hidden, true);
+  assert.equal(document.activeElement, about.entry);
 });
 
 test("the nested estate traps keyboard focus among Close and its three destinations", async () => {
@@ -1012,7 +1053,7 @@ test("repeated initialization while a child is open preserves nested navigation 
   for (const item of Object.values(destinations)) {
     assert.equal(listenerCount(item.button), 1);
     assert.equal(listenerCount(item.close), 1);
-    assert.equal(listenerCount(item.panel), 1);
+    assert.equal(listenerCount(item.panel), 3);
   }
   assert.equal(document.activeElement, destinations.experience.close);
   document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
@@ -1020,4 +1061,126 @@ test("repeated initialization while a child is open preserves nested navigation 
   document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
   assert.equal(document.activeElement, about.entry);
   assert.equal(about.panel.hidden, true);
+});
+
+// Dialog changes are announced on the document for URL and scene listeners.
+class FakeCustomEvent {
+  constructor(type, init = {}) {
+    this.type = type;
+    this.detail = init.detail;
+  }
+}
+
+function recordPanelChanges(dom) {
+  dom.window.CustomEvent = FakeCustomEvent;
+  const changes = [];
+  dom.document.addEventListener("babel:panelchange", (event) => {
+    changes.push({
+      ...event.detail,
+      panelOpen: dom.document.body.getAttribute("data-panel-open"),
+      focus: dom.document.activeElement,
+    });
+  });
+  return changes;
+}
+
+test("each open and close announces the dialog now showing after the page settles", async () => {
+  for (const method of ["button", "backdrop", "Escape"]) {
+    const dom = createSceneEstateDom();
+    const { document, about, destinations: { profile } } = dom;
+    const changes = recordPanelChanges(dom);
+    await loadPanels(dom.window, document);
+    about.entry.dispatchEvent(createEvent("click"));
+    profile.button.dispatchEvent(createEvent("click"));
+    dismissPanel(document, profile.panel, profile.close, method);
+    dismissPanel(document, about.panel, about.close, method);
+    assert.deepEqual(
+      changes.map(({ id, open }) => [id, open]),
+      [["about", true], ["profile", true], ["about", true], [null, false]],
+      `${method}: switching to a category never reports an intermediate close`,
+    );
+    assert.equal(changes[0].focus, about.close, "announced after focus moves into About");
+    assert.equal(changes[1].focus, profile.close);
+    assert.equal(changes[2].focus, profile.button, "announced after focus returns to the map");
+    assert.ok(changes.slice(0, 3).every((change) => change.panelOpen === "true"));
+    assert.equal(changes[3].panelOpen, null);
+    assert.equal(changes[3].focus, about.entry, "announced after focus returns to the scene");
+  }
+});
+
+test("direct dialogs announce their open and final close", async () => {
+  const dom = createEstateDom();
+  const changes = recordPanelChanges(dom);
+  await loadPanels(dom.window, dom.document);
+  const { contact, experience } = dom.destinations;
+  contact.button.dispatchEvent(createEvent("click"));
+  contact.close.dispatchEvent(createEvent("click"));
+  experience.button.dispatchEvent(createEvent("click"));
+  experience.button.dispatchEvent(createEvent("click"));
+  assert.deepEqual(
+    changes.map(({ id, open }) => [id, open]),
+    [["contact", true], [null, false], ["experience", true], [null, false]],
+  );
+});
+
+test("a deep link opens its category through About so Back and Escape step out normally", async () => {
+  const deepLinksSource = await readFile(
+    path.join(projectRoot, "src", "ui", "deep-links.js"),
+    "utf8",
+  );
+  const dom = createSceneEstateDom();
+  const { document, about, destinations } = dom;
+  const hashListeners = [];
+  const urls = [];
+  Object.assign(dom.window, {
+    CustomEvent: FakeCustomEvent,
+    location: { pathname: "/", search: "", hash: "#contact-text" },
+    history: {
+      state: null,
+      replaceState(state, title, url) {
+        urls.push(url);
+        dom.window.location.hash = url.includes("#") ? url.slice(url.indexOf("#")) : "";
+      },
+    },
+    addEventListener(type, handler) {
+      if (type === "hashchange") hashListeners.push(handler);
+    },
+  });
+  const followHash = (hash) => {
+    dom.window.location.hash = hash;
+    hashListeners.forEach((handler) => handler({ type: "hashchange" }));
+  };
+  await loadPanels(dom.window, document);
+  vm.runInNewContext(deepLinksSource, { window: dom.window, document }, {
+    filename: "src/ui/deep-links.js",
+  });
+  assert.equal(dom.window.BabelSite.ui.initDeepLinks(), true);
+
+  assert.equal(destinations.contact.panel.hidden, false);
+  assert.equal(about.panel.hidden, true);
+  assert.equal(about.entry.getAttribute("aria-expanded"), "true");
+  assert.equal(document.activeElement, destinations.contact.close);
+  assert.equal(dom.window.location.hash, "#contact");
+  document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
+  assert.equal(about.panel.hidden, false, "Escape returns to the map");
+  assert.equal(document.activeElement, destinations.contact.button);
+  assert.equal(dom.window.location.hash, "#about");
+  document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
+  assert.equal(about.panel.hidden, true);
+  assert.equal(document.activeElement, about.entry);
+  assert.equal(dom.window.location.hash, "");
+  assert.equal(urls.at(-1), "/");
+
+  followHash("#experience");
+  assert.equal(destinations.experience.panel.hidden, false);
+  followHash("#profile");
+  assert.equal(destinations.experience.panel.hidden, true);
+  assert.equal(destinations.profile.panel.hidden, false);
+  destinations.profile.close.dispatchEvent(createEvent("click"));
+  assert.equal(about.panel.hidden, false, "Back returns to the map after a hash switch");
+  assert.equal(document.activeElement, destinations.profile.button);
+  about.close.dispatchEvent(createEvent("click"));
+  assert.equal(document.activeElement, about.entry);
+  assert.equal(document.body.getAttribute("data-panel-open"), null);
+  assert.equal(dom.window.location.hash, "");
 });

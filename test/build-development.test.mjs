@@ -8,7 +8,7 @@ import { publishBuild, validateOutputDirectory } from "../tools/build-output.mjs
 import { createRebuildQueue, isBuildInput, startWatching } from "../tools/watch.mjs";
 import { assertPortAvailable, parseDevOptions } from "../tools/dev.mjs";
 import { spawnOwned } from "../tools/owned-process.mjs";
-import { BUILD_INPUT_FILES, BUILD_INPUT_DIRS } from "../build.mjs";
+import { BUILD_INPUT_FILES, BUILD_INPUT_DIRS, contentDateModified } from "../build.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scratchRoot = path.join(projectRoot, ".tmp-preview-review");
@@ -82,6 +82,40 @@ test("staged builds retain the last good payload after errors and keep prior has
     prepare: prepare("33333333", "third"),
   });
   assert.deepEqual(await readdir(path.join(output, "scripts")), ["app.33333333.js"]);
+});
+
+test("watch builds retain an open page's split scene chunks until a full build", async (t) => {
+  const root = await fixture(t);
+  const output = path.join(root, "output");
+  // A page still showing an older entry may lazily import its developer chunk.
+  const prepare = (hash) => async (directory) => {
+    await mkdir(path.join(directory, "scripts"));
+    for (const name of [`scene.${hash}`, `scene.shared.${hash}`, `scene.developer-tools.${hash}`]) {
+      await writeFile(path.join(directory, "scripts", `${name}.js`), hash);
+    }
+    await writeFile(path.join(directory, "index.html"), hash);
+  };
+  await publishBuild({ projectRoot: root, outputDirectory: output, prepare: prepare("aaaaaaaa") });
+  await publishBuild({
+    projectRoot: root,
+    outputDirectory: output,
+    retainAssets: true,
+    prepare: prepare("bbbbbbbb"),
+  });
+  assert.deepEqual((await readdir(path.join(output, "scripts"))).sort(), [
+    "scene.aaaaaaaa.js",
+    "scene.bbbbbbbb.js",
+    "scene.developer-tools.aaaaaaaa.js",
+    "scene.developer-tools.bbbbbbbb.js",
+    "scene.shared.aaaaaaaa.js",
+    "scene.shared.bbbbbbbb.js",
+  ]);
+  await publishBuild({ projectRoot: root, outputDirectory: output, prepare: prepare("cccccccc") });
+  assert.deepEqual((await readdir(path.join(output, "scripts"))).sort(), [
+    "scene.cccccccc.js",
+    "scene.developer-tools.cccccccc.js",
+    "scene.shared.cccccccc.js",
+  ]);
 });
 
 test("output safety rejects source paths and nonempty directories that this builder does not own", async (t) => {
@@ -165,6 +199,20 @@ test("watch classification covers every published input and ignores generated ou
   ]) {
     assert.equal(isBuildInput(file, inputs), false, `${file} must not create a rebuild loop`);
   }
+});
+
+test("sitemap lastmod reads dateModified only from index.md front matter", () => {
+  assert.equal(
+    contentDateModified("---\ntitle: A\ndateModified: 2026-09-11\n---\n# A\n"),
+    "2026-09-11",
+  );
+  assert.equal(
+    contentDateModified('\uFEFF---\r\ndateModified: "2026-01-02"\r\n---\r\n'),
+    "2026-01-02",
+  );
+  assert.equal(contentDateModified("fixture\n"), undefined, "missing front matter falls back");
+  assert.equal(contentDateModified("---\ntitle: A\n---\ndateModified: 2026-09-11\n"), undefined);
+  assert.equal(contentDateModified("---\ndateModified: September\n---\n"), undefined);
 });
 
 test(

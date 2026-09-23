@@ -8,8 +8,11 @@
   function initUi() {
     const ui = site.ui || {};
     if (typeof ui.initHeroChrome === "function") ui.initHeroChrome();
-    if (typeof ui.initSceneMenu === "function") ui.initSceneMenu();
-    else if (typeof ui.initPanels === "function") ui.initPanels();
+    if (typeof ui.initSceneMenu === "function") {
+      // Deep links drive the enhanced dialogs; the fallback keeps native anchors.
+      if (ui.initSceneMenu() === true && typeof ui.initDeepLinks === "function") ui.initDeepLinks();
+    } else if (typeof ui.initPanels === "function") ui.initPanels();
+    if (typeof ui.initSceneControls === "function") ui.initSceneControls();
   }
 
   function initScene() {
@@ -28,6 +31,15 @@
     const metadata = document.querySelector("meta[data-scene-script]");
     const configuredUrl = metadata?.getAttribute?.("content")?.trim();
     return configuredUrl || "/scripts/scene.js";
+  }
+
+  // The build names the chunks the scene entry imports statically (the shared
+  // Three.js chunk). Unaided, the browser finds that import only after it has
+  // downloaded and parsed the entry, one round trip later.
+  function getSceneModulePreloads() {
+    return typeof __BABEL_SCENE_MODULE_PRELOADS__ !== "undefined"
+      ? __BABEL_SCENE_MODULE_PRELOADS__
+      : [];
   }
 
   // src/shared/webgl-probe.js is bundled into both the UI and scene entries so
@@ -136,7 +148,7 @@
     staticRecoveryInstalled = staticRecoveryCleanups.length > 0;
   }
 
-  function loadScriptOnce(src) {
+  function loadScriptOnce(src, modulePreloads = []) {
     const existing = document.querySelector(`script[data-dynamic-src="${src}"]`);
     if (existing) {
       if (existing.dataset.loaded === "true") return Promise.resolve();
@@ -148,8 +160,11 @@
 
     return new Promise((resolve, reject) => {
       const script = document.createElement("script");
+      // The scene entry is an ES module: it imports its shared Three.js chunk
+      // and, for ?sceneDebug=1 only, the developer tools. A module script is
+      // deferred by nature; error also fires when an imported chunk fails.
+      script.type = "module";
       script.src = src;
-      script.defer = true;
       script.dataset.dynamicSrc = src;
       script.addEventListener(
         "load",
@@ -167,8 +182,92 @@
         },
         { once: true },
       );
+      // babel:scene-request starts the span that covers both scene chunks'
+      // downloads and Three.js evaluation, which the scene's own
+      // babel:scene-entry mark (taken after the shared chunk ran) cannot see.
+      try {
+        window.performance?.mark?.("babel:scene-request");
+      } catch {
+        // User Timing is best-effort, as in scene/perf-marks.js.
+      }
+      // Each preloaded chunk downloads beside the entry, and the entry's import
+      // reuses it. A failed preload surfaces as the script's own error. A
+      // retry keeps the earlier link rather than adding another.
+      for (const href of modulePreloads) {
+        if (document.querySelector(`link[rel="modulepreload"][href="${href}"]`)) continue;
+        const link = document.createElement("link");
+        link.rel = "modulepreload";
+        link.href = href;
+        document.head.appendChild(link);
+      }
       document.head.appendChild(script);
     });
+  }
+
+  // The scene used to request its models only after its first frame. Once the
+  // live scene is chosen, request the startup tier's tower and tree beside the
+  // bundle. architecture-assets.js takes a response whose URL matches once and
+  // releases the rest.
+  let modelPrefetchStarted = false;
+  function prefetchArchitectureModels(capabilities) {
+    if (modelPrefetchStarted) return;
+    // A hidden page draws no frame, so the scene would not take the responses,
+    // and a background tab may never be viewed.
+    if (document.hidden === true) {
+      deferPrefetchUntilVisible(capabilities);
+      return;
+    }
+    modelPrefetchStarted = true;
+    const urls =
+      typeof __BABEL_ARCHITECTURE_PREFETCH_URLS__ !== "undefined"
+        ? __BABEL_ARCHITECTURE_PREFETCH_URLS__
+        : null;
+    if (!urls || typeof fetch !== "function" || typeof AbortController !== "function") return;
+    try {
+      // Comparison URLs may select other tower models; they keep the scene's requests.
+      if (new URLSearchParams(window.location?.search || "").has("architecture")) return;
+      const scene = (site.scene = site.scene || {});
+      // Unknown limits would make the scene probe again; do not guess its tier.
+      const caps = scene.qualityCapsFromProbe?.(capabilities);
+      if (!caps || typeof scene.createSceneQualityState !== "function") return;
+      const tierUrls = urls[scene.createSceneQualityState({ caps }).initialTier];
+      if (!tierUrls) return;
+      const prefetched = (scene.prefetched = new Map());
+      for (const url of [tierUrls.tower, tierUrls.tree]) {
+        if (!url) continue;
+        const controller = new AbortController();
+        const response = fetch(url, { priority: "low", signal: controller.signal });
+        response.catch(() => {});
+        prefetched.set(url, { response, abort: () => controller.abort() });
+      }
+    } catch {
+      // The scene requests its own models when an early request cannot start.
+    }
+  }
+
+  // Shown while the bundle still loads, the page makes the early request then.
+  // Once the scene has initialized, its first frame requests the models itself.
+  let deferredPrefetch = null;
+  function deferPrefetchUntilVisible(capabilities) {
+    if (deferredPrefetch || typeof document.addEventListener !== "function") return;
+    deferredPrefetch = () => {
+      if (document.hidden === true) return;
+      cancelDeferredPrefetch();
+      prefetchArchitectureModels(capabilities);
+    };
+    document.addEventListener("visibilitychange", deferredPrefetch);
+  }
+
+  function cancelDeferredPrefetch() {
+    if (!deferredPrefetch) return;
+    document.removeEventListener?.("visibilitychange", deferredPrefetch);
+    deferredPrefetch = null;
+  }
+
+  function releaseArchitecturePrefetch() {
+    const prefetched = site.scene?.prefetched;
+    prefetched?.forEach((entry) => entry.abort());
+    prefetched?.clear();
   }
 
   async function loadAndInitScene() {
@@ -199,10 +298,15 @@
     }
 
     try {
-      await loadScriptOnce(getSceneScriptUrl());
+      const sceneScript = loadScriptOnce(getSceneScriptUrl(), getSceneModulePreloads());
+      // Issued after the bundle request, which keeps its head start.
+      prefetchArchitectureModels(capabilities);
+      await sceneScript;
+      cancelDeferredPrefetch();
       enableSceneHost();
       const initialized = initScene();
       if (!initialized) {
+        releaseArchitecturePrefetch();
         disableSceneHost();
         return false;
       }
@@ -210,6 +314,8 @@
       return true;
     } catch (error) {
       console.warn("Scene bundle failed to load.", error);
+      cancelDeferredPrefetch();
+      releaseArchitecturePrefetch();
       disableSceneHost();
       return false;
     }

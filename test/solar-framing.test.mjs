@@ -33,6 +33,8 @@ async function towerAsset(tier) {
       5126: [Float32Array, "readFloatLE"],
       5125: [Uint32Array, "readUInt32LE"],
       5123: [Uint16Array, "readUInt16LE"],
+      5122: [Int16Array, "readInt16LE"],
+      5120: [Int8Array, "readInt8"],
     };
     const [Type, reader] = types[a.componentType],
       width = Type.BYTES_PER_ELEMENT;
@@ -55,7 +57,7 @@ async function towerAsset(tier) {
 }
 
 for (const tier of ["high", "balanced"])
-  test(tier + " tower keeps the fixed sun clear in the opening Watch shot", async () => {
+  test(tier + " tower keeps the fixed sun clear in the Watch and whole or absent in every tower shot", async () => {
     const window = { BabelSite: {} };
     vm.runInNewContext(await readFile(new URL("../src/scene/world.js", import.meta.url), "utf8"), {
       window,
@@ -108,9 +110,27 @@ for (const tier of ["high", "balanced"])
         hero: { left: 12, right: 341, top: 34, bottom: 253 },
         nav: { top: 738 },
       },
+      // Landscape phone and ultrawide, measured from the live page (hero layout
+      // box and bottom-bar rect): the name sits top-left and bottom-left.
+      {
+        width: 844,
+        height: 390,
+        hero: { left: 16, right: 262, top: 12, bottom: 138 },
+        nav: { top: 296 },
+      },
+      {
+        width: 2560,
+        height: 1080,
+        hero: { left: 141, right: 465, top: 613, bottom: 886 },
+        nav: { top: 962 },
+      },
     ];
+    // The Watch frames the sun. Every other tower shot either leaves the whole
+    // corona out of frame or shows all of it, uncropped, clear of the name and
+    // unoccluded: never hidden behind the lookout, where a small retune could
+    // reveal it between beams or railing bars.
     for (const layout of layouts)
-      for (const angle of [0]) {
+      for (let angle = 0; angle < DIRECTED_SHOTS.tower.length; angle++) {
         const { width, height, hero, nav } = layout;
         const camera = new PerspectiveCamera(
           38,
@@ -141,7 +161,20 @@ for (const tier of ["high", "balanced"])
           const x = ((p.x + 1) * width) / 2,
             y = ((1 - p.y) * height) / 2;
           const label =
-            DIRECTED_SHOTS.tower[angle].name + " " + width + " " + JSON.stringify(sample);
+            DIRECTED_SHOTS.tower[angle].name +
+            " " +
+            width +
+            "x" +
+            height +
+            " " +
+            JSON.stringify(sample);
+          const outOfFrame =
+            depth <= 0 ||
+            x + radius < 0 ||
+            x - radius > width ||
+            y + radius < 0 ||
+            y - radius > height;
+          if (angle > 0 && outOfFrame) continue;
           assert.ok(depth > 0 && depth < camera.far, label + " depth");
           assert.ok(
             x - radius > 10 &&
@@ -176,7 +209,7 @@ for (const tier of ["high", "balanced"])
             assert.equal(
               ray.intersectObject(tower.root, true).length,
               0,
-              label + " roof occlusion",
+              label + " occluded by the lookout",
             );
           }
         }

@@ -1,8 +1,17 @@
-import { Vector2 } from "three";
+import {
+  HalfFloatType,
+  NoBlending,
+  ShaderMaterial,
+  UniformsUtils,
+  Vector2,
+  WebGLRenderTarget,
+} from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { CopyShader } from "three/examples/jsm/shaders/CopyShader.js";
 
 const PASS_VERTEX_SHADER = `
 varying vec2 vUv;
@@ -140,9 +149,73 @@ function getSize(renderer) {
   return new Vector2(1, 1);
 }
 
+// The composer's scene pass. With samples it draws into its own multisampled
+// target, which Three resolves once per frame, and copies the result into the
+// read buffer. Bloom and grading then draw their full-screen quads into
+// single-sample buffers and pay no resolve of their own. Without samples, or as
+// the final pass, it is a plain RenderPass.
+class SceneRenderPass extends RenderPass {
+  constructor(scene, camera) {
+    super(scene, camera);
+    this.samples = 0;
+    this.sampledTarget = null;
+    this.width = 1;
+    this.height = 1;
+    this.copyQuad = new FullScreenQuad(
+      new ShaderMaterial({
+        name: "BabelSceneCopy",
+        uniforms: UniformsUtils.clone(CopyShader.uniforms),
+        vertexShader: CopyShader.vertexShader,
+        fragmentShader: CopyShader.fragmentShader,
+        blending: NoBlending,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+  }
+
+  // Returns whether the count changed; a change replaces the target.
+  setSamples(samples) {
+    if (samples === this.samples) return false;
+    this.samples = samples;
+    this.sampledTarget?.dispose();
+    this.sampledTarget =
+      samples > 0
+        ? new WebGLRenderTarget(this.width, this.height, { type: HalfFloatType, samples })
+        : null;
+    return true;
+  }
+
+  // Device pixels, from the composer.
+  setSize(width, height) {
+    this.width = width;
+    this.height = height;
+    this.sampledTarget?.setSize(width, height);
+  }
+
+  render(renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
+    const target = this.renderToScreen ? null : this.sampledTarget;
+    if (!target) {
+      super.render(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
+      return;
+    }
+    super.render(renderer, writeBuffer, target, deltaTime, maskActive);
+    this.copyQuad.material.uniforms.tDiffuse.value = target.texture;
+    renderer.setRenderTarget(readBuffer);
+    this.copyQuad.render(renderer);
+  }
+
+  dispose() {
+    this.sampledTarget?.dispose();
+    this.sampledTarget = null;
+    this.copyQuad.material.dispose();
+    this.copyQuad.dispose();
+  }
+}
+
 export function createPostprocessPipeline(renderer, scene, camera, qualityProfile, options = {}) {
   const composer = new EffectComposer(renderer);
-  const renderPass = new RenderPass(scene, camera);
+  const renderPass = new SceneRenderPass(scene, camera);
   const size = getSize(renderer);
   const bloomPass = new UnrealBloomPass(size, 0.18, 0.45, 0.9);
   const gradingPass = new ShaderPass(GRADING_SHADER);
@@ -150,6 +223,14 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
   const matchMedia = options.matchMedia || globalThis.window?.matchMedia?.bind(globalThis.window);
   const onInvalidate = typeof options.onInvalidate === "function" ? options.onInvalidate : () => {};
   const transparencyQuery = matchMedia?.("(prefers-reduced-transparency: reduce)");
+
+  // The composer sizes passes in device pixels. Bloom keeps the CSS-pixel
+  // resolution it was reviewed at: its blur radius is counted in its own texels.
+  const setBloomSize = bloomPass.setSize.bind(bloomPass);
+  bloomPass.setSize = (width, height) => {
+    const ratio = renderer.getPixelRatio?.() || 1;
+    setBloomSize(width / ratio, height / ratio);
+  };
 
   composer.addPass(renderPass);
   composer.addPass(bloomPass);
@@ -167,7 +248,6 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
       ? {
           ...baseline,
           bloomStrength: 0.2,
-          celMix: 0,
           contrast: 1.015,
           grainStrength: 0.008,
           highlightWarmMix: 0.12,
@@ -184,7 +264,7 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
     bloomPass.strength = settings.bloomStrength ?? 0.18;
     gradingPass.enabled = gradingEnabled;
     gradingPass.uniforms.uCelMix.value = settings.celMix ?? 0.24;
-    gradingPass.uniforms.uInkMix.value = film ? 0 : 0.14;
+    gradingPass.uniforms.uInkMix.value = 0.14;
     gradingPass.uniforms.uContrast.value = settings.contrast ?? 1.06;
     gradingPass.uniforms.uHighlightWarmMix.value = settings.highlightWarmMix ?? 0.14;
     gradingPass.uniforms.uShadowCoolMix.value = settings.shadowCoolMix ?? 0.25;
@@ -204,9 +284,32 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
     onInvalidate();
   }
 
+  // The scene draws off-screen, so the renderer's own antialias would reach
+  // only the final quad. High multisamples the scene pass's target instead;
+  // half-float multisample storage needs WebGL2 with EXT_color_buffer_float.
+  function applySamples(profile) {
+    const capabilities = renderer.capabilities;
+    const supported =
+      capabilities?.isWebGL2 === true && renderer.extensions?.has?.("EXT_color_buffer_float");
+    const requested = supported ? Math.max(0, Math.floor(profile.postprocessSamples) || 0) : 0;
+    const samples = Math.min(requested, capabilities?.maxSamples ?? requested);
+    if (!renderPass.setSamples(samples)) return;
+    // With its own target the scene leaves only full-screen passes in the
+    // ping-pong targets, which need no depth. Three allocates GPU storage on
+    // first use; disposal forces a rebuild.
+    for (const target of [composer.renderTarget1, composer.renderTarget2]) {
+      target.depthBuffer = samples === 0;
+      target.dispose();
+    }
+  }
+
   let currentProfile = qualityProfile || {};
   applyProfile(currentProfile);
+  applySamples(currentProfile);
 
+  // width and height are CSS pixels. The composer's targets follow device
+  // pixels, but the ink contour keeps sampling one CSS pixel apart, the offset
+  // it was reviewed at.
   function resize(width, height) {
     gradingPass.uniforms.uTexelSize.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
   }
@@ -267,6 +370,7 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
     setQualityProfile(profile = {}) {
       currentProfile = profile;
       applyProfile(currentProfile);
+      applySamples(currentProfile);
     },
     resize,
   };

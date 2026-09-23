@@ -295,6 +295,36 @@ test("tree failure is independent and a controlled tier change retries each role
   balanced.forEach((parsed) => assertReleased(parsed));
 });
 
+test("a pinned asset tier keeps live models through adaptive profile changes without refetching", async () => {
+  for (const towerModel of ["assembled", "complete"]) {
+    const h = harness({ towerModel });
+    const roles = towerModel === "complete" ? ["tower", "tree"] : [...towerRoles, "tree"];
+    // Scene order: quality is applied before the first frame opens the live gate.
+    h.controller.applyQuality({ tier: "balanced" }, { pixelRatio: 1.5, assetTier: "high" });
+    assert.equal(h.requests.length, 0);
+    h.controller.setLive(true);
+    assert.deepEqual(
+      h.requests.map(({ tier }) => tier),
+      roles.map(() => "high"),
+    );
+    const parsed = complete(h, roles);
+    await flush();
+    const statusCount = h.statuses.length;
+    for (const tier of ["balanced", "low", "high", "balanced"]) {
+      assert.equal(h.controller.applyQuality({ tier }, { pixelRatio: 1, assetTier: "high" }), false);
+    }
+    assert.equal(h.controller.setQuality({ tier: "low" }, true, { assetTier: "high" }), false);
+    assert.equal(h.requests.length, roles.length, "no other tier is downloaded");
+    assert.ok(h.requests.every(({ signal }) => !signal.aborted));
+    assert.equal(h.statuses.length, statusCount, "no procedural or loading status is published");
+    assert.ok(!h.events.some((event) => event.endsWith(":restore")), "live models are never blanked");
+    assert.ok(h.statuses.every(({ tier }) => tier === "high"));
+    parsed.forEach((model) => assertReleased(model, 0));
+    h.controller.dispose();
+    parsed.forEach((model) => assertReleased(model));
+  }
+});
+
 test("stale high-quality parses cannot replace or free a newer balanced assembly", async () => {
   const h = harness();
   h.controller.setQuality({ tier: "high" }, true);
@@ -573,5 +603,168 @@ test("an embedded image failure rejects the GLB and closes other decoded images 
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else delete globalThis[key];
     }
+  }
+});
+
+const base = { asset: { version: "2.0" }, scene: 0, scenes: [{ nodes: [] }], nodes: [] };
+// main.js shares early model requests on window.BabelSite.scene.prefetched.
+async function withPrefetched(entries, run) {
+  const previousSite = Object.getOwnPropertyDescriptor(globalThis, "BabelSite");
+  const previousFetch = globalThis.fetch;
+  const prefetched = new Map(entries);
+  const fetches = [];
+  globalThis.BabelSite = { scene: { prefetched } };
+  globalThis.fetch = async (url, options) => {
+    fetches.push({ url, signal: options.signal });
+    if (options.signal.aborted) throw new DOMException("Aborted", "AbortError");
+    return new Response(glb(base));
+  };
+  try {
+    return await run({ prefetched, fetches });
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousSite) Object.defineProperty(globalThis, "BabelSite", previousSite);
+    else delete globalThis.BabelSite;
+  }
+}
+function earlyRequest(response) {
+  const entry = { aborted: 0, response };
+  entry.response.catch(() => {});
+  entry.abort = () => {
+    entry.aborted += 1;
+  };
+  return entry;
+}
+
+test("the real loader consumes a matching early response once, then fetches for itself", async () => {
+  const url = ARCHITECTURE_ASSET_URLS.high.tree;
+  const early = earlyRequest(Promise.resolve(new Response(glb(base))));
+  await withPrefetched([[url, early]], async ({ prefetched, fetches }) => {
+    const signal = new AbortController().signal;
+    const first = await loadArchitectureAsset(url, { signal, tier: "high", role: "tree" });
+    assert.ok(first.scene.isObject3D);
+    assert.equal(fetches.length, 0, "the early response replaces the scene's request");
+    assert.equal(prefetched.has(url), false);
+    assert.equal(early.aborted, 0);
+
+    const second = await loadArchitectureAsset(url, { signal, tier: "high", role: "tree" });
+    assert.ok(second.scene.isObject3D);
+    assert.deepEqual(fetches.map((request) => [request.url, request.signal]), [[url, signal]]);
+  });
+});
+
+test("the real loader ignores an early response for another URL", async () => {
+  const other = earlyRequest(Promise.resolve(new Response(glb(base))));
+  await withPrefetched([[ARCHITECTURE_ASSET_URLS.balanced.tree, other]], async ({ prefetched, fetches }) => {
+    const signal = new AbortController().signal;
+    await loadArchitectureAsset(ARCHITECTURE_ASSET_URLS.high.tree, { signal, tier: "high" });
+    assert.deepEqual(fetches.map(({ url }) => url), [ARCHITECTURE_ASSET_URLS.high.tree]);
+    assert.equal(prefetched.get(ARCHITECTURE_ASSET_URLS.balanced.tree), other);
+  });
+});
+
+test("a failed or unsuccessful early request falls back to the loader's own request", async () => {
+  const url = ARCHITECTURE_ASSET_URLS.high.tower;
+  for (const [response, cancelled] of [
+    [Promise.reject(new TypeError("Failed to fetch")), 0],
+    [Promise.resolve(new Response("unavailable", { status: 503 })), 1],
+  ]) {
+    const early = earlyRequest(response);
+    await withPrefetched([[url, early]], async ({ fetches }) => {
+      const signal = new AbortController().signal;
+      const parsed = await loadArchitectureAsset(url, { signal, tier: "high", role: "tower" });
+      assert.ok(parsed.scene.isObject3D);
+      assert.deepEqual(fetches.map((request) => [request.url, request.signal]), [[url, signal]]);
+      assert.equal(early.aborted, cancelled, "an unused early body is cancelled");
+    });
+  }
+});
+
+test("the early response keeps the loader's byte budget and validation", async () => {
+  const url = ARCHITECTURE_ASSET_URLS.balanced.tree;
+  for (const response of [
+    new Response(Buffer.alloc(ARCHITECTURE_ASSET_BUDGETS.balanced + 1)),
+    new Response(glb(base), {
+      headers: { "content-length": String(ARCHITECTURE_ASSET_BUDGETS.balanced + 1) },
+    }),
+    new Response(glb({ ...base, animations: [{}] })),
+  ]) {
+    const early = earlyRequest(Promise.resolve(response));
+    await withPrefetched([[url, early]], async ({ fetches }) => {
+      const signal = new AbortController().signal;
+      await assert.rejects(loadArchitectureAsset(url, { signal, tier: "balanced" }));
+      assert.equal(fetches.length, 0, "a valid response is not requested twice");
+    });
+  }
+});
+
+test("aborting a load cancels the early request it took", async () => {
+  const url = ARCHITECTURE_ASSET_URLS.high.tree;
+  let rejectEarly;
+  const early = earlyRequest(
+    new Promise((_, reject) => {
+      rejectEarly = reject;
+    }),
+  );
+  early.abort = () => {
+    early.aborted += 1;
+    rejectEarly(new DOMException("Aborted", "AbortError"));
+  };
+  await withPrefetched([[url, early]], async () => {
+    const abort = new AbortController();
+    const pending = loadArchitectureAsset(url, { signal: abort.signal, tier: "high" });
+    abort.abort();
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.equal(early.aborted, 1);
+  });
+});
+
+test("the live selection takes its early requests and releases those for another tier", async () => {
+  const matching = earlyRequest(Promise.resolve(new Response(glb(base))));
+  const otherTier = earlyRequest(Promise.resolve(new Response(glb(base))));
+  await withPrefetched(
+    [
+      [ARCHITECTURE_ASSET_URLS.high.tree, matching],
+      [ARCHITECTURE_ASSET_URLS.balanced.tower, otherTier],
+    ],
+    async ({ prefetched, fetches }) => {
+      const ready = [];
+      const controller = createArchitectureAssetController({
+        towerModel: "complete",
+        onTowerReady() {
+          ready.push("tower");
+        },
+        onTreeReady() {
+          ready.push("tree");
+        },
+      });
+      controller.applyQuality({ tier: "high" }, { assetTier: "high" });
+      assert.equal(prefetched.size, 2, "a closed live gate keeps early requests");
+      controller.setQuality({ tier: "high" }, true, { assetTier: "high" });
+      assert.equal(prefetched.size, 0);
+      assert.equal(matching.aborted, 0);
+      assert.equal(otherTier.aborted, 1);
+      for (let index = 0; index < 50 && ready.length < 2; index += 1) await flush();
+      assert.deepEqual(ready.sort(), ["tower", "tree"]);
+      assert.deepEqual(fetches.map(({ url }) => url), [ARCHITECTURE_ASSET_URLS.high.tower]);
+      controller.dispose();
+    },
+  );
+});
+
+test("unused early requests are released by a live low tier or teardown", async () => {
+  for (const action of ["low", "dispose"]) {
+    const early = earlyRequest(new Promise(() => {}));
+    await withPrefetched([[ARCHITECTURE_ASSET_URLS.high.tree, early]], async ({ prefetched }) => {
+      const h = harness({ towerModel: "complete" });
+      h.controller.applyQuality({ tier: "high" }, { assetTier: "high" });
+      assert.equal(early.aborted, 0);
+      if (action === "low") h.controller.setQuality({ tier: "low" }, true, { assetTier: "low" });
+      else h.controller.dispose();
+      assert.equal(early.aborted, 1, action);
+      assert.equal(prefetched.size, 0);
+      assert.equal(h.requests.length, 0);
+      h.controller.dispose();
+    });
   }
 });

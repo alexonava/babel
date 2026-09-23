@@ -95,7 +95,7 @@ test("quality controls keep capable auto-tier devices on high and expose current
   assert.equal(controls.overrideTier, null);
   assert.equal(controls.requestedTier, "auto");
   assert.equal(tier, "high");
-  assert.equal(balanced.dprCap, 1.5);
+  assert.equal(balanced.dprCap, 1.25);
   assert.equal(balanced.textures.groundSize, 768);
   assert.equal(balanced.textures.overlaySize, 384);
   assert.equal(balanced.textures.towerWidth, 768);

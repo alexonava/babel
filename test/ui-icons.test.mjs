@@ -22,9 +22,9 @@ test("the scene opens About through the labeled model icon and keeps Contact ins
   }
 });
 
-test("navigation model renders have 256px alpha canvases and fit the combined transfer budget", async () => {
+test("About model renders have 256px alpha canvases and fit the combined transfer budget", async () => {
   let total = 0;
-  for (const name of ["about", "contact", "about-active", "contact-active"]) {
+  for (const name of ["about", "about-active"]) {
     const data = await readFile(new URL("images/nav-" + name + ".webp", root));
     total += data.length;
     assert.equal(data.toString("ascii", 0, 4), "RIFF");

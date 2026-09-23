@@ -54,6 +54,10 @@
 
   scene.GROUND_SURFACE_MATERIAL = {
     color: 0x5d6574,
+    // The default film slate: the same authored pair, tinted warm so that the
+    // cool film light leaves it a dark grey near the classic ground's balance,
+    // only slightly cool in moonlight and short of brown under the lantern.
+    filmColor: 0x5c5048,
     roughness: 0.98,
     metalness: 0.02,
     bumpScale: { lowPower: 0.1, default: 0.28 },

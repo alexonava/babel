@@ -7,7 +7,10 @@ import {
   Group,
   Mesh,
   MeshStandardMaterial,
+  MirroredRepeatWrapping,
   PerspectiveCamera,
+  RepeatWrapping,
+  SRGBColorSpace,
   Vector3,
 } from "three";
 import {
@@ -17,7 +20,8 @@ import {
   resolveDirectedShot,
 } from "../src/scene/directed-shots.js";
 import { createCinematicCamera, cinematicSafeArea } from "../src/scene/cinematic.js";
-import { createEarthGeometry, createEarthDetail, EARTH } from "../src/scene/filmic-earth.js";
+import { createEarthGeometry, createEarthDetail, EARTH, FILM_GROUND_PRESETS } from "../src/scene/filmic-earth.js";
+import { createGrassDetail } from "../src/scene/grass-detail.js";
 import { createFilmScene } from "../src/scene/film-scene.js";
 
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-5, `${a} != ${b}`);
@@ -31,7 +35,7 @@ test("film settings preserve every explicit architecture, earth-setting and orbi
     "view=orbit",
   ])
     assert.equal(wantsFilmTreatment(`?${q}`), false);
-  for (const q of ["ground=procedural", "ground=desert", "scale=baseline"])
+  for (const q of ["ground=procedural", "ground=desert", "ground=earth", "scale=baseline"])
     assert.equal(wantsFilmTreatment(`?${q}`), true);
 });
 test("directed framing clips actual geometry and includes the entire lantern", () => {
@@ -247,6 +251,145 @@ test("a failed earth companion map retains the procedural surface without paid o
   assert.equal(published, 0);
   assert.equal(closed, 2);
   earth.dispose();
+});
+
+test("the default film slate binds the authored ground pair at the classic tile after the film gate", async () => {
+  const pending = [],
+    published = [],
+    closed = [];
+  let bound = null;
+  const slate = createEarthDetail({
+    preset: "slate",
+    profile: { tier: "high" },
+    anisotropy: 4,
+    createCanvas: canvas,
+    publish: (m) => {
+      bound = m;
+      published.push(m);
+    },
+    restore: () => {
+      bound = null;
+    },
+    loadImage: (url, { signal }) =>
+      new Promise((resolve) => pending.push({ url, signal, resolve })),
+  });
+  assert.equal(pending.length, 0, "no download before the film activates");
+  slate.setActive(true);
+  assert.deepEqual(
+    pending.map(({ url }) => url),
+    ["/images/materials/ground-color-1024.webp", "/images/materials/ground-normal-1024.webp"],
+  );
+  slate.applyQuality({ tier: "balanced" });
+  assert.ok(pending[0].signal.aborted && pending[1].signal.aborted);
+  assert.deepEqual(
+    pending.slice(2).map(({ url }) => url),
+    ["/images/materials/ground-color-512.webp", "/images/materials/ground-normal-512.webp"],
+  );
+  pending.forEach((r, i) =>
+    r.resolve({ width: i < 2 ? 1024 : 512, height: i < 2 ? 1024 : 512, close: () => closed.push(i) }),
+  );
+  await tick();
+  await tick();
+  assert.equal(published.length, 1);
+  assert.equal(closed.length, 4);
+  // The classic ground's mirrored tile: repeat 8 across the 176-unit disc is
+  // 22 world units, so 384 / 22 across the film terrain.
+  close(FILM_GROUND_PRESETS.slate.tile, 22);
+  for (const map of [bound.colorMap, bound.normalMap]) {
+    close(map.repeat.x, 384 / 22);
+    close(map.repeat.y, 384 / 22);
+    assert.equal(map.wrapS, MirroredRepeatWrapping);
+    assert.equal(map.wrapT, MirroredRepeatWrapping);
+    assert.equal(map.anisotropy, 4);
+  }
+  assert.equal(bound.colorMap.colorSpace, SRGBColorSpace);
+  assert.notEqual(bound.normalMap.colorSpace, SRGBColorSpace);
+  assert.equal(bound.normalScale, 0.45);
+  assert.equal(bound.roughnessMap, null);
+  assert.equal(bound.bumpMap, null);
+  assert.equal(bound.muddy, false, "the slate never takes the mud treatment");
+  assert.equal(bound.filmTiled, true, "index.js keeps the film tiling as published");
+  let disposals = 0;
+  for (const m of [bound.colorMap, bound.normalMap])
+    m.addEventListener("dispose", () => {
+      assert.equal(bound, null, "bindings are restored before the maps are freed");
+      disposals++;
+    });
+  slate.setActive(false);
+  assert.equal(disposals, 2);
+  slate.dispose();
+  assert.equal(slate.dispose(), false);
+});
+
+test("a failed slate map reports a fallback and keeps the earth preset's own tiling", async () => {
+  const statuses = [];
+  let published = 0,
+    closed = 0;
+  const slate = createEarthDetail({
+    preset: "slate",
+    profile: { tier: "high" },
+    anisotropy: 4,
+    createCanvas: canvas,
+    publish: () => published++,
+    restore: () => {},
+    report: (status) => statuses.push(status.status),
+    loadImage: async (url) => {
+      if (url.includes("normal")) throw Error("404");
+      return { width: 1024, height: 1024, close: () => closed++ };
+    },
+  });
+  slate.setActive(true);
+  await tick();
+  await tick();
+  assert.equal(published, 0);
+  assert.equal(closed, 1);
+  assert.deepEqual(statuses.slice(-1), ["fallback"]);
+  slate.dispose();
+  assert.equal(FILM_GROUND_PRESETS.earth.wrap, RepeatWrapping);
+  close(FILM_GROUND_PRESETS.earth.tile, EARTH.tile);
+  assert.throws(() => createEarthDetail({ preset: "mud", publish() {}, restore() {} }), /Unknown film ground preset/);
+});
+
+test("earth and grass keep their loaded maps through adaptive profile changes with a pinned asset tier", async () => {
+  for (const [create, kinds] of [
+    [(options) => createEarthDetail({ ...options, preset: "slate" }), 2],
+    [createEarthDetail, 3],
+    [createGrassDetail, 2],
+  ]) {
+    const pending = [];
+    let published = 0,
+      restored = 0;
+    const layer = create({
+      profile: { tier: "high" },
+      anisotropy: 4,
+      createCanvas: canvas,
+      publish: () => published++,
+      restore: () => restored++,
+      loadImage: (url, { signal }) =>
+        new Promise((resolve) => pending.push({ url, signal, resolve })),
+    });
+    layer.applyQuality({ tier: "high" }, { pixelRatio: 2, assetTier: "high" });
+    layer.setActive(true);
+    assert.equal(pending.length, kinds);
+    pending.forEach((r) => r.resolve({ width: 1024, height: 1024, close() {} }));
+    await tick();
+    await tick();
+    assert.equal(published, 1);
+    const restoredBefore = restored;
+    for (const tier of ["balanced", "low", "high"]) {
+      layer.applyQuality({ tier }, { pixelRatio: 1, assetTier: "high" });
+    }
+    assert.equal(pending.length, kinds, "no other map size is fetched");
+    assert.ok(pending.every(({ signal }) => !signal.aborted));
+    assert.equal(restored, restoredBefore, "the bound maps are never restored away");
+    // Reactivation reuses the pinned tier rather than the latest adaptive profile.
+    layer.setActive(false);
+    layer.applyQuality({ tier: "balanced" }, { pixelRatio: 1, assetTier: "high" });
+    layer.setActive(true);
+    assert.equal(pending.length, 2 * kinds);
+    assert.ok(pending.slice(kinds).every(({ url }) => url.endsWith("-1024.webp")));
+    layer.dispose();
+  }
 });
 
 test("low shots retain terrain clearance throughout the bounded camera arc", () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
@@ -35,6 +35,132 @@ function createContext({ touchPrimary = false } = {}) {
     },
   };
   return { window, document };
+}
+
+// Minimal DOM element: enough for the HUD builder, panel flag, and disposal.
+function createFakeElement(tagName) {
+  const attributes = new Map();
+  const element = {
+    tagName: tagName.toUpperCase(),
+    id: "",
+    className: "",
+    hidden: false,
+    textContent: "",
+    children: [],
+    parentNode: null,
+    setAttribute(name, value) {
+      attributes.set(name, String(value));
+    },
+    getAttribute(name) {
+      return attributes.has(name) ? attributes.get(name) : null;
+    },
+    hasAttribute(name) {
+      return attributes.has(name);
+    },
+    removeAttribute(name) {
+      attributes.delete(name);
+    },
+    appendChild(child) {
+      child.parentNode = element;
+      element.children.push(child);
+      return child;
+    },
+    remove() {
+      const parent = element.parentNode;
+      if (!parent) return;
+      parent.children.splice(parent.children.indexOf(element), 1);
+      element.parentNode = null;
+    },
+    querySelectorAll(selector) {
+      assert.equal(selector, "[data-field]");
+      const found = [];
+      const visit = (node) => {
+        for (const child of node.children) {
+          if (child.hasAttribute("data-field")) found.push(child);
+          visit(child);
+        }
+      };
+      visit(element);
+      return found;
+    },
+  };
+  return element;
+}
+
+// Desktop context with a body, recorded window listeners, and an optional
+// pre-existing #dev-mode-hud element.
+function createDomContext({ hud = null } = {}) {
+  const body = createFakeElement("body");
+  const classes = new Set();
+  body.classList = {
+    add: (name) => classes.add(name),
+    remove: (name) => classes.delete(name),
+    contains: (name) => classes.has(name),
+  };
+  if (hud) body.appendChild(hud);
+  const listeners = [];
+  const created = [];
+  const window = {
+    BabelSite: {},
+    matchMedia: () => ({ matches: false }),
+    addEventListener(type, listener, options) {
+      listeners.push({ type, listener, signal: options?.signal });
+    },
+  };
+  const document = {
+    body,
+    addEventListener() {},
+    getElementById(id) {
+      return hud && hud.parentNode && hud.id === id ? hud : null;
+    },
+    createElement(tagName) {
+      const element = createFakeElement(tagName);
+      created.push(element);
+      return element;
+    },
+  };
+  function pressKey(code) {
+    let prevented = false;
+    const event = {
+      code,
+      repeat: false,
+      target: body,
+      preventDefault() {
+        prevented = true;
+      },
+    };
+    for (const entry of [...listeners]) {
+      if (entry.type === "keydown" && !entry.signal?.aborted) entry.listener(event);
+    }
+    return prevented;
+  }
+  return { window, document, body, created, pressKey };
+}
+
+function createAttachRefs() {
+  return {
+    THREE: {
+      Euler: class Euler {
+        setFromQuaternion() {
+          return this;
+        }
+      },
+      Raycaster: class Raycaster {},
+    },
+    camera: {
+      quaternion: {},
+      position: {
+        x: 0,
+        y: 0,
+        z: 0,
+        set(x, y, z) {
+          Object.assign(this, { x, y, z });
+        },
+      },
+    },
+    homeScene: { children: [] },
+    canvas: { addEventListener() {} },
+  };
 }
 
 async function loadDevMode(context) {
@@ -470,4 +596,167 @@ test("isTouchDevice reports the matchMedia result", async () => {
 
   const touch = await loadDevMode(createContext({ touchPrimary: true }));
   assert.equal(touch._test.isTouchDevice(), true);
+});
+
+test("scene bootstrap attaches the developer camera only for sceneDebug sessions", async () => {
+  const source = await readFile(path.join(projectRoot, "src", "scene", "index.js"), "utf8");
+
+  // The flag comes from the quality controls already parsed from the URL.
+  assert.match(source, /const qualityControls = qualityState\.controls \|\|/);
+  assert.equal(source.match(/scene\.devMode\.attach\(/g)?.length, 1);
+  // The developer tools are imported on demand behind the flag. The request
+  // starts as soon as the flag is known, so the download overlaps
+  // initialization; attach waits for the chunk and runs only if the runtime is
+  // still alive. Load and attach failures are both reported.
+  assert.equal(source.match(/import\("\.\/developer-tools\.js"\)/g)?.length, 1);
+  assert.match(
+    source,
+    /const developerTools = qualityControls\.debug\s*\? import\("\.\/developer-tools\.js"\)\.catch\(\(error\) => \{\s*console\.warn\("Scene developer tools failed to load\.", error\);\s*return null;\s*\}\)\s*: null;/,
+  );
+  assert.ok(
+    source.indexOf("const developerTools = ") < source.indexOf("createSceneRendering("),
+    "the developer chunk is requested before the renderer is built",
+  );
+  assert.match(
+    source,
+    /developerTools\s*\?\.then\(\(tools\) => \{\s*if \(!tools \|\| runtimeDisposed \|\| typeof scene\.devMode\?\.attach !== "function"\) return;\s*scene\.devMode\.attach\(/,
+  );
+  assert.match(
+    source,
+    /\.catch\(\(error\) => console\.warn\("Scene developer tools failed to attach\.", error\)\);/,
+  );
+  assert.match(
+    source,
+    /ensureOutlinePass: \(\) => rendering\.ensureOutlinePass\(tools\.createOutlinePass\)/,
+  );
+});
+
+test("default visitors' scene modules never import the developer camera or OutlinePass", async () => {
+  const read = (...parts) => readFile(path.join(projectRoot, "src", ...parts), "utf8");
+  const entry = await read("scene-entry.js");
+  const rendering = await read("scene", "rendering.js");
+  const tools = await read("scene", "developer-tools.js");
+  assert.doesNotMatch(entry, /^import[^\n]*(?:dev-mode|developer-tools)/m);
+  assert.doesNotMatch(rendering, /OutlinePass\.js/);
+  assert.match(rendering, /createOutlinePass = null,/);
+  // developer-tools.js is the only module that brings both in.
+  assert.match(tools, /^import "\.\/dev-mode\.js";$/m);
+  assert.match(
+    tools,
+    /^import \{ OutlinePass \} from "three\/examples\/jsm\/postprocessing\/OutlinePass\.js";$/m,
+  );
+  assert.match(tools, /export function createOutlinePass\(size, homeScene, camera\) \{/);
+  const sources = [];
+  const walk = async (dir) => {
+    for (const item of await readdir(dir, { withFileTypes: true })) {
+      const file = path.join(dir, item.name);
+      if (item.isDirectory()) await walk(file);
+      else if (item.name.endsWith(".js")) sources.push(file);
+    }
+  };
+  await walk(path.join(projectRoot, "src"));
+  for (const file of sources) {
+    if (file.endsWith(`${path.sep}developer-tools.js`)) continue;
+    const text = await readFile(file, "utf8");
+    assert.doesNotMatch(text, /import[^;]*["'][^"']*(?:dev-mode|OutlinePass)\.js["']/, file);
+  }
+});
+
+test("dispose is safe when the developer camera was never attached", async () => {
+  const context = createDomContext();
+  const devMode = await loadDevMode(context);
+
+  assert.doesNotThrow(() => devMode.dispose());
+  assert.equal(devMode.active, false);
+  assert.equal(context.body.children.length, 0);
+  assert.equal(context.created.length, 0);
+});
+
+test("Backquote does nothing while a panel is open", async () => {
+  const context = createDomContext();
+  const devMode = await loadDevMode(context);
+  devMode.attach(createAttachRefs());
+
+  context.body.setAttribute("data-panel-open", "true");
+  assert.equal(context.pressKey("Backquote"), false, "key is left to the page");
+  assert.equal(devMode.active, false);
+  assert.equal(context.body.classList.contains("dev-mode-active"), false);
+  assert.equal(context.created.length, 0, "no HUD is built");
+
+  context.body.removeAttribute("data-panel-open");
+  assert.equal(context.pressKey("Backquote"), true);
+  assert.equal(devMode.active, true);
+  assert.equal(context.body.classList.contains("dev-mode-active"), true);
+
+  // Leaving only reveals the page, so it is never blocked.
+  context.body.setAttribute("data-panel-open", "true");
+  context.pressKey("Backquote");
+  assert.equal(devMode.active, false);
+  assert.equal(context.body.classList.contains("dev-mode-active"), false);
+  devMode.dispose();
+});
+
+test("the HUD is built on first entry when its markup is absent and removed on dispose", async () => {
+  const context = createDomContext();
+  const devMode = await loadDevMode(context);
+  devMode.attach(createAttachRefs());
+  assert.equal(context.body.children.length, 0, "attach alone builds nothing");
+
+  context.pressKey("Backquote");
+  assert.equal(context.body.children.length, 1);
+  const hud = context.body.children[0];
+  assert.equal(hud.tagName, "ASIDE");
+  assert.equal(hud.id, "dev-mode-hud");
+  assert.equal(hud.className, "dev-mode-hud");
+  assert.equal(hud.getAttribute("aria-hidden"), "true");
+  assert.equal(hud.hidden, false);
+  assert.ok(hud.children.every((row) => row.className === "dev-mode-hud__row"));
+  assert.deepEqual(
+    hud.children.map(({ children: [label, field] }) => [
+      label.textContent,
+      field.getAttribute("data-field"),
+      field.textContent,
+    ]),
+    [
+      ["pos", "pos", "0, 0, 0"],
+      ["vel", "vel", "0, 0, 0"],
+      ["speed", "speed", "0"],
+      ["yaw", "yaw", "0°"],
+      ["mode", "mode", "idle"],
+      ["grounded", "grounded", "yes"],
+      ["autoRun", "autoRun", "off"],
+      ["ground", "ground", "0"],
+    ],
+  );
+
+  context.pressKey("Backquote");
+  assert.equal(hud.hidden, true, "exit hides the HUD");
+  const createdCount = context.created.length;
+  context.pressKey("Backquote");
+  assert.equal(context.body.children[0], hud, "re-entry reuses the built HUD");
+  assert.equal(context.created.length, createdCount);
+
+  devMode.dispose();
+  assert.equal(context.body.children.length, 0);
+  assert.equal(hud.parentNode, null);
+});
+
+test("an existing HUD element is reused and left in place on dispose", async () => {
+  const hud = createFakeElement("aside");
+  hud.id = "dev-mode-hud";
+  hud.hidden = true;
+  const field = createFakeElement("span");
+  field.setAttribute("data-field", "mode");
+  hud.appendChild(field);
+  const context = createDomContext({ hud });
+  const devMode = await loadDevMode(context);
+  devMode.attach(createAttachRefs());
+
+  context.pressKey("Backquote");
+  assert.equal(context.created.length, 0);
+  assert.equal(hud.hidden, false);
+
+  devMode.dispose();
+  assert.equal(hud.parentNode, context.body);
+  assert.equal(hud.hidden, true);
 });

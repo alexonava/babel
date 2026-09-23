@@ -7,6 +7,7 @@
     ".site-shell",
     "main",
     ".bottom-bar",
+    ".site-footer",
     ".site-copyright",
   ];
   const FOCUSABLE_SELECTOR = 'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
@@ -19,6 +20,14 @@
     } catch {
       element.focus();
     }
+  }
+
+  // Reports the dialog now showing, or none, for URL and scene listeners.
+  function announce(id) {
+    if (typeof window.CustomEvent !== "function") return;
+    document.dispatchEvent(
+      new window.CustomEvent("babel:panelchange", { detail: { id, open: id !== null } }),
+    );
   }
 
   let initialized = false;
@@ -131,8 +140,10 @@
     function closePanel({ restoreFocus = true } = {}) {
       if (restoreFocus && panelHistory.length) {
         const entry = panelHistory.pop();
-        openPanel(entry.panel.id.replace("panel-", ""), entry.rootTrigger);
+        const parentId = entry.panel.id.replace("panel-", "");
+        openPanel(parentId, entry.rootTrigger, false);
         focusElement(entry.childTrigger);
+        announce(parentId);
         return;
       }
       if (activePanel) {
@@ -149,10 +160,11 @@
 
       if (restoreFocus) {
         restoreFocusTarget = null;
+        announce(null);
       }
     }
 
-    function openPanel(panelId, trigger) {
+    function openPanel(panelId, trigger, announceChange = true) {
       const panel = document.getElementById(`panel-${panelId}`);
       if (!panel) return;
 
@@ -175,6 +187,7 @@
       setExpandedState(panelId);
       setBackgroundInert(true);
       focusPanel(panel);
+      if (announceChange) announce(panelId);
     }
 
     function trapFocus(event) {
@@ -233,10 +246,19 @@
       });
 
       panels.forEach((panel) => {
+        // A drag-select between the paper and the backdrop clicks their common
+        // ancestor, so only a press and release both on the backdrop dismiss.
+        let pressedBackdrop = false;
+        listen(panel, "pointerdown", (event) => {
+          pressedBackdrop = event.target === panel;
+        });
+        listen(panel, "pointerup", (event) => {
+          if (event.target !== panel) pressedBackdrop = false;
+        });
         listen(panel, "click", (event) => {
-          if (event.target === panel) {
-            closePanel();
-          }
+          const dismiss = pressedBackdrop && event.target === panel;
+          pressedBackdrop = false;
+          if (dismiss) closePanel();
         });
       });
 

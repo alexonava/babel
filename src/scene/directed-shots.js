@@ -12,31 +12,42 @@ export const DIRECTED_SHOTS = {
   tower: [
     {
       name: "The watch",
-      region: [0.55, 1],
+      // The slimmer timber lookout fits closer than the stone tower did, so its roof
+      // reached the fixed sun on desktop. A wider, slightly higher view three
+      // degrees round restores the camera distance and sky gap. Higher than 0.68
+      // pushes the sun against the top edge on landscape phones; portrait is unchanged.
+      region: [0.5, 1],
       fov: 32,
-      azimuth: -4,
-      height: 0.66,
+      azimuth: -7,
+      height: 0.68,
       arc: 2,
-      portrait: { region: [0.62, 1], targetHeight: 1.11 },
+      portrait: { region: [0.62, 1], targetHeight: 1.11, azimuth: -4, height: 0.66 },
     },
     {
       name: "Threshold",
-      region: [0.34, 0.69],
+      // The lookout's threshold: the ladder on its +Z access side arriving
+      // through the gap in the gallery railing. Nearer the ladder's face than 82
+      // degrees brings the sun behind the name on landscape phones.
+      region: [0.62, 0.9],
       fov: 36,
       azimuth: 82,
-      height: 0.33,
+      height: 0.5,
       arc: 2,
       focus: { width: 0.3, depth: [0.06, 0.34] },
       margin: 0.91,
       portrait: { focus: { width: 0.22, depth: [0.06, 0.34] } },
     },
     {
+      // The comparison name and URL are retained; for the timber lookout it is a
+      // structure study of a corner leg and the X-braced lattice meeting it. From
+      // azimuth 0 to 10 the camera faces the sun: on portrait phones it sits behind
+      // the name, hidden only by the gallery floor. At -20 it is out of frame.
       name: "Masonry study",
       tour: false, // Retain its comparison URL without including it in the tour.
-      region: [0.26, 0.53],
+      region: [0.3, 0.6],
       fov: 32,
-      azimuth: 44,
-      height: 0.39,
+      azimuth: -20,
+      height: 0.4,
       arc: 1,
       focus: { width: 0.2, depth: [0.13, 0.36] },
       margin: 0.91,
@@ -44,10 +55,15 @@ export const DIRECTED_SHOTS = {
     },
     {
       name: "Gallery detail",
-      region: [0.55, 0.79],
+      // Gallery floor (0.77) to eave (0.93), seen across the corner between the
+      // cabin's local +X plank panel and its back gable; the sun is about 70
+      // degrees off the view axis. Facing that panel (azimuth -30) centred the
+      // balanced tier's faceted reduction patch, which every phone sees; here the
+      // panel falls oblique and into shade. Nearer -8 the sun showed between rails.
+      region: [0.72, 0.94],
       fov: 31,
-      azimuth: -8,
-      height: 0.58,
+      azimuth: -90,
+      height: 0.62,
       arc: 1,
       focus: { width: 0.27, depth: [0.13, 0.41] },
       margin: 0.91,

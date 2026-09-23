@@ -12,9 +12,12 @@ import {
   Vector2,
   WebGLRenderer,
 } from "three";
-import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { createPostprocessPipeline } from "./postprocess.js";
 import { disposeSceneRuntimeResources } from "./runtime.js";
+
+// Bounds a warm-up whose materials were disposed mid-poll (compileAsync then
+// never settles); past it the next draw links whatever remains, as before.
+const SHADER_WARMUP_TIMEOUT_MS = 2000;
 
 function setRendererOutputColorSpace(renderer, threeExports = {}) {
   const srgbColorSpace = threeExports.SRGBColorSpace || SRGBColorSpace;
@@ -37,7 +40,9 @@ export function createSceneRendering({
   threeExports,
   width,
   world,
-  createOutlinePass = (size, homeScene, camera) => new OutlinePass(size, homeScene, camera),
+  // The developer camera supplies OutlinePass from its lazily imported chunk
+  // (developer-tools.js), so the visitor bundle never carries the pass.
+  createOutlinePass = null,
   createPipeline = createPostprocessPipeline,
   createRenderer = (options) => new WebGLRenderer(options),
   disposeResources = disposeSceneRuntimeResources,
@@ -53,10 +58,13 @@ export function createSceneRendering({
     world.CAMERA_NEAR,
     world.CAMERA_FAR,
   );
+  // The scene renders into the composer's targets, so default-framebuffer MSAA
+  // would only smooth the final quad; the pipeline multisamples on high. The
+  // ambient scene does not need a discrete GPU.
   const renderer = createRenderer({
     alpha: true,
-    antialias: profile.antialias,
-    powerPreference: "high-performance",
+    antialias: false,
+    powerPreference: "default",
   });
   renderer.setClearColor(0, 0);
   setRendererOutputColorSpace(renderer, threeExports);
@@ -71,13 +79,17 @@ export function createSceneRendering({
   const composer = postprocessPipeline.composer;
   let currentHeight = height;
   let currentWidth = width;
+  let currentPixelRatio = renderer.getPixelRatio?.() || 1;
   let outlinePass = null;
+  const devicePixels = (value) => Math.floor(value * currentPixelRatio);
 
   const handleContextLost = (event) => {
     event?.preventDefault?.();
     onContextLost?.(event);
   };
   const handleContextRestored = (event) => {
+    // A restored context has an empty shadow map, even when its casters are static.
+    sunLight.shadow.needsUpdate = true;
     onContextRestored?.(event);
   };
   renderer.domElement?.addEventListener?.("webglcontextlost", handleContextLost);
@@ -177,10 +189,15 @@ export function createSceneRendering({
     },
     postprocessPipeline,
     renderer,
-    ensureOutlinePass() {
+    ensureOutlinePass(create = createOutlinePass) {
       if (disposed) return null;
       if (outlinePass) return outlinePass;
-      outlinePass = createOutlinePass(new Vector2(currentWidth, currentHeight), homeScene, camera);
+      if (typeof create !== "function") return null;
+      outlinePass = create(
+        new Vector2(devicePixels(currentWidth), devicePixels(currentHeight)),
+        homeScene,
+        camera,
+      );
       outlinePass.edgeStrength = 2;
       outlinePass.edgeThickness = 1;
       outlinePass.visibleEdgeColor.set(0xd9a46d);
@@ -193,6 +210,7 @@ export function createSceneRendering({
       if (disposed) return false;
       filmLighting = Boolean(active);
       applyLightingTreatment();
+      sunLight.shadow.needsUpdate = true;
       postprocessPipeline.setFilmTreatment?.(filmLighting);
       if (!filmLighting) {
         sunLight.position.copy(originalSunPosition);
@@ -230,7 +248,50 @@ export function createSceneRendering({
       if (disposed) return false;
       groundedLighting = Boolean(active);
       applyLightingTreatment();
+      sunLight.shadow.needsUpdate = true;
       return true;
+    },
+    // Static shadows redraw the sun's map only when a caster, the light or its
+    // focus changes; animated scenes keep Three's per-frame redraw.
+    setStaticShadows(active) {
+      if (disposed) return false;
+      sunLight.shadow.autoUpdate = !active;
+      sunLight.shadow.needsUpdate = true;
+      return true;
+    },
+    invalidateShadows() {
+      if (!disposed) sunLight.shadow.needsUpdate = true;
+    },
+    // Links every scene program before its first draw. Program keys differ for
+    // an off-screen target (its color space and tone mapping), where the scene
+    // pass draws, so compile() runs against a composer target;
+    // compileAsync then polls KHR_parallel_shader_compile instead of blocking a
+    // frame. Without that extension the draw would link anyway (and Three warns
+    // per call), so it is skipped. Always settles: true once linked, false if
+    // skipped, rejected or still pending after timeoutMs.
+    compileShaders(timeoutMs = SHADER_WARMUP_TIMEOUT_MS) {
+      if (disposed || typeof renderer.compileAsync !== "function") return Promise.resolve(false);
+      if (renderer.extensions?.has?.("KHR_parallel_shader_compile") !== true) return Promise.resolve(false);
+      if (renderer.getContext?.()?.isContextLost?.()) return Promise.resolve(false);
+      const previousTarget = renderer.getRenderTarget?.() ?? null;
+      let pending;
+      try {
+        renderer.setRenderTarget?.(composer.readBuffer ?? null);
+        pending = renderer.compileAsync(homeScene, camera);
+      } catch {
+        return Promise.resolve(false);
+      } finally {
+        renderer.setRenderTarget?.(previousTarget);
+      }
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(false), timeoutMs);
+        Promise.resolve(pending)
+          .then(() => true, () => false)
+          .then((ready) => {
+            clearTimeout(timer);
+            resolve(ready);
+          });
+      });
     },
     applyQuality(nextProfile, { pixelRatio } = {}) {
       if (disposed) return false;
@@ -251,7 +312,13 @@ export function createSceneRendering({
         sunLight.shadow.mapSize.height = nextProfile.shadows.mapSize;
         sunLight.shadow.needsUpdate = true;
       }
-      if (Number.isFinite(pixelRatio)) renderer.setPixelRatio(pixelRatio);
+      if (Number.isFinite(pixelRatio)) {
+        currentPixelRatio = pixelRatio;
+        renderer.setPixelRatio(pixelRatio);
+        // EffectComposer captured the renderer's construction-time ratio of 1;
+        // its targets and passes now follow the canvas in device pixels.
+        composer.setPixelRatio?.(pixelRatio);
+      }
       postprocessPipeline.setQualityProfile(nextProfile);
       return true;
     },
@@ -281,9 +348,12 @@ export function createSceneRendering({
       camera.aspect = nextWidth / nextHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(nextWidth, nextHeight);
+      // The composer also sizes the outline pass, in device pixels.
       composer.setSize(nextWidth, nextHeight);
+      // Grading samples its ink contour in CSS pixels.
       postprocessPipeline.resize?.(nextWidth, nextHeight);
-      outlinePass?.setSize(nextWidth, nextHeight);
+      // Composition offsets and tower scale move shadow casters.
+      sunLight.shadow.needsUpdate = true;
       return true;
     },
     trackRenderTarget(renderTarget) {

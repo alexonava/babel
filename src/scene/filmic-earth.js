@@ -1,7 +1,41 @@
-import { CanvasTexture, PlaneGeometry, RepeatWrapping, SRGBColorSpace, Vector3 } from "three";
-import { createStoneDetailController } from "./stone-detail.js";
+import {
+  CanvasTexture,
+  MirroredRepeatWrapping,
+  PlaneGeometry,
+  RepeatWrapping,
+  SRGBColorSpace,
+  Vector3,
+} from "three";
+import { createStoneDetailController, groundMaterialUrl, GROUND_DETAIL_SETTINGS } from "./stone-detail.js";
 
 export const EARTH = Object.freeze({ width: 384, subdivisions: 128, tile: 6.3, normalScale: 0.7 });
+// The procedural and comparison ground disc (WORLD.GROUND_RADIUS 88) is 176 units across.
+const GROUND_DISC_WIDTH = 176;
+
+// The film terrain's map sets. "slate" is the default: the authored cracked
+// ground pair at the classic ground's mirrored 22-unit tile (repeat 8 across
+// its disc) and normal strength, with no roughness map. "earth" is the Poly
+// Haven dirt comparison (?ground=earth), which also carries grass.
+export const FILM_GROUND_PRESETS = Object.freeze({
+  slate: Object.freeze({
+    kinds: Object.freeze(["color", "normal"]),
+    urlFor: groundMaterialUrl,
+    tile: GROUND_DISC_WIDTH / GROUND_DETAIL_SETTINGS.repeat,
+    wrap: MirroredRepeatWrapping,
+    normalScale: GROUND_DETAIL_SETTINGS.normalScale,
+    muddy: false,
+    material: "Cracked Desert Ground",
+  }),
+  earth: Object.freeze({
+    kinds: Object.freeze(["color", "normal", "roughness"]),
+    urlFor: (kind, size) => `/images/materials/earth-${kind}-${size}.webp`,
+    tile: EARTH.tile,
+    wrap: RepeatWrapping,
+    normalScale: EARTH.normalScale,
+    muddy: true,
+    material: "Poly Haven Dirt",
+  }),
+});
 
 export function createEarthGeometry(groundHeight) {
   const geometry = new PlaneGeometry(
@@ -33,6 +67,7 @@ export function createEarthGeometry(groundHeight) {
 }
 
 export function createEarthDetail({
+  preset: presetName = "earth",
   profile,
   disabled,
   anisotropy,
@@ -42,10 +77,16 @@ export function createEarthDetail({
   loadImage,
   createCanvas = () => document.createElement("canvas"),
 }) {
+  const preset = FILM_GROUND_PRESETS[presetName];
+  if (!preset) throw new Error(`Unknown film ground preset: ${presetName}`);
   let active = false,
     disposed = false,
     current = profile,
+    context = {},
     maps = null;
+  function sync() {
+    detail.applyQuality(active ? current : { tier: "low" }, active ? context : {});
+  }
   function clear() {
     restore(); // Restore material bindings before disposing their resources.
     if (maps) Object.values(maps).forEach((texture) => texture.dispose());
@@ -56,35 +97,37 @@ export function createEarthDetail({
     disabled,
     loadImage,
     report,
-    kinds: ["color", "normal", "roughness"],
-    urlFor: (kind, size) => `/images/materials/earth-${kind}-${size}.webp`,
+    kinds: preset.kinds,
+    urlFor: preset.urlFor,
     apply(sources) {
       const next = {};
       try {
-        for (const kind of ["color", "normal", "roughness"]) {
+        for (const kind of preset.kinds) {
           const source = sources[kind],
             canvas = createCanvas();
           canvas.width = source.width;
           canvas.height = source.height;
           const ctx = canvas.getContext("2d");
-          if (!ctx) throw new Error("Earth canvas unavailable");
+          if (!ctx) throw new Error("Film ground canvas unavailable");
           ctx.drawImage(source, 0, 0);
           const texture = (next[kind] = new CanvasTexture(canvas));
-          texture.wrapS = texture.wrapT = RepeatWrapping;
-          texture.repeat.setScalar(EARTH.width / EARTH.tile);
+          texture.wrapS = texture.wrapT = preset.wrap;
+          texture.repeat.setScalar(EARTH.width / preset.tile);
           texture.anisotropy = anisotropy;
           if (kind === "color") texture.colorSpace = SRGBColorSpace;
         }
         clear();
         maps = next;
+        // filmTiled: the repeat already spans the 384-unit film terrain, so
+        // index.js must not rescale it from the 176-unit ground disc.
         publish({
           colorMap: maps.color,
           normalMap: maps.normal,
-          roughnessMap: maps.roughness,
+          roughnessMap: maps.roughness ?? null,
           bumpMap: null,
-          normalScale: EARTH.normalScale,
-          muddy: true,
-          earth: true,
+          normalScale: preset.normalScale,
+          muddy: preset.muddy,
+          filmTiled: true,
         });
       } catch (error) {
         if (maps !== next) Object.values(next).forEach((texture) => texture.dispose());
@@ -97,12 +140,13 @@ export function createEarthDetail({
     setActive(next) {
       if (disposed) return;
       active = Boolean(next);
-      detail.applyQuality(active ? current : { tier: "low" });
+      sync();
     },
-    applyQuality(next) {
+    applyQuality(next, nextContext = {}) {
       if (disposed) return;
       current = next;
-      detail.applyQuality(active ? current : { tier: "low" });
+      context = nextContext;
+      sync();
     },
     dispose() {
       if (disposed) return false;

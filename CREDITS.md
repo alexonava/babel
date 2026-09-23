@@ -3,7 +3,7 @@
 ## Third-party libraries
 
 - **Three.js** (r160) — MIT License. Copyright (c) 2010-2021 three.js authors.
-  Packaged via npm and bundled into `dist/scripts/scene.HASH.js` during the build.
+  Packaged via npm and bundled into the content-hashed `dist/scripts/scene.*.js` chunks during the build (Three.js core in `scene.shared.HASH.js`).
   Source: https://github.com/mrdoob/three.js
 
 ## Typography
@@ -70,15 +70,47 @@ optimization, fitting, and texture preparation. Original files, hashes, and
 preparation records are preserved in the local artwork archive. No new
 Meshy generation was commissioned for this integration.
 
+## Supplied timber lookout tower
+
+The complete tower in `images/architecture/tower-{high,balanced}.glb` is a
+timber fire-lookout watchtower (lattice legs, ladder, railed gallery, half-walled
+cabin and gabled roof) from the Meshy model
+`Meshy_AI_watchtower_0923082652_texture.glb`, supplied by Alex Nava on
+2026-09-23 (29,926,940 bytes, SHA-256
+`5898eab40106aa3c7553b971d0d3caecf4664a65a1fc04358b5ef9e303dc1fc2`). It replaces
+the earlier supplied Meshy stone watchtower, whose source and delivery records
+remain in `Assets/Architecture/tower`.
+
+The source was processed locally without recoloring or new generation: scaled
+uniformly to unit height (+Y up, ladder and gallery access on +Z, no yaw baked),
+decimated in Blender 4.5 with a seam-weighted collapse to 23,714 (high) and 9,718
+(balanced) triangles while carrying the supplied UV layer, with folded UVs
+repaired, and its color and tangent-space normal maps re-baked by Cycles from the
+full-resolution source into those UVs. The maps ship as embedded WebP (2048 high,
+1024 balanced) with stored tangents and `KHR_mesh_quantization` geometry. The
+supplied roughness/metallic map was near uniform and is replaced by the site's
+0.90 roughness. The intake copy is kept in `Assets/Imports`; its extracted maps,
+preparation scripts, reports and QA renders are in `Assets/Architecture/tower-v2`
+(see its `SOURCE-AND-DELIVERY.md`); none are published. No new Meshy generation
+was commissioned.
+
+Tool: [Meshy](https://www.meshy.ai/).
+
 ## Authored ground material
 
-The optional ground colour and normal maps in `images/materials/ground-*.webp`
-were baked locally from the Meshy "Cracked Desert Ground" model supplied by
+The ground colour and normal maps in `images/materials/ground-*.webp` were
+baked locally from the Meshy "Cracked Desert Ground" model supplied by
 Alex Nava. The textured slab was rasterised top-down into planar tiles, its
 height converted to a tangent-space normal map, and its colour desaturated and
 remapped to the site's night ground palette. The source model, hashes, and bake
-parameters are preserved in the local artwork archive and summarised in
-README.md. No new Meshy generation was commissioned for this integration.
+parameters are preserved in the local artwork archive; runtime tiling and
+normal strength are `GROUND_DETAIL_SETTINGS` in src/scene/stone-detail.js. No
+new Meshy generation was commissioned for this integration.
+
+These maps are now the default, visible ground: the live scene's dark cracked
+slate uses them unchanged at 1024 and 512 pixels, with its tint, wet sheen and
+close detail applied in the shader, and the earlier comparison views keep
+using them as before. No new image or map was generated for the slate ground.
 
 Tool: [Meshy](https://www.meshy.ai/).
 
@@ -93,6 +125,7 @@ use muted damp-earth color, normalized normals and mostly matte roughness,
 exported at 1024 and 512 pixels. Original PNGs, download URLs, SHA-256 hashes
 and optimization settings remain in the owner's `Pictures/Assets/Babel/Materials/PolyHaven-Dirt`
 archive. No external runtime service or additional generation is used.
+These maps now load only for the `?ground=earth` comparison view.
 
 ## Poly Haven Sparse Grass
 
@@ -108,6 +141,7 @@ grass away from the tower footing and tree roots — never a base ground
 replacement. Original PNGs, download URLs, MD5 hashes and optimization
 settings remain in the owner's `Pictures/Assets/Babel/Materials/PolyHaven-SparseGrass`
 archive. No external runtime service or additional generation is used.
+Like the dirt maps, they now load only for the `?ground=earth` comparison view.
 
 ## Background hill silhouette elevation data
 
@@ -123,20 +157,22 @@ recording sourcing even where the license does not require it.
 
 ## Navigation model renders
 
-About uses the owner-supplied Meshy leather document case; Contact uses the
-stamped paper envelope. These are transparent 256px WebP renders, not runtime
-3D models. Original GLBs remain unchanged in the owner's Downloads folder and
-are excluded from the site payload.
+About uses the owner-supplied Meshy leather document case. These are
+transparent 256px WebP renders, not runtime 3D models. Original GLBs remain
+unchanged in the owner's Downloads folder and are excluded from the site
+payload. The earlier Contact envelope renders (from the stylized game prop
+below) are retired and no longer published.
 
 - Meshy_AI_Leather_Envelope_Case_0911015506_texture.glb — SHA-256 `a819c2ef4b466d5544e70ecbffdf806c1eb75b9ba3dfa2bc2ffcd88239989b60`.
-- Meshy_AI_Stylized_3D_game_prop_0911015500_texture.glb — SHA-256 `65d412aa8ac6786551ff41b3c3386b126b9d9d37ab3d707b85809a2255447aed`.
+- Meshy_AI_Stylized_3D_game_prop_0911015500_texture.glb (retired Contact renders; historical) — SHA-256 `65d412aa8ac6786551ff41b3c3386b126b9d9d37ab3d707b85809a2255447aed`.
 
 Render recipe: Blender 4.5 Cycles, 96 samples with denoising, AgX, 512px
 transparent film, orthographic scale 2.3 and camera (0.35, -4, 0.7) looking at
 the origin after GLB import. Two soft area lights: (-2, -3, 4), 450 W / 4 units;
 (3, -2, 1), 110 W / 3 units. World color (0.35, 0.37, 0.42), strength 0.5.
 Downsample with Lanczos to 256px and export WebP quality 92, method 6, exact
-alpha. Combined size: 17,972 bytes.
+alpha. The published About pair (nav-about.webp and nav-about-active.webp) is
+16,310 bytes.
 
 
 ## Cotton paper panel material

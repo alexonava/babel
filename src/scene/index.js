@@ -6,9 +6,10 @@ import { resolveSceneModes } from "./scene-modes.js";
 import { createLegacyWorld } from "./legacy-world.js";
 import { createDeferredWorld } from "./deferred-world.js";
 import { createFilmScene } from "./film-scene.js";
-import { chooseCinematicView, chooseCinematicAngle, cinematicSafeArea, createCinematicCamera, createQuietScene } from "./cinematic.js";
-import { configureMudShading } from "./mud-ground.js";
+import { chooseCinematicView, chooseCinematicAngle, cinematicSafeArea, createCinematicCamera, createQuietScene, layoutRect } from "./cinematic.js";
+import { configureMudShading, filmGroundSurface } from "./mud-ground.js";
 import { createHillSilhouette } from "./hill-silhouette.js";
+import { markScene, measureScene, sceneNow } from "./perf-marks.js";
 import { createPropScale } from "./prop-scale.js";
 import {
   CanvasTexture,
@@ -24,7 +25,6 @@ import {
   MirroredRepeatWrapping,
   Raycaster,
   RepeatWrapping,
-  Scene,
   Sphere,
   SphereGeometry,
   SRGBColorSpace,
@@ -38,9 +38,11 @@ import { createEstateSkyMaterial } from "./estate-sky.js";
 import { createSceneRendering } from "./rendering.js";
 import { createWatchtowerRefinement } from "./watchtower-refinement.js";
 import {
+  createPanelHold,
   createSceneFrameScheduler,
   createSceneResizeController,
-  hasMeaningfulScalarChange,
+  createShaderWarmup,
+  createVisitorHold,
 } from "./runtime.js";
 import {
   createSceneSubsystemRegistry,
@@ -76,8 +78,6 @@ function setSrgbTexture(texture) {
       groundHeight: groundHeight,
       smoothstep01: smoothstep01,
       supportsWebGL: supportsWebGL,
-      wrappedDistance: wrappedDistance,
-      wrap01: wrap01,
       GROUND_SURFACE_MATERIAL: GROUND_SURFACE_MATERIAL,
       TOWER_SURFACE_MATERIALS: TOWER_SURFACE_MATERIALS,
       PLANT_PALETTE: plantPalette,
@@ -88,6 +88,7 @@ function setSrgbTexture(texture) {
       WORLD: WORLD,
     } = scene;
   scene.initHomeScene = function () {
+    const initStart = sceneNow();
     const container = document.getElementById("home-scene");
     if (!container || !supportsWebGL()) return false;
     // Boot order:
@@ -97,12 +98,26 @@ function setSrgbTexture(texture) {
     let frameScheduler = null;
     let runtimeDisposed = false;
     let sceneReadyMarked = false;
+    // A failed procedural fallback leaves the static poster and stops rendering.
+    let sceneFailed = false;
+    // Dialogs hold rendering once their dim overlay has faded in (~440ms).
+    let panelHold = null;
+    // A visitor's Pause scene holds rendering once the scene is revealed.
+    let visitorHold = null;
+    // Behind a visitor pause, content changes (models, maps, shaders, fonts)
+    // still draw one still frame; scroll and tour cuts do not.
+    function invalidateContent() {
+      visitorHold?.redraw();
+      frameScheduler?.invalidate();
+    }
     const quietObjects = [];
     const modes = resolveSceneModes(window.location.search);
     const filmEnabled = modes.film;
     let filmActive = false, filmScene = null;
     const groundRepeats = new WeakMap();
     const quietSetting = modes.quiet;
+    // The default film ground is the dark cracked slate; comparisons keep theirs.
+    const slateGround = modes.ground === "slate";
     let webglContextAvailable = true;
     const reducedMotionMQ = window.matchMedia("(prefers-reduced-motion: reduce)");
     let reducedMotion = Boolean(reducedMotionMQ.matches);
@@ -115,6 +130,8 @@ function setSrgbTexture(texture) {
     const qualityState = scene.createSceneQualityState({
       navigatorInfo: navigator, search: window.location?.search || "",
       viewport: { width: window.innerWidth, height: window.innerHeight },
+      // The cached WebGL probe already read these limits; null probes again.
+      caps: scene.qualityCapsFromProbe?.(site.shared?.getWebGLCapabilities?.()) ?? null,
     });
     const qualityControls = qualityState.controls || {
       debug: false,
@@ -122,6 +139,18 @@ function setSrgbTexture(texture) {
       requestedTier: "auto",
     };
     const qualityDebug = qualityControls.debug ? (window.BabelSite.sceneDebug = {}) : null;
+    // ?sceneDebug=1 only: request the lazily split developer chunk now so its
+    // download overlaps initialization; the developer camera attaches below.
+    // A failed load is reported here even if initialization stops early.
+    const developerTools = qualityControls.debug
+      ? import("./developer-tools.js").catch((error) => {
+          console.warn("Scene developer tools failed to load.", error);
+          return null;
+        })
+      : null;
+    // Downloaded models and terrain maps keep the startup tier. Adaptive steps
+    // change only per-frame cost (DPR, shadows, post, counts, leaves).
+    const assetTier = qualityState.initialTier || fallbackProfile.tier;
     function updateSceneDebug(extra = {}) {
       if (!qualityDebug) return;
       Object.assign(qualityDebug, {
@@ -143,7 +172,10 @@ function setSrgbTexture(texture) {
               const nextVisible = ent.isIntersecting;
               if (nextVisible === sceneVisible) continue;
               sceneVisible = nextVisible;
-              if (sceneVisible) frameScheduler?.resume();
+              if (sceneVisible) {
+                qualityState.holdSampling();
+                frameScheduler?.resume();
+              }
             }
           },
           {
@@ -199,7 +231,7 @@ function setSrgbTexture(texture) {
       height: window.innerHeight,
       lighting: lightingConfig,
       onInvalidate() {
-        frameScheduler?.invalidate();
+        invalidateContent();
       },
       onContextLost() {
         webglContextAvailable = false;
@@ -209,6 +241,9 @@ function setSrgbTexture(texture) {
       onContextRestored() {
         webglContextAvailable = true;
         sceneReadyMarked = false;
+        qualityState.holdSampling();
+        // The restored canvas is blank; a paused scene draws it once.
+        visitorHold?.redraw();
         frameScheduler?.resume();
       },
       profile: state.profile,
@@ -222,8 +257,10 @@ function setSrgbTexture(texture) {
     scene.cinematicSelection ??= chooseCinematicView(window.location.search);
     scene.cinematicAngle ??= chooseCinematicAngle(window.location.search, scene.cinematicSelection);
     let cinematicArea;
+    // The hero uses layout geometry so scroll and its reveal/fade transforms do
+    // not reframe the camera; the fixed bottom bar keeps its viewport rect.
     const measureCinematicArea = (width, height) => cinematicSafeArea(width, height,
-      document.getElementById("hero-minimal")?.getBoundingClientRect(), document.querySelector(".bottom-bar")?.getBoundingClientRect());
+      layoutRect(document.getElementById("hero-minimal")), document.querySelector(".bottom-bar")?.getBoundingClientRect());
     const cinematic = createCinematicCamera({ camera, fog: homeScene.fog, selected: scene.cinematicSelection, angle: scene.cinematicAngle, film: filmEnabled,
       getSafeArea: (width, height) => cinematicArea || measureCinematicArea(width, height),
       getGroundY: (x, z) => groundHeight(x, z) + groundSurface.getWorldPosition(new Vector3()).y });
@@ -232,19 +269,16 @@ function setSrgbTexture(texture) {
     const cameraTour = tourInterval ? createCameraTour({ camera: cinematic, interval: tourInterval,
       invalidate: () => frameScheduler?.invalidate() }) : null;
     if (cameraTour) subsystemRegistry.register({ dispose: () => cameraTour.dispose() });
-    function isLowPower() {
-      return state.profile.isLow;
-    }
-    function chooseAnisotropy(arg53, arg54) {
-      const tmpV26 = state.profile.anisotropy || {
-        min: arg53,
-        max: arg54,
+    function chooseAnisotropy(minimum, maximum) {
+      const profileRange = state.profile.anisotropy || {
+        min: minimum,
+        max: maximum,
       };
-      const result84 = Math.max(arg53, tmpV26.min ?? arg53);
-      const result85 = Math.min(arg54, tmpV26.max ?? arg54);
+      const lowPowerAnisotropy = Math.max(minimum, profileRange.min ?? minimum);
+      const fullAnisotropy = Math.min(maximum, profileRange.max ?? maximum);
       return Math.max(
         1,
-        Math.min(renderer.capabilities.getMaxAnisotropy(), state.lowPower ? result84 : result85),
+        Math.min(renderer.capabilities.getMaxAnisotropy(), state.lowPower ? lowPowerAnisotropy : fullAnisotropy),
       );
     }
     function createMarbleMaterial(textures = {}) {
@@ -305,7 +339,9 @@ function setSrgbTexture(texture) {
     }
     function applyActiveQualityProfile(profile, reason = "runtime") {
       state.profile = profile || fallbackProfile;
-      state.lowPower = state.profile.isLow;
+      // Built/loaded content follows the pinned asset tier, so an adaptive
+      // step can never switch the scene into its low-power construction.
+      state.lowPower = assetTier === "low";
       const effectiveCap =
         typeof qualityState.resolveDprCap === "function"
           ? qualityState.resolveDprCap(state.profile)
@@ -317,8 +353,11 @@ function setSrgbTexture(texture) {
               })
             : state.profile.dprCap || 1;
       const pixelRatio = Math.min(window.devicePixelRatio || 1, effectiveCap || 1);
-      subsystemRegistry.applyQuality(state.profile, { pixelRatio });
+      subsystemRegistry.applyQuality(state.profile, { pixelRatio, assetTier });
       updateSceneDebug({
+        assetTier,
+        // "low" while a resolution-only step holds the current profile at DPR 1.
+        governorTier: qualityState.getTier?.(),
         reason,
         pixelRatio,
       });
@@ -327,7 +366,7 @@ function setSrgbTexture(texture) {
     homeScene.add(sceneRoot);
     const atmosphereSystem = createSceneAtmosphere({
       onInvalidate() {
-        frameScheduler?.invalidate();
+        invalidateContent();
       },
       parent: homeScene,
       profile: state.profile,
@@ -350,9 +389,6 @@ function setSrgbTexture(texture) {
       (skyShell.material.depthWrite = !1),
       atmosphereSystem.root.add(skyShell));
     atmosphereSystem.setSkyMaterial(skyShell.material);
-    // The retired 400-stamp solar texture consumed five random values per stamp.
-    // Preserve the downstream terrain/cloud seed sequence during this bounded edit.
-    for (let solarSeedOffset = 0; solarSeedOffset < 2000; solarSeedOffset += 1) Math.random();
     const solarBody = createSolarBody({
       parent: atmosphereSystem.root, camera,
       position: new Vector3(...WORLD.SUN_POSITION), profile: state.profile,
@@ -375,12 +411,12 @@ function setSrgbTexture(texture) {
     const environmentRoot = environmentSystem.root;
     const circleGeometry = new CircleGeometry(WORLD.GROUND_RADIUS, circleSegments, 0, 2 * Math.PI),
       groundPositions = circleGeometry.attributes.position;
-    for (let num425 = 0; num425 < groundPositions.count; num425 += 1) {
-      const result56 = groundPositions.getX(num425),
-        result57 = groundPositions.getY(num425);
+    for (let vertexIndex = 0; vertexIndex < groundPositions.count; vertexIndex += 1) {
+      const localX = groundPositions.getX(vertexIndex),
+        localY = groundPositions.getY(vertexIndex);
       // CircleGeometry's local +Y becomes world -Z after its -X quarter turn.
       // Sample in world coordinates so fallback assets seat on this surface.
-      groundPositions.setZ(num425, groundHeight(result56, -result57));
+      groundPositions.setZ(vertexIndex, groundHeight(localX, -localY));
     }
     circleGeometry.computeVertexNormals();
     let groundSurface = null;
@@ -393,40 +429,49 @@ function setSrgbTexture(texture) {
         qualityProfile: state.profile,
         chooseAnisotropy: chooseAnisotropy,
         search: window.location?.search || "",
+        invalidate() {
+          invalidateContent();
+        },
         onDetailStatus(status) {
+          if (status.status === "ready") qualityState.holdSampling();
           if (qualityDebug) qualityDebug.ground = status;
         },
         onGrassStatus(status) {
+          if (status.status === "ready") qualityState.holdSampling();
           if (qualityDebug) qualityDebug.grass = status;
         },
         onGrassChange(grassDetail) {
           currentGrass = grassDetail;
           const material = groundSurface?.material;
           if (!material) return;
-          configureMudShading(material, currentGroundMuddy, quietSetting, filmActive, currentGrass);
-          frameScheduler?.invalidate();
+          const { slate } = filmGroundSurface({ muddy: currentGroundMuddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL });
+          configureMudShading(material, currentGroundMuddy, quietSetting, filmActive, currentGrass, { slate });
+          invalidateContent();
         },
-        onDetailChange({ colorMap, normalMap, normalScale, bumpMap, roughnessMap = null, muddy = false, earth = false }) {
+        onDetailChange({ colorMap, normalMap, normalScale, bumpMap, roughnessMap = null, muddy = false, filmTiled = false }) {
           const material = groundSurface?.material;
           if (!material) return;
           currentGroundMuddy = muddy;
-          if (qualityDebug) qualityDebug.groundTreatment = muddy ? "mud" : "baseline";
-          configureMudShading(material, muddy, quietSetting, filmActive, currentGrass);
+          // The slate tint and shading follow the mode, not the published
+          // maps, so the procedural loading and fallback surface is slate too.
+          const surface = filmGroundSurface({ muddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL });
+          if (qualityDebug) qualityDebug.groundTreatment = muddy ? "mud" : surface.slate ? "slate" : "baseline";
+          configureMudShading(material, muddy, quietSetting, filmActive, currentGrass, { slate: surface.slate });
           for (const texture of [colorMap, normalMap, roughnessMap, bumpMap].filter(Boolean)) {
             if (!groundRepeats.has(texture)) groundRepeats.set(texture, texture.repeat.clone());
-            texture.repeat.copy(groundRepeats.get(texture)).multiplyScalar(filmActive && !earth ? 384 / 176 : 1);
+            texture.repeat.copy(groundRepeats.get(texture)).multiplyScalar(filmActive && !filmTiled ? 384 / 176 : 1);
           }
           material.map = colorMap;
           material.roughnessMap = roughnessMap;
-          material.roughness = muddy ? 1 : filmActive ? .93 : GROUND_SURFACE_MATERIAL.roughness;
-          material.metalness = muddy || filmActive ? 0 : GROUND_SURFACE_MATERIAL.metalness;
-          material.color.setHex(muddy ? 0xffffff : filmActive ? 0x615447 : GROUND_SURFACE_MATERIAL.color);
+          material.roughness = surface.roughness;
+          material.metalness = surface.metalness;
+          material.color.setHex(surface.color);
           if (groundOverlay) groundOverlay.material.opacity = muddy ? .22 : .92;
           material.bumpMap = bumpMap;
           material.normalMap = normalMap;
           material.normalScale.set(normalScale, normalScale);
           material.needsUpdate = true;
-          frameScheduler?.invalidate();
+          invalidateContent();
         },
       }),
       groundMesh = new Mesh(
@@ -472,7 +517,7 @@ function setSrgbTexture(texture) {
       circleGeometry, clamp01, cloudAnchor, createGroundOverlayTexture,
       createMarbleMaterial, createMarbleTextures, createTowerTextures,
       environmentSystem, filmEffects, filmEnabled, groundHeight, environmentRoot, towerRoot,
-      homeScene, invalidate: () => frameScheduler?.invalidate(), overlaySegments,
+      homeScene, invalidate: invalidateContent, overlaySegments,
       plantPalette, pointFieldCount, groundPositions, qualityDebug, quietObjects,
       quietSetting, registerDecorativeSystem, renderer, rendering, towerGroundY,
       collapseYaw, setShadowParticipation, setSrgbTexture, smoothstep01, state,
@@ -495,6 +540,9 @@ function setSrgbTexture(texture) {
       trim.push(...world.trim);
     }
     if (modes.legacy || state.lowPower) bindLegacyWorld(legacyWorld.ensure());
+    // Authored casters and the sun hold still within a shot, so the shadow map
+    // redraws only on reported changes. Legacy clutter animates every frame.
+    rendering.setStaticShadows(!legacyWorld.current);
     let treeArchitecture = null;
     let towerVisibility = [];
     let treeVisibility = true;
@@ -540,6 +588,7 @@ function setSrgbTexture(texture) {
       const world = legacyWorld.ensure();
       if (!world) return;
       bindLegacyWorld(world);
+      rendering.setStaticShadows(false);
       watchtowerRefinement.setActive(active[0]);
       propScale.setActive(active[1]);
       quietScene.setActive(active[2]);
@@ -554,12 +603,35 @@ function setSrgbTexture(texture) {
         treeVisibility = classicTree.visible;
         classicTree.visible = false;
       }
-      frameScheduler?.invalidate();
+      invalidateContent();
+    }
+    // A failed fallback cannot be revealed or retried. Leave the static poster
+    // rather than a partial scene or a loop waiting on a status.
+    function stopFailedScene(stage, error) {
+      sceneFailed = true;
+      container.classList?.remove("is-ready");
+      if (qualityDebug) qualityDebug.failure = { stage, message: String(error?.message || error) };
+    }
+    // Shader warm-up links new programs through compileAsync instead of a
+    // blocking first draw. Until the canvas is first shown nothing draws while
+    // one is pending; afterwards a committed model that replaces nothing
+    // visible stays hidden until its programs are ready.
+    let canvasShown = false;
+    const shaderWarmup = createShaderWarmup({ compile: () => rendering.compileShaders() });
+    function warmShaders(label, subject = null) {
+      const start = sceneNow();
+      shaderWarmup.warm(subject, (ready) => {
+        measureScene(`shaders:${label}`, start);
+        if (qualityDebug) (qualityDebug.shaders ||= {})[label] = ready ? "ready" : "unwarmed";
+        rendering.invalidateShadows();
+        invalidateContent();
+      });
     }
     const architectureAssets = createArchitectureAssetController({
       disabled: !architectureEnabled,
       towerModel: completeTowerEnabled ? "complete" : "assembled",
       onTowerReady(assets) {
+        const assemblyStart = sceneNow();
         const replacement = completeTowerEnabled
           ? createCompleteTowerArchitecture({
             asset: assets.tower, groundY: towerGroundY, footingOffset: earthFooting ? -0.22 : 1.64, anisotropy: chooseAnisotropy(2, 6),
@@ -584,7 +656,10 @@ function setSrgbTexture(texture) {
         towerRoot.add(replacement.root);
         cinematic.setSubject("tower", replacement.root);
         replacedMeshes.forEach((mesh) => { mesh.visible = false; });
-        frameScheduler?.invalidate();
+        rendering.invalidateShadows();
+        invalidateContent();
+        measureScene("assembly:tower", assemblyStart);
+        warmShaders("tower", towerVisibility.some(([, visible]) => visible) ? null : replacement.root);
         return () => {
           if (completeTower === replacement) completeTower = null;
           replacement.dispose();
@@ -601,12 +676,15 @@ function setSrgbTexture(texture) {
         watchtowerRefinement.setActive(false);
         towerVisibility.forEach(([mesh, visible]) => { mesh.visible = visible; });
         towerVisibility = [];
-        frameScheduler?.invalidate();
+        rendering.invalidateShadows();
+        invalidateContent();
       },
       onTreeReady(asset) {
+        const assemblyStart = sceneNow();
         const replacement = createTreeArchitecture({ asset, groundHeight, anisotropy: chooseAnisotropy(2, 6), anchor: earthFooting ? [55.1, 36.1] : [58, 38] });
         replacement.applyQuality(state.profile);
         environmentRoot.add(replacement.root);
+        const replacesVisible = Boolean(classicTree?.visible);
         if (classicTree) {
           treeVisibility = classicTree.visible;
           classicTree.visible = false;
@@ -615,7 +693,10 @@ function setSrgbTexture(texture) {
         propScale.setTree(replacement);
         replacement.setFilmTreatment(filmActive);
         cinematic.setSubject("tree", replacement.root);
-        frameScheduler?.invalidate();
+        rendering.invalidateShadows();
+        invalidateContent();
+        measureScene("assembly:tree", assemblyStart);
+        warmShaders("tree", replacesVisible ? null : replacement.root);
         return () => { replacement.dispose(); treeArchitecture = null; };
       },
       onRestoreTree() {
@@ -623,13 +704,26 @@ function setSrgbTexture(texture) {
         treeArchitecture?.setFilmTreatment(false);
         propScale.setTree(null);
         if (classicTree) classicTree.visible = treeVisibility;
-        frameScheduler?.invalidate();
+        rendering.invalidateShadows();
+        invalidateContent();
       },
       onStatus(status) {
-        if (!runtimeDisposed && (status.status === "fallback" ||
-          (status.status === "procedural" && sceneReadyMarked))) ensureLegacyWorld();
+        if (status.status === "ready") qualityState.holdSampling();
+        // Record the status first: a throwing fallback must not leave the
+        // camera waiting on a load that has already ended.
         cinematic.setStatus(status);
-        frameScheduler?.invalidate();
+        if (!runtimeDisposed && (status.status === "fallback" ||
+          (status.status === "procedural" && sceneReadyMarked))) {
+          try {
+            ensureLegacyWorld();
+          } catch (error) {
+            stopFailedScene("legacy-world", error);
+          }
+          // The legacy build cycles the film ground off and on, and without the
+          // tower it never arrives: the procedural ground shows meanwhile.
+          groundTextures.ensureProcedural?.();
+        }
+        invalidateContent();
         if (qualityDebug) {
           qualityDebug.architecture ||= { mode: architectureEnabled ? (completeTowerEnabled ? "complete" : "assembled") : "classic" };
           qualityDebug.architecture[status.kind] = status;
@@ -674,28 +768,29 @@ function setSrgbTexture(texture) {
       });
     }
     function cloudViewFade(
-      arg126,
-      arg127,
-      arg128,
-      arg129,
-      arg130,
-      arg131 = 0.92,
+      point,
+      fadeStartDistance,
+      fadeDistanceRange,
+      sightlineClearance,
+      sightlineFadeRange,
+      sightlineExtent = 0.92,
       minOpacity = 0.14,
     ) {
-      const result91 = cloudCameraVector.copy(arg126).distanceTo(camera.position),
-        result92 = clamp01((result91 - arg127) / arg128);
+      const cameraDistance = cloudCameraVector.copy(point).distanceTo(camera.position),
+        distanceFade = clamp01((cameraDistance - fadeStartDistance) / fadeDistanceRange);
       cloudViewVector.copy(cloudLookTarget).sub(camera.position);
-      const result93 = cloudViewVector.length();
-      if (!(result93 > 1e-3)) return result92;
-      (cloudViewVector.multiplyScalar(1 / result93),
-        cloudOffsetVector.copy(arg126).sub(camera.position));
-      const result94 = cloudOffsetVector.dot(cloudViewVector);
-      if (result94 <= 0 || result94 >= result93 * arg131) return result92;
-      const result95 = cloudOffsetVector.addScaledVector(cloudViewVector, -result94).length(),
-        result96 = clamp01((result95 - arg129) / arg130);
-      return Math.max(minOpacity, Math.min(result92, result96));
+      const sightlineLength = cloudViewVector.length();
+      if (!(sightlineLength > 1e-3)) return distanceFade;
+      (cloudViewVector.multiplyScalar(1 / sightlineLength),
+        cloudOffsetVector.copy(point).sub(camera.position));
+      const alongSightline = cloudOffsetVector.dot(cloudViewVector);
+      if (alongSightline <= 0 || alongSightline >= sightlineLength * sightlineExtent) return distanceFade;
+      const sightlineOffset = cloudOffsetVector.addScaledVector(cloudViewVector, -alongSightline).length(),
+        sightlineFade = clamp01((sightlineOffset - sightlineClearance) / sightlineFadeRange);
+      return Math.max(minOpacity, Math.min(distanceFade, sightlineFade));
     }
     function applySceneSize({ width, height }) {
+      qualityState.holdSampling();
       cinematicArea = measureCinematicArea(width, height);
       ((viewport.width = width),
         (viewport.height = height),
@@ -708,6 +803,10 @@ function setSrgbTexture(texture) {
         height,
         width,
       });
+      // Resizing clears the canvas; draw one frame behind an open dialog or
+      // a visitor pause.
+      panelHold?.redraw();
+      visitorHold?.redraw();
       frameScheduler?.invalidate();
     }
     const resizeController = createSceneResizeController({
@@ -720,11 +819,11 @@ function setSrgbTexture(texture) {
         };
       },
     });
-    // viewport.height is refreshed inside tmpV89 (the resize handler) on every
-    // resize, so reading it inside the scroll handler avoids a layout-flushing
-    // window.innerHeight access per scroll event.
+    // viewport.height is refreshed inside applySceneSize (the resize handler)
+    // on every resize, so reading it inside the scroll handler avoids a
+    // layout-flushing window.innerHeight access per scroll event.
     const onWindowResize = () => resizeController.resize();
-    const onFontsLoaded = () => { cinematicArea = measureCinematicArea(viewport.width, viewport.height); frameScheduler?.invalidate(); };
+    const onFontsLoaded = () => { cinematicArea = measureCinematicArea(viewport.width, viewport.height); invalidateContent(); };
     document.fonts?.addEventListener?.("loadingdone", onFontsLoaded);
     const onWindowScroll = () => {
       viewport.scrollTarget = Math.min(window.scrollY / (1.8 * viewport.height), 1.25);
@@ -738,47 +837,51 @@ function setSrgbTexture(texture) {
     const orbitStartAngle = 0.12 * Math.PI;
     let debugRenderFrameCount = 0;
     let debugRenderWindowStart = null;
+    let firstFrameDrawn = false;
     function updateSceneFrame({
-      deltaSeconds: result97,
+      deltaSeconds,
       elapsedSeconds: elapsedTime,
       sampleDeltaSeconds,
       timestamp,
     }) {
-      const adaptiveProfile =
-        typeof qualityState.sample === "function"
-          ? qualityState.sample(1e3 * sampleDeltaSeconds, 1e3 * elapsedTime)
-          : null;
-      adaptiveProfile &&
-        adaptiveProfile.tier !== state.profile.tier &&
-        applyActiveQualityProfile(adaptiveProfile, "adaptive");
+      const frameStart = firstFrameDrawn ? 0 : sceneNow();
+      // Samples are rAF intervals, not render cost; take them only while the
+      // revealed scene animates continuously, outside a post-event hold.
+      const revealed = sceneReadyMarked && cinematic.ready;
+      const adaptiveProfile = revealed && !reducedMotion
+        ? qualityState.sampleRevealed?.({ frameMs: 1e3 * sampleDeltaSeconds,
+          nowMs: 1e3 * elapsedTime, timestamp, profile: state.profile })
+        : null;
+      // Each step changes the tier or, below balanced, only the pixel ratio.
+      if (adaptiveProfile) applyActiveQualityProfile(adaptiveProfile, "adaptive");
       const activeProfile = state.profile,
         cameraProfile = compositionState.profile.camera || fallbackComposition.camera,
-        tmpV55 = 1;
+        orbitMotionScale = 1;
       viewport.scroll = reducedMotion
         ? viewport.scrollTarget
         : viewport.scroll + 0.025 * (viewport.scrollTarget - viewport.scroll);
-      const tmpV56 = activeProfile.isLow ? 0.055 : 0.06,
-        num490 = elapsedTime * (0.95 * tmpV56) * tmpV55,
-        num491 = 0.09 * Math.sin(3 * num490) + 0.05 * Math.sin(2 * num490),
-        num492 = orbitStartAngle + num490 - num491,
-        num493 = cameraProfile.orbitBase - cameraProfile.orbitScrollDelta * viewport.scroll,
-        num494 =
+      const orbitSpeed = activeProfile.isLow ? 0.055 : 0.06,
+        orbitTravel = elapsedTime * (0.95 * orbitSpeed) * orbitMotionScale,
+        orbitWobble = 0.09 * Math.sin(3 * orbitTravel) + 0.05 * Math.sin(2 * orbitTravel),
+        orbitAngle = orbitStartAngle + orbitTravel - orbitWobble,
+        scrolledOrbitBase = cameraProfile.orbitBase - cameraProfile.orbitScrollDelta * viewport.scroll,
+        orbitHeight =
           cameraProfile.heightBase +
           cameraProfile.heightScrollDelta * viewport.scroll +
-          0.45 * Math.sin(0.28 * elapsedTime) * tmpV55 +
-          0.6 * Math.sin(0.13 * elapsedTime) * tmpV55,
-        num495 = cameraProfile.lookAtBase + cameraProfile.lookAtScrollDelta * viewport.scroll,
-        num496 = cameraProfile.orbitScale * (num493 - cameraProfile.orbitTrim);
+          0.45 * Math.sin(0.28 * elapsedTime) * orbitMotionScale +
+          0.6 * Math.sin(0.13 * elapsedTime) * orbitMotionScale,
+        lookAtHeight = cameraProfile.lookAtBase + cameraProfile.lookAtScrollDelta * viewport.scroll,
+        orbitDistance = cameraProfile.orbitScale * (scrolledOrbitBase - cameraProfile.orbitTrim);
       const tourPhase = cameraTour?.update({ elapsedSeconds: elapsedTime, reducedMotion,
         developer: Boolean(scene.devMode?.active), panelOpen: document.body.hasAttribute("data-panel-open") }) ?? null;
       rendering.postprocessPipeline.setFade?.(cameraTour?.fade ?? 0);
       const cinematicApplied = cinematic.apply({ width: viewport.width, height: viewport.height,
         elapsedSeconds: elapsedTime, reducedMotion, developer: Boolean(scene.devMode?.active), tourPhase, fallbackFov: cameraProfile.fov || 45 });
-      if (scene.devMode?.active && typeof scene.devMode.update === "function") scene.devMode.update(camera, result97);
-      else if (!cinematicApplied) { camera.position.set(Math.cos(num492) * num496, num494, Math.sin(num492) * num496); camera.lookAt(0, num495, 0); }
+      if (scene.devMode?.active && typeof scene.devMode.update === "function") scene.devMode.update(camera, deltaSeconds);
+      else if (!cinematicApplied) { camera.position.set(Math.cos(orbitAngle) * orbitDistance, orbitHeight, Math.sin(orbitAngle) * orbitDistance); camera.lookAt(0, lookAtHeight, 0); }
       cloudAnchor.position.x = camera.position.x;
       cloudAnchor.position.z = camera.position.z;
-      if (cinematicApplied) cloudLookTarget.copy(cinematic.target); else cloudLookTarget.set(0, num495, 0);
+      if (cinematicApplied) cloudLookTarget.copy(cinematic.target); else cloudLookTarget.set(0, lookAtHeight, 0);
       subsystemRegistry.update({
           elapsedSeconds: elapsedTime,
           reducedMotion,
@@ -791,7 +894,16 @@ function setSrgbTexture(texture) {
       if (filmActive) filmScene.finishFrame(camera, cloudLookTarget, cinematic.frame,
         viewport.width < 900 && cinematic.shot?.arc === 2, (cinematicArea?.top || 200) / viewport.height);
       if (qualityDebug) qualityDebug.cinematic = { tour: cameraTour ? { ...cameraTour.state, fade: cameraTour.fade } : null, film: filmActive, shot: cinematic.shot?.name, selected: cinematic.selected, angle: cinematic.angle + 1, current: cinematic.current, quiet: quietScene.active };
-      rendering.update();
+      // Drawing while a warm-up links would block on it; the hidden canvas waits.
+      if (canvasShown || !shaderWarmup.pending) {
+        rendering.update();
+        if (!firstFrameDrawn) {
+          firstFrameDrawn = true;
+          measureScene("first-frame", frameStart);
+        }
+      }
+      panelHold?.frameRendered();
+      visitorHold?.frameRendered();
       if (qualityDebug) {
         debugRenderWindowStart ??= timestamp;
         debugRenderFrameCount += 1;
@@ -805,13 +917,22 @@ function setSrgbTexture(texture) {
       if (!sceneReadyMarked) {
         sceneReadyMarked = true;
 
-        architectureAssets.setQuality(state.profile, true);
+        architectureAssets.setQuality(state.profile, true, { assetTier });
       }
-      container?.classList.toggle("is-ready", cinematic.ready || Boolean(scene.devMode?.active));
+      const sceneShown = !sceneFailed && (cinematic.ready || Boolean(scene.devMode?.active)) &&
+        (canvasShown || !shaderWarmup.pending);
+      if (sceneShown && !canvasShown) markScene("reveal");
+      canvasShown = sceneShown;
+      container?.classList.toggle("is-ready", sceneShown);
+      // Until the reveal, the transparent canvas redraws only when invalidated
+      // (status, model commit, resize) instead of animating through downloads.
+      frameScheduler?.setStill(!sceneShown);
+      // A paused visitor keeps the first revealed frame.
+      if (sceneShown) visitorHold?.reveal();
     }
     frameScheduler = createSceneFrameScheduler({
       isRenderable() {
-        return !document.hidden && sceneVisible && webglContextAvailable;
+        return !document.hidden && sceneVisible && webglContextAvailable && !sceneFailed;
       },
       onUpdate: updateSceneFrame,
       reducedMotion,
@@ -827,21 +948,62 @@ function setSrgbTexture(texture) {
       reducedMotionMQ.addListener(onReducedMotionChange);
     }
     const onDocumentVisibilityChange = () => {
-      if (!document.hidden) frameScheduler.resume();
+      if (document.hidden) return;
+      qualityState.holdSampling();
+      frameScheduler.resume();
     };
     document.addEventListener("visibilitychange", onDocumentVisibilityChange);
-    if (scene.devMode && typeof scene.devMode.attach === "function") {
-      scene.devMode.attach({
-        THREE,
-        camera,
-        homeScene,
-        canvas: renderer.domElement,
-        ensureOutlinePass: rendering.ensureOutlinePass,
-        onActivityChange(active) {
-          frameScheduler.setForceAnimation(active);
-        },
-      });
-    }
+    // panels.js marks <body data-panel-open> while any dialog is open. The tour
+    // already holds; after the dim overlay fades in, the backdrop stops redrawing.
+    panelHold = createPanelHold({
+      delayMs: 450,
+      isOpen: () => document.body.hasAttribute("data-panel-open"),
+      onRelease: () => qualityState.holdSampling(),
+      scheduler: frameScheduler,
+    });
+    const panelObserver =
+      typeof MutationObserver === "function" ? new MutationObserver(() => panelHold.sync()) : null;
+    panelObserver?.observe(document.body, { attributes: true, attributeFilter: ["data-panel-open"] });
+    panelHold.sync();
+    // The footer's Pause scene control stops the tour, drift and clouds and
+    // holds rendering. The UI may leave a stored choice in
+    // visitorPausedPreference before this bundle loads.
+    visitorHold = createVisitorHold({
+      onRelease: () => qualityState.holdSampling(),
+      scheduler: frameScheduler,
+    });
+    scene.setVisitorPaused = (paused) => {
+      const next = Boolean(paused);
+      scene.visitorPausedPreference = next;
+      cameraTour?.setPaused(next);
+      return visitorHold.set(next);
+    };
+    scene.isVisitorPaused = () => visitorHold.paused;
+    scene.setVisitorPaused(scene.visitorPausedPreference === true);
+    // The developer camera hides all page UI, so only diagnostic sessions
+    // (?sceneDebug=1) get its activation key. It and Three's OutlinePass live
+    // in a lazily imported chunk that default visitors never request. That
+    // request started above, and initHomeScene is synchronous, so attach runs
+    // after init returns, once the chunk has arrived (normally by then).
+    // dispose() is safe without attach.
+    developerTools
+      ?.then((tools) => {
+        if (!tools || runtimeDisposed || typeof scene.devMode?.attach !== "function") return;
+        scene.devMode.attach({
+          THREE,
+          camera,
+          homeScene,
+          canvas: renderer.domElement,
+          ensureOutlinePass: () => rendering.ensureOutlinePass(tools.createOutlinePass),
+          // The developer camera hides the Pause scene control, so it renders
+          // through a visitor pause and restores the held frame on exit.
+          onActivityChange(active) {
+            visitorHold.suspend(active);
+            frameScheduler.setForceAnimation(active);
+          },
+        });
+      })
+      .catch((error) => console.warn("Scene developer tools failed to attach.", error));
     scene.disposeHomeSceneRuntime = function disposeHomeSceneRuntime() {
       if (runtimeDisposed) return false;
       runtimeDisposed = true;
@@ -858,6 +1020,9 @@ function setSrgbTexture(texture) {
       }
       sceneIntersectionObserver?.disconnect();
       sceneIntersectionObserver = null;
+      panelObserver?.disconnect();
+      panelHold.dispose();
+      visitorHold.dispose();
       resizeController.dispose();
       frameScheduler.dispose();
       if (scene.devMode && typeof scene.devMode.dispose === "function") {
@@ -868,10 +1033,14 @@ function setSrgbTexture(texture) {
       frameScheduler = null;
       scene.setClouds = () => false;
       scene.toggleClouds = () => false;
+      scene.setVisitorPaused = () => false;
+      scene.isVisitorPaused = () => false;
       scene.disposeHomeSceneRuntime = () => false;
       return disposedResources;
     };
+    warmShaders("scene");
     frameScheduler.start();
+    measureScene("init", initStart);
     return true;
     });
   };

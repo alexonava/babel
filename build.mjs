@@ -1,7 +1,7 @@
-import { build } from "esbuild";
+import { build, transform } from "esbuild";
 import { copyFile, cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { publishBuild } from "./tools/build-output.mjs";
 
@@ -9,19 +9,33 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // The UI entry stays small for first paint. The scene entry carries Three.js
 // and the tower runtime, then main.js loads it after the hero has rendered.
+// The scene is an ES module split by esbuild: code reached only through a
+// dynamic import() (the ?sceneDebug=1 developer tools) becomes a lazy chunk,
+// and code it shares with the entry (Three.js) becomes one static chunk that
+// the entry imports. Every chunk keeps the scene.*.js prefix and a content hash.
+// The scene builds first: the UI names the scene's static chunks so main.js
+// can preload them beside the entry (see buildScripts).
 const APP_ENTRY = "src/app.js";
 const SCENE_ENTRY = "src/scene-entry.js";
 const SCRIPT_ENTRIES = [
+  { basename: "scene", entry: SCENE_ENTRY, split: true },
   { basename: "app", entry: APP_ENTRY },
-  { basename: "scene", entry: SCENE_ENTRY },
 ];
+// esbuild names split output here only to resolve import paths; with
+// write: false nothing is written, and fingerprintChunks renames everything.
+const SPLIT_OUTDIR = join(__dirname, ".cache", "split-scripts");
 
 // Files copied verbatim (no URL rewriting).
 const STATIC_FILES = [
   "LICENSE",
   "favicon.svg",
+  "favicon.ico",
   "icon.svg",
   "icon-maskable.svg",
+  "apple-touch-icon.png",
+  "icon-192.png",
+  "icon-512.png",
+  "icon-maskable-512.png",
   "manifest.webmanifest",
   "og.png",
   "robots.txt",
@@ -30,6 +44,7 @@ const STATIC_FILES = [
   "index.md",
   "_headers",
   "_redirects",
+  ".well-known/security.txt",
 ];
 const STATIC_FILE_ALIASES = [{ source: "site-agents.md", destination: "AGENTS.md" }];
 const STATIC_DIRS = ["fonts", "images"];
@@ -54,16 +69,26 @@ export const BUILD_INPUT_FILES = [
   "package.json",
   "package-lock.json",
 ];
-export const BUILD_INPUT_DIRS = ["src", ...STATIC_DIRS, "tools"];
+// The watcher follows root files without recursion, so a nested static file's
+// directory is watched as a whole.
+export const BUILD_INPUT_DIRS = ["src", ...STATIC_DIRS, ".well-known", "tools"];
 
-const scriptBuildOptions = (entry) => ({
+const scriptBuildOptions = (entry, split = false) => ({
   entryPoints: [join(__dirname, entry)],
   bundle: true,
   minify: true,
   target: "es2022",
-  format: "iife",
+  format: split ? "esm" : "iife",
   legalComments: "none",
   write: false,
+  ...(split && {
+    splitting: true,
+    metafile: true,
+    absWorkingDir: __dirname,
+    outdir: SPLIT_OUTDIR,
+    entryNames: "[name]",
+    chunkNames: "[name]-[hash]",
+  }),
 });
 
 function sha8(buf) {
@@ -86,19 +111,128 @@ async function architectureAssetManifest() {
   return { urls, files };
 }
 
-async function buildScriptBundle(entry, architecture) {
-  const options = scriptBuildOptions(entry);
-  if (entry === SCENE_ENTRY) {
-    options.define = {
-      __BABEL_ARCHITECTURE_URLS__: JSON.stringify(
-        (architecture ?? (await architectureAssetManifest())).urls,
-      ),
-    };
+// Split output refers to its chunks by esbuild's temporary names. Rename each
+// chunk after the sha256 of its final bytes, dependencies first, so an
+// importer's hash covers the fingerprinted names it loads: any chunk change
+// yields a new entry URL. The entry is BASENAME.HASH.js; chunks are
+// BASENAME.LABEL.HASH.js, where LABEL is the dynamically imported module's
+// file name, or "shared" for code that more than one output uses.
+function fingerprintChunks({ basename, entry: source }, { metafile, outputFiles }) {
+  const outputKey = (file) => relative(__dirname, file).split(sep).join("/");
+  const texts = new Map(outputFiles.map((file) => [outputKey(file.path), file.text]));
+  const named = new Map();
+  const visiting = new Set();
+  function visit(key) {
+    if (named.has(key)) return named.get(key);
+    if (visiting.has(key)) throw new Error(`Script chunks import each other cyclically: ${key}`);
+    visiting.add(key);
+    const meta = metafile.outputs[key];
+    let text = texts.get(key);
+    if (!meta || text === undefined) throw new Error(`esbuild produced no output named ${key}`);
+    // A chunk that is no entry point holds code several outputs share, and the
+    // entry's static import makes it evaluate before any entry module. The
+    // first-party scene modules register on BabelSite in the order
+    // scene-entry.js lists, so none of them may move there.
+    const firstParty = Object.keys(meta.inputs).filter((input) => input.startsWith("src/"));
+    if (!meta.entryPoint && firstParty.length) {
+      throw new Error(
+        `Shared ${basename} chunk would reorder side-effect modules: ${firstParty.join(", ")}`,
+      );
+    }
+    const imports = [];
+    for (const { path: dependency, kind, external } of meta.imports) {
+      if (external) throw new Error(`${key} imports external ${dependency}`);
+      const chunk = visit(dependency);
+      const from = dependency.split("/").pop();
+      let replaced = 0;
+      for (const quote of ['"', "'", "`"]) {
+        const specifier = `${quote}./${from}${quote}`;
+        replaced += text.split(specifier).length - 1;
+        text = text.replaceAll(specifier, `${quote}./${chunk.name}${quote}`);
+      }
+      if (!replaced) throw new Error(`${key} does not name its chunk ${from}`);
+      imports.push({ chunk, lazy: kind === "dynamic-import" });
+    }
+    // esbuild records each dynamic import() target as an entry point too.
+    const dynamicName = meta.entryPoint?.replace(/^.*\/|\.[cm]?js$/g, "");
+    const label = meta.entryPoint === source ? "" : `${dynamicName ?? "shared"}.`;
+    const chunk = { name: `${basename}.${label}${sha8(text)}.js`, text, imports };
+    visiting.delete(key);
+    named.set(key, chunk);
+    return chunk;
   }
+  const entries = Object.keys(metafile.outputs).filter(
+    (key) => metafile.outputs[key].entryPoint === source,
+  );
+  if (entries.length !== 1) throw new Error(`Expected one output for ${source}`);
+  const entry = visit(entries[0]);
+  for (const key of Object.keys(metafile.outputs)) visit(key);
+  // Everything the entry imports statically downloads with it; a dynamic
+  // import() target, and whatever only it reaches, downloads on demand.
+  const loaded = new Set([entry]);
+  for (const chunk of loaded) {
+    for (const { chunk: dependency, lazy } of chunk.imports) if (!lazy) loaded.add(dependency);
+  }
+  return [entry, ...[...named.values()].filter((chunk) => chunk !== entry)].map((chunk) => ({
+    name: chunk.name,
+    text: chunk.text,
+    lazy: !loaded.has(chunk),
+  }));
+}
+
+// The scene loads every role. The UI requests only the startup tier's tower
+// and tree beside the scene bundle, so it names only those: the other roles'
+// hashes then never change the UI bundle.
+// Returns the published scripts, entry first, as [{ name, text, lazy }].
+async function buildScriptBundle({ basename, entry, split }, architecture, sceneModulePreloads) {
+  const options = scriptBuildOptions(entry, split);
+  const { urls } = architecture ?? (await architectureAssetManifest());
+  // The scene manifest is a string literal that architecture-assets.js parses:
+  // an object-valued define becomes a virtual module that splitting places in
+  // the shared Three.js chunk, so each model revision would change its URL.
+  options.define =
+    entry === SCENE_ENTRY
+      ? { __BABEL_ARCHITECTURE_URLS__: JSON.stringify(JSON.stringify(urls)) }
+      : {
+          __BABEL_ARCHITECTURE_PREFETCH_URLS__: JSON.stringify(
+            Object.fromEntries(
+              Object.entries(urls).map(([tier, { tower, tree }]) => [tier, { tower, tree }]),
+            ),
+          ),
+          __BABEL_SCENE_MODULE_PRELOADS__: JSON.stringify(sceneModulePreloads ?? []),
+        };
   const result = await build(options);
+  if (split) return fingerprintChunks({ basename, entry }, result);
   const out = result.outputFiles?.[0];
   if (!out) throw new Error(`esbuild produced no output for ${entry}`);
-  return out.text;
+  return [{ name: `${basename}.${sha8(out.text)}.js`, text: out.text, lazy: false }];
+}
+
+// Builds every script entry, scene first. The browser finds the scene entry's
+// static import (the shared Three.js chunk) only after downloading and parsing
+// the whole entry, one round trip later; the UI bundle therefore names those
+// chunks, and main.js adds a modulepreload for each beside the entry script.
+// The lazily imported developer chunk is not named. Returns [{ script, chunks }].
+async function buildScripts(architecture) {
+  const built = [];
+  let sceneModulePreloads;
+  for (const script of SCRIPT_ENTRIES) {
+    const chunks = await buildScriptBundle(script, architecture, sceneModulePreloads);
+    if (script.entry === SCENE_ENTRY) {
+      sceneModulePreloads = chunks
+        .slice(1)
+        .filter((chunk) => !chunk.lazy)
+        .map(({ name }) => `/scripts/${name}`);
+    }
+    built.push({ script, chunks });
+  }
+  return built;
+}
+
+// Reads the YYYY-MM-DD dateModified from index.md front matter, if present.
+export function contentDateModified(markdown) {
+  const frontMatter = markdown.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+  return frontMatter.match(/^dateModified:\s*["']?(\d{4}-\d{2}-\d{2})["']?\s*$/m)?.[1];
 }
 
 function rewriteHtml(src, { appPath, cssPath, scenePath, posterPaths }) {
@@ -126,16 +260,18 @@ async function writePayload(DIST_DIR) {
   }
 
   const scriptPaths = {};
-  for (const { basename, entry } of SCRIPT_ENTRIES) {
-    const bundled = await buildScriptBundle(entry, architecture);
-    const scriptHash = sha8(bundled);
-    const scriptHashedName = `${basename}.${scriptHash}.js`;
-    const scriptHashedUrl = `/scripts/${scriptHashedName}`;
-    await writeFile(join(DIST_SCRIPTS_DIR, scriptHashedName), bundled);
-    scriptPaths[basename] = scriptHashedUrl;
+  for (const { script, chunks } of await buildScripts(architecture)) {
+    for (const { name, text } of chunks) await writeFile(join(DIST_SCRIPTS_DIR, name), text);
+    scriptPaths[script.basename] = `/scripts/${chunks[0].name}`;
 
-    const scriptKb = (Buffer.byteLength(bundled) / 1024).toFixed(1);
-    console.log(`bundled ${entry} -> scripts/${scriptHashedName} (${scriptKb} kB)`);
+    const describe = (list) => {
+      const bytes = list.reduce((sum, { text }) => sum + Buffer.byteLength(text), 0);
+      const names = list.map(({ name }) => `scripts/${name}`).join(" + ");
+      return `${names} (${(bytes / 1024).toFixed(1)} kB)`;
+    };
+    const lazy = chunks.filter((chunk) => chunk.lazy);
+    console.log(`bundled ${script.entry} -> ${describe(chunks.filter((chunk) => !chunk.lazy))}`);
+    if (lazy.length) console.log(`  loaded on demand: ${describe(lazy)}`);
   }
 
   // Git checkouts can use CRLF on Windows; hash and publish the same LF bytes
@@ -148,13 +284,24 @@ async function writePayload(DIST_DIR) {
       `/images/${name.replace(/\.webp$/, `.${sha8(bytes)}.webp`)}`,
     );
   }
-  const cssHash = sha8(cssSrc);
+  // Minify after rewriting, then hash the published bytes. Without a browser
+  // target esbuild lowers no syntax, and url() paths pass through unresolved.
+  const { code: css } = await transform(cssSrc, {
+    loader: "css",
+    minify: true,
+    logLevel: "warning",
+  });
+  const cssHash = sha8(css);
   const cssHashedName = `styles.${cssHash}.css`;
   const cssHashedUrl = `/css/${cssHashedName}`;
-  await writeFile(join(DIST_CSS_DIR, cssHashedName), cssSrc);
+  await writeFile(join(DIST_CSS_DIR, cssHashedName), css);
 
+  // copyFile creates no directories; .well-known/security.txt needs its own.
   await Promise.all(
-    STATIC_FILES.map((file) => copyFile(join(__dirname, file), join(DIST_DIR, file))),
+    STATIC_FILES.map(async (file) => {
+      await mkdir(dirname(join(DIST_DIR, file)), { recursive: true });
+      await copyFile(join(__dirname, file), join(DIST_DIR, file));
+    }),
   );
   await Promise.all(
     STATIC_FILE_ALIASES.map(({ source, destination }) =>
@@ -191,14 +338,16 @@ async function writePayload(DIST_DIR) {
     await writeFile(join(DIST_DIR, name), rewritten);
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  // lastmod reports when the content changed, matching the JSON-LD dateModified,
+  // so an unrelated rebuild does not advertise a fresh page.
+  const lastmod =
+    contentDateModified(await readFile(join(__dirname, "index.md"), "utf8")) ??
+    new Date().toISOString().slice(0, 10);
   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://alexnava.me/</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>1.0</priority>
+    <lastmod>${lastmod}</lastmod>
   </url>
 </urlset>
 `;
@@ -247,7 +396,8 @@ async function main() {
       directories: BUILD_INPUT_DIRS,
     });
   } else if (mode === "--check") {
-    for (const { entry } of SCRIPT_ENTRIES) await buildScriptBundle(entry);
+    const architecture = await architectureAssetManifest();
+    await buildScripts(architecture);
     console.log(`verified ${SCRIPT_ENTRIES.map(({ entry }) => entry).join(", ")}`);
   } else {
     await buildDist(outputDirectory, { retainAssets });

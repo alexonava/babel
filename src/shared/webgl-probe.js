@@ -3,6 +3,8 @@
 // `main.js` calls this before triggering the scene-bundle download so we skip
 // the network cost on browsers without hardware WebGL. `scene/helpers.js`
 // re-exposes it as `scene.supportsWebGL` for the scene-side guard at init time.
+// The cached result also carries the texture limits the quality tier reads,
+// so the scene does not open a second probe context for them.
 (() => {
   const site = (window.BabelSite = window.BabelSite || {});
   const shared = (site.shared = site.shared || {});
@@ -47,6 +49,27 @@
     }
   }
 
+  // A size of 0 means unknown; the scene then reads its own limits.
+  function readTextureLimits(gl) {
+    let maxTextureSize = 0;
+    let maxAnisotropy = 1;
+    try {
+      maxTextureSize = Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 0;
+    } catch (_err) {
+      maxTextureSize = 0;
+    }
+    try {
+      const ext =
+        gl.getExtension("EXT_texture_filter_anisotropic") ||
+        gl.getExtension("WEBKIT_EXT_texture_filter_anisotropic") ||
+        gl.getExtension("MOZ_EXT_texture_filter_anisotropic");
+      if (ext) maxAnisotropy = Number(gl.getParameter(ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) || 1;
+    } catch (_err) {
+      maxAnisotropy = 1;
+    }
+    return { maxAnisotropy: Math.max(1, Math.round(maxAnisotropy)), maxTextureSize };
+  }
+
   function tryGetContext(probe, kind, options) {
     try {
       return probe.getContext(kind, options);
@@ -71,7 +94,8 @@
         return cachedCapabilities;
       }
 
-      const options = { powerPreference: "high-performance" };
+      // The ambient scene does not need a discrete GPU; this matches the renderer.
+      const options = { powerPreference: "default" };
       if (window.WebGL2RenderingContext) gl = tryGetContext(probe, "webgl2", options);
       gl =
         gl || tryGetContext(probe, "webgl", options) || tryGetContext(probe, "experimental-webgl");
@@ -84,6 +108,7 @@
       cachedCapabilities = Object.freeze({
         available: true,
         softwareRenderer: SOFTWARE_RENDERER_PATTERN.test(readRenderer(gl)),
+        ...readTextureLimits(gl),
       });
       return cachedCapabilities;
     } catch (_err) {
