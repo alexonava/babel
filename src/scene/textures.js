@@ -1,8 +1,8 @@
-import { wantsFilmTreatment } from "./directed-shots.js";
-import { createEarthDetail } from "./filmic-earth.js";
+import { createEarthDetail, FILM_GROUND_PRESETS } from "./filmic-earth.js";
 import { createGrassDetail } from "./grass-detail.js";
 import { makeMudCanvases, MUD_TILE_WIDTH } from "./mud-ground.js";
 import { measureScene, sceneNow } from "./perf-marks.js";
+import { resolveSceneModes } from "./scene-modes.js";
 import {
   createStoneDetailController,
   groundMaterialUrl,
@@ -466,11 +466,15 @@ import {
       return { colorMap: null, bumpMap: null, applyQuality: () => false, dispose: () => false };
     }
 
-    const filmRequested = wantsFilmTreatment(search) && !["desert", "procedural"].includes(new URLSearchParams(search).get("ground"));
-    // The film earth maps replace this pair on high and balanced, so start-up
+    const modes = resolveSceneModes(search);
+    // Film pages load the slate pair (default) or the ?ground=earth comparison
+    // onto the film terrain; ?ground=desert and ?ground=procedural keep theirs.
+    const filmGround = modes.film && ["slate", "earth"].includes(modes.ground) ? modes.ground : null;
+    const filmRequested = Boolean(filmGround);
+    // The film ground maps replace this pair on high and balanced, so start-up
     // fills only a flat preview and paints the detail in a task of its own
-    // right after (or sooner through ensureProcedural()). The reveal, an earth
-    // reset and a fallback then all show the painted ground while maps load.
+    // right after (or sooner through ensureProcedural()). The reveal, a film
+    // ground reset and a fallback then all show the painted ground while maps load.
     let detailed = false;
     function paintGround(detail) {
       const start = sceneNow();
@@ -557,9 +561,14 @@ import {
       if (mud) Object.values(mud).forEach(tex => tex.dispose());
       mud = null;
     }
+    // Disabled on film pages that load the film ground maps (the slate or
+    // ground=earth), which are the only film pages with mud on, so the heavy
+    // mud bake, which needs this pair, never runs under film; the slate loads
+    // the same maps itself. A ground=desert film page (mud off) still loads
+    // the pair, and ground=procedural disables it.
     const detail = createStoneDetailController({
       profile,
-      disabled: filmRequested || new URLSearchParams(search).get("ground") === "procedural",
+      disabled: filmRequested || modes.ground === "procedural",
       report: onDetailStatus,
       kinds: ["color", "normal"],
       urlFor: groundMaterialUrl,
@@ -594,35 +603,37 @@ import {
         disposeAuthored();
       },
     });
-    const earth = createEarthDetail({ profile, disabled: !filmRequested, anisotropy: aniso,
+    const filmPreset = filmGround || "slate";
+    const filmMaps = createEarthDetail({ preset: filmPreset, profile, disabled: !filmRequested, anisotropy: aniso,
       publish: onDetailChange, restore: publishGround,
       report(status) {
         if (status.status === "fallback") ensureProcedural();
-        if (filmRequested) onDetailStatus({ ...status, material: "Poly Haven Dirt" });
+        if (filmRequested) onDetailStatus({ ...status, material: FILM_GROUND_PRESETS[filmPreset].material });
       },
     });
-    // Grass is a secondary shader-only blend over the earth ground, never a
+    // Grass is a secondary shader-only blend over the earth comparison, never a
     // base map swap, so it publishes through its own channel rather than
-    // onDetailChange's ground-map-replacement shape.
-    const grass = createGrassDetail({ profile, disabled: !filmRequested, anisotropy: aniso,
+    // onDetailChange's ground-map-replacement shape. The slate default has none.
+    const grassRequested = filmGround === "earth";
+    const grass = createGrassDetail({ profile, disabled: !grassRequested, anisotropy: aniso,
       publish: onGrassChange, restore: () => onGrassChange(null),
-      report(status) { if (filmRequested) onGrassStatus({ ...status, material: "Poly Haven Sparse Grass" }); },
+      report(status) { if (grassRequested) onGrassStatus({ ...status, material: "Poly Haven Sparse Grass" }); },
     });
     return {
       ...textures,
       ensureProcedural,
-      setFilmActive(active) { publishGround(); earth.setActive(active); grass.setActive(active); },
+      setFilmActive(active) { publishGround(); filmMaps.setActive(active); grass.setActive(active); },
       setMudActive(active) {
         mudActive = Boolean(active);
         try { publishGround(); }
         catch { mudActive = false; publishGround(); onDetailStatus({ status: "fallback", reason: "mud-preparation" }); }
       },
       lifecycleOrder: detail.lifecycleOrder,
-      applyQuality(profile, context) { detail.applyQuality(profile, context); earth.applyQuality(profile, context); grass.applyQuality(profile, context); },
+      applyQuality(profile, context) { detail.applyQuality(profile, context); filmMaps.applyQuality(profile, context); grass.applyQuality(profile, context); },
       dispose() {
         clearTimeout(paintTimer);
         paintTimer = null;
-        earth.dispose(); grass.dispose(); return detail.dispose();
+        filmMaps.dispose(); grass.dispose(); return detail.dispose();
       },
     };
   };

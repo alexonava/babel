@@ -268,6 +268,7 @@ function recordingCanvas(draws) {
     fillStyle: "",
     beginPath() {},
     createRadialGradient: () => ({ addColorStop() {} }),
+    drawImage() {},
     restore() {},
     save() {},
   };
@@ -289,6 +290,7 @@ function createGround(createGroundTextures, { search = "", tier = "high", ground
   const draws = [];
   const canvases = [];
   const statuses = [];
+  const published = [];
   let invalidations = 0;
   globalThis.document = {
     createElement() {
@@ -305,9 +307,10 @@ function createGround(createGroundTextures, { search = "", tier = "high", ground
     search,
     invalidate: () => (invalidations += 1),
     onDetailStatus: (status) => statuses.push(status),
+    onDetailChange: (maps) => published.push(maps),
   });
   return {
-    draws, ground, statuses,
+    draws, ground, statuses, published, canvases,
     get invalidations() {
       return invalidations;
     },
@@ -320,7 +323,11 @@ const nextTask = () => new Promise((resolve) => setTimeout(resolve, 0));
 test("the film ground starts from a flat preview and paints in full in the next task", async (t) => {
   const createGroundTextures = await loadGroundTextures();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.reject(new Error("offline"));
+  const requested = [];
+  globalThis.fetch = (url) => {
+    requested.push(url);
+    return Promise.reject(new Error("offline"));
+  };
   t.after(() => {
     globalThis.fetch = originalFetch;
   });
@@ -344,11 +351,17 @@ test("the film ground starts from a flat preview and paints in full in the next 
   assert.ok(film.ground.colorMap.version > versions[0] && film.ground.bumpMap.version > versions[1]);
   assert.equal(film.invalidations, 1);
 
+  assert.deepEqual(requested, [], "no ground map downloads before the film activates");
   film.ground.setFilmActive(true);
   await flush();
   await flush();
-  assert.ok(film.statuses.some((status) => status.status === "fallback" && status.material === "Poly Haven Dirt"));
-  assert.equal(film.invalidations, 1, "an earth fallback finds the ground already painted");
+  assert.deepEqual(
+    requested,
+    ["/images/materials/ground-color-1024.webp", "/images/materials/ground-normal-1024.webp"],
+    "the default film slate requests only the authored ground pair: no earth, grass or desert bake",
+  );
+  assert.ok(film.statuses.some((status) => status.status === "fallback" && status.material === "Cracked Desert Ground"));
+  assert.equal(film.invalidations, 1, "a slate fallback finds the ground already painted");
   assert.equal(film.ground.ensureProcedural(), false, "the full paint happens once");
 
   // A fallback before that task paints at once, and the task then has nothing to do.
@@ -366,6 +379,25 @@ test("the film ground starts from a flat preview and paints in full in the next 
   assert.deepEqual(disposedEarly.sizes(), [4, 4], "disposal cancels the pending paint");
   assert.equal(disposedEarly.invalidations, 0);
 
+  // The earth comparison keeps its earth and grass maps, on the same film gate.
+  requested.length = 0;
+  const earth = createGround(createGroundTextures, { search: "?ground=earth", tier: "balanced", groundSize: 512 });
+  assert.deepEqual(earth.sizes(), [4, 4]);
+  assert.deepEqual(requested, []);
+  earth.ground.setFilmActive(true);
+  await flush();
+  await flush();
+  assert.deepEqual(requested.sort(), [
+    "/images/materials/earth-color-512.webp",
+    "/images/materials/earth-normal-512.webp",
+    "/images/materials/earth-roughness-512.webp",
+    "/images/materials/grass-color-512.webp",
+    "/images/materials/grass-mask-512.webp",
+  ]);
+  assert.ok(earth.statuses.some((status) => status.status === "fallback" && status.material === "Poly Haven Dirt"));
+  earth.ground.dispose();
+  await nextTask();
+
   for (const [search, tier, groundSize] of [
     ["?ground=procedural", "high", 1024],
     ["?architecture=classic", "high", 1024],
@@ -375,6 +407,65 @@ test("the film ground starts from a flat preview and paints in full in the next 
     assert.deepEqual(full.sizes(), [groundSize, groundSize], `${search || tier} paints in full`);
     assert.equal(full.ground.ensureProcedural(), false);
   }
+});
+
+test("the mud bake never runs on film pages that load the film ground, even with mud requested", async (t) => {
+  const createGroundTextures = await loadGroundTextures();
+  const originalFetch = globalThis.fetch;
+  const originalBitmap = globalThis.createImageBitmap;
+  const requested = [];
+  globalThis.fetch = async (url) => {
+    requested.push(url);
+    return { ok: true, blob: async () => ({ url }) };
+  };
+  globalThis.createImageBitmap = async ({ url }) => {
+    const size = Number(url.match(/-(\d+)\.webp$/)[1]);
+    return { width: size, height: size, close() {} };
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    globalThis.createImageBitmap = originalBitmap;
+  });
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await flush();
+    await nextTask();
+  };
+
+  for (const [search, tier, groundSize, maps, filmCanvases] of [
+    ["", "high", 1024, ["ground-color-1024", "ground-normal-1024"], 2],
+    ["?ground=earth", "balanced", 512, ["earth-color-512", "earth-normal-512", "earth-roughness-512", "grass-color-512", "grass-mask-512"], 5],
+  ]) {
+    requested.length = 0;
+    const film = createGround(createGroundTextures, { search, tier, groundSize });
+    assert.equal(film.canvases.length, 2, "only the procedural pair at start-up");
+    // index.js order: setMudActive before the film scene activates.
+    film.ground.setMudActive(true);
+    film.ground.setFilmActive(true);
+    await settle();
+    film.ground.setMudActive(true);
+    await settle();
+    assert.deepEqual(requested.map((url) => url.split("/").pop().replace(".webp", "")).sort(), maps.sort(), search || "default");
+    assert.ok(film.statuses.some((status) => status.status === "ready"), `${search || "default"}: the film maps load`);
+    assert.ok(!film.statuses.some((status) => status.reason === "mud-preparation"), `${search || "default"}: no mud bake`);
+    // textures.js's own publishes (the procedural pair) are never muddy; only
+    // the earth preset's film-tiled publish may carry the mud treatment.
+    const muddy = film.published.filter((maps) => maps.muddy);
+    assert.ok(muddy.every((maps) => maps.filmTiled), `${search || "default"}: every muddy publish is the earth preset's`);
+    if (!search) assert.equal(muddy.length, 0, "the slate never takes the mud treatment");
+    else assert.ok(muddy.length > 0);
+    assert.equal(film.canvases.length, 2 + filmCanvases, `${search || "default"}: no mud canvases`);
+    film.ground.dispose();
+  }
+
+  // Control: a non-film page with mud on does attempt the bake, which this
+  // recording canvas cannot run, so the guard above would see one.
+  requested.length = 0;
+  const previous = createGround(createGroundTextures, { search: "?setting=previous" });
+  await settle();
+  previous.ground.setMudActive(true);
+  assert.deepEqual(requested.map((url) => url.split("/").pop()).sort(), ["ground-color-1024.webp", "ground-normal-1024.webp"]);
+  assert.ok(previous.statuses.some((status) => status.reason === "mud-preparation"));
+  previous.ground.dispose();
 });
 
 test("scene bootstrap warms shaders before drawing and records start-up marks", async () => {

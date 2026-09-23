@@ -37,11 +37,12 @@ The camera fits authored focal volumes into the responsive composition area. Por
 | architecture=classic | Procedural/classic architecture |
 | setting=previous | Previous setting and orbit |
 | setting=plinth | Raised platform comparison |
+| ground=earth | Previous default film ground: Poly Haven earth and grass maps and the brown earth tone, in the otherwise unchanged authored scene (no legacy world) |
 | ground=desert / ground=procedural | Earlier ground treatments |
 | scale=baseline | Earlier prop proportions |
 | stone=procedural / brick=boxes | Legacy material/brick comparisons where applicable |
 
-[scene-modes.js](../src/scene/scene-modes.js) centralizes URL mode policy. These combinations are compatibility and review controls, not separate current designs. Some comparisons apply only to their matching architecture mode. Defaults and fallback behavior must remain consistent when refactoring.
+[scene-modes.js](../src/scene/scene-modes.js) centralizes URL mode policy. The default film ground is the dark cracked slate (the authored ground pair with a subtle wet sheen); `ground=earth` is the only comparison parameter that does not also build the legacy world, because it swaps just the film terrain maps. These combinations are compatibility and review controls, not separate current designs. Some comparisons apply only to their matching architecture mode. Defaults and fallback behavior must remain consistent when refactoring.
 
 ## Accessibility and diagnostics
 

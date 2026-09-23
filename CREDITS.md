@@ -72,13 +72,19 @@ Meshy generation was commissioned for this integration.
 
 ## Authored ground material
 
-The optional ground colour and normal maps in `images/materials/ground-*.webp`
-were baked locally from the Meshy "Cracked Desert Ground" model supplied by
+The ground colour and normal maps in `images/materials/ground-*.webp` were
+baked locally from the Meshy "Cracked Desert Ground" model supplied by
 Alex Nava. The textured slab was rasterised top-down into planar tiles, its
 height converted to a tangent-space normal map, and its colour desaturated and
 remapped to the site's night ground palette. The source model, hashes, and bake
-parameters are preserved in the local artwork archive and summarised in
-README.md. No new Meshy generation was commissioned for this integration.
+parameters are preserved in the local artwork archive; runtime tiling and
+normal strength are `GROUND_DETAIL_SETTINGS` in src/scene/stone-detail.js. No
+new Meshy generation was commissioned for this integration.
+
+These maps are now the default, visible ground: the live scene's dark cracked
+slate uses them unchanged at 1024 and 512 pixels, with its tint, wet sheen and
+close detail applied in the shader, and the earlier comparison views keep
+using them as before. No new image or map was generated for the slate ground.
 
 Tool: [Meshy](https://www.meshy.ai/).
 
@@ -93,6 +99,7 @@ use muted damp-earth color, normalized normals and mostly matte roughness,
 exported at 1024 and 512 pixels. Original PNGs, download URLs, SHA-256 hashes
 and optimization settings remain in the owner's `Pictures/Assets/Babel/Materials/PolyHaven-Dirt`
 archive. No external runtime service or additional generation is used.
+These maps now load only for the `?ground=earth` comparison view.
 
 ## Poly Haven Sparse Grass
 
@@ -108,6 +115,7 @@ grass away from the tower footing and tree roots — never a base ground
 replacement. Original PNGs, download URLs, MD5 hashes and optimization
 settings remain in the owner's `Pictures/Assets/Babel/Materials/PolyHaven-SparseGrass`
 archive. No external runtime service or additional generation is used.
+Like the dirt maps, they now load only for the `?ground=earth` comparison view.
 
 ## Background hill silhouette elevation data
 

@@ -87,16 +87,96 @@ export function makeMudCanvases(source, createCanvas = () => document.createElem
   return Object.fromEntries(Object.entries(maps).map(([k, v]) => [k, v.canvas]));
 }
 
+// The terrain's dune field, helpers.js dune(): amplitude * wave(frequency *
+// (sx * x + sz * z)) in world x/z. Restated here so the slate's wet sheen can
+// find the hollows in the shader; a test holds it to scene.groundHeight.
+export const TERRAIN_DUNE_TERMS = Object.freeze([
+  Object.freeze({ amplitude: 1.8, wave: "sin", frequency: 0.055, sx: 1, sz: 0 }),
+  Object.freeze({ amplitude: 1.35, wave: "cos", frequency: 0.052, sx: 0, sz: 1 }),
+  Object.freeze({ amplitude: 0.9, wave: "sin", frequency: 0.031, sx: 1, sz: 1 }),
+  Object.freeze({ amplitude: 0.55, wave: "cos", frequency: 0.018, sx: 1, sz: -1 }),
+]);
+export function terrainDune(x, z) {
+  return TERRAIN_DUNE_TERMS.reduce(
+    (sum, { amplitude, wave, frequency, sx, sz }) =>
+      sum + amplitude * Math[wave](frequency * (sx * x + sz * z)),
+    0,
+  );
+}
+const glslNumber = (value) => (Number.isInteger(value) ? value.toFixed(1) : String(value));
+const TERRAIN_DUNE_GLSL = TERRAIN_DUNE_TERMS.map(
+  ({ amplitude, wave, frequency, sx, sz }) =>
+    `${glslNumber(amplitude)}*${wave}(dot(vMudWorld.xz, vec2(${glslNumber(frequency * sx)}, ${glslNumber(frequency * sz)})))`,
+).join(" + ");
+
+// The default film slate's calm wet sheen. Terrain hollows and the map's dark
+// crack texels hold water; the worn footing, roots and path stay dry. Wet
+// ground is smoother and darker, its direct highlight is clamped a little
+// less, and a low Fresnel term reflects a mostly neutral share of the fog
+// color at grazing angles. Both lifts are kept well under the dry ground's
+// own radiance, so distant ground does not wash out pale blue-grey.
+export const SLATE_WET = Object.freeze({
+  hollow: Object.freeze([-3.2, -1.0]), // dune height: fully wet below, dry above
+  crack: Object.freeze([0.07, 0.18]), // linear map luminance: dark cracks hold water
+  crackWeight: 0.55,
+  roughness: 0.5,
+  roughnessWeight: 0.75,
+  darken: 0.14,
+  specular: 0.8, // direct specular clamp relaxed by up to 1 + 0.8
+  fresnel: 0.15, // low: grazing sheen only, measured calm behind the intro text
+  fresnelNeutral: 0.6, // share of the fog reflection taken at the fog's own luminance
+});
+
+// Close-range detail for the slate. The classic 22-unit tile holds about 46
+// texels per world unit, which reads soft right in front of the lens (the
+// Lantern study). Near the camera only, the same normal map is sampled again,
+// finer and rotated so it never lines up with the base tile's mirror seams.
+export const SLATE_DETAIL = Object.freeze({
+  scale: 3.7, // times the base repeat: about a 6-unit tile
+  rotation: 0.6435, // radians (a 3-4-5 rotation: cos .8, sin .6)
+  strength: 0.7, // added tangent-space slope at full weight (0.25 did not show)
+  near: Object.freeze([6.0, 18.0]), // view distance: full detail within, none beyond
+});
+// Column-major rotation: slateTurn * uv turns the lookup, and xy * slateTurn
+// turns the sampled slope back into the base tile's tangent frame.
+const SLATE_DETAIL_TURN = [
+  Math.cos(SLATE_DETAIL.rotation),
+  Math.sin(SLATE_DETAIL.rotation),
+  -Math.sin(SLATE_DETAIL.rotation),
+  Math.cos(SLATE_DETAIL.rotation),
+]
+  .map((value) => value.toFixed(4))
+  .join(", ");
+
+// Film ground material, chosen from the mode rather than the published maps,
+// so the procedural surface shown while maps load, or after a fallback,
+// matches the loaded ground. `slate` (the default film ground) takes the
+// slate tint, the wet sheen and the close detail. `surface` is palette.js
+// GROUND_SURFACE_MATERIAL.
+export const FILM_EARTH_SURFACE = Object.freeze({ color: 0x615447, roughness: 0.93 });
+export function filmGroundSurface({ muddy = false, film = false, slate = false, surface }) {
+  if (muddy) return { color: 0xffffff, roughness: 1, metalness: 0, slate: false };
+  if (!film) return { color: surface.color, roughness: surface.roughness, metalness: surface.metalness, slate: false };
+  if (slate) return { color: surface.filmColor, roughness: surface.roughness, metalness: 0, slate: true };
+  return { ...FILM_EARTH_SURFACE, metalness: 0, slate: false };
+}
+
 // `grass`, when present, is { grassColorMap, grassMaskMap, grassTile } and only ever applies
 // under `film` — patchy grass blended in away from the worn tower/root rings
 // `earthContact` already tracks, using its own lower-frequency sine field so
-// it doesn't correlate with the earth patchiness pattern.
-export function configureMudShading(material, active, quiet = false, film = false, grass = null) {
+// it doesn't correlate with the earth patchiness pattern. `slate` adds the
+// default slate's wet sheen and close detail under `film`; the earth
+// comparison's grass never takes them.
+export function configureMudShading(material, active, quiet = false, film = false, grass = null, { slate = false } = {}) {
+  const useGrass = Boolean(film && grass);
+  const useWet = Boolean(film && slate && !grass);
   material.customProgramCacheKey = () =>
     film
-      ? grass
+      ? useGrass
         ? "moonlit-earth-grass-v1"
-        : "moonlit-earth-v2"
+        : useWet
+          ? "moonlit-slate-v1"
+          : "moonlit-earth-v2"
       : active
         ? quiet
           ? "mud-quiet-earth-v2"
@@ -104,19 +184,23 @@ export function configureMudShading(material, active, quiet = false, film = fals
         : "ground-baseline";
   material.onBeforeCompile = (shader) => {
     if (!active && !film) return;
-    const useGrass = Boolean(film && grass);
     if (useGrass) {
       shader.uniforms.grassColor = { value: grass.grassColorMap };
       shader.uniforms.grassMask = { value: grass.grassMaskMap };
     }
-    shader.vertexShader = "varying vec3 vMudWorld;\n" + shader.vertexShader;
+    // The dune field varies over 100+ world units; the film terrain's 3-unit
+    // quads carry it per vertex, so fragments only read the interpolated height.
+    const wetVarying = useWet ? "varying float vSlateDune;\n" : "";
+    shader.vertexShader = "varying vec3 vMudWorld;\n" + wetVarying + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
       "#include <begin_vertex>",
-      "#include <begin_vertex>\nvMudWorld = (modelMatrix * vec4(position, 1.0)).xyz;",
+      "#include <begin_vertex>\nvMudWorld = (modelMatrix * vec4(position, 1.0)).xyz;" +
+        (useWet ? `\nvSlateDune = ${TERRAIN_DUNE_GLSL};` : ""),
     );
     shader.fragmentShader =
       (useGrass ? "uniform sampler2D grassColor;\nuniform sampler2D grassMask;\n" : "") +
       "varying vec3 vMudWorld;\n" +
+      wetVarying +
       shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <roughnessmap_fragment>",
@@ -151,6 +235,21 @@ export function configureMudShading(material, active, quiet = false, film = fals
       diffuseColor.rgb *= .84 + .10*earthBroad - .04*earthContact - .035*damp + .035*approach;
       roughnessFactor = mix(roughnessFactor,.94,approach*.65);
       ${
+        useWet
+          ? `
+      float slateHollow = 1.0 - smoothstep(${glslNumber(SLATE_WET.hollow[0])}, ${glslNumber(SLATE_WET.hollow[1])}, vSlateDune);
+      #ifdef USE_MAP
+      float slateCrack = 1.0 - smoothstep(${glslNumber(SLATE_WET.crack[0])}, ${glslNumber(SLATE_WET.crack[1])}, dot(sampledDiffuseColor.rgb, vec3(.299,.587,.114)));
+      #else
+      float slateCrack = 0.0;
+      #endif
+      float slateWet = clamp(max(slateHollow, slateCrack*${glslNumber(SLATE_WET.crackWeight)}), 0.0, 1.0)*(1.0-worn);
+      roughnessFactor = mix(roughnessFactor, ${glslNumber(SLATE_WET.roughness)}, slateWet*${glslNumber(SLATE_WET.roughnessWeight)});
+      diffuseColor.rgb *= 1.0 - ${glslNumber(SLATE_WET.darken)}*slateWet;
+      `
+          : ""
+      }
+      ${
         useGrass
           ? `
       vec2 grassUv = vMudWorld.xz / ${grass.grassTile.toFixed(3)};
@@ -167,6 +266,19 @@ export function configureMudShading(material, active, quiet = false, film = fals
       }
     `,
     );
+    if (useWet)
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <normal_fragment_maps>",
+        `#include <normal_fragment_maps>
+      #ifdef USE_NORMALMAP_TANGENTSPACE
+      mat2 slateTurn = mat2(${SLATE_DETAIL_TURN});
+      vec3 slateDetailN = texture2D(normalMap, slateTurn*vNormalMapUv*${glslNumber(SLATE_DETAIL.scale)}).xyz*2.0-1.0;
+      float slateNear = 1.0 - smoothstep(${glslNumber(SLATE_DETAIL.near[0])}, ${glslNumber(SLATE_DETAIL.near[1])}, length(vViewPosition));
+      mapN.xy += (slateDetailN.xy*slateTurn)*(${glslNumber(SLATE_DETAIL.strength)}*slateNear);
+      normal = normalize(tbn*mapN);
+      #endif
+    `,
+      );
     if (film)
       shader.fragmentShader = shader.fragmentShader
         .replace(
@@ -175,6 +287,18 @@ export function configureMudShading(material, active, quiet = false, film = fals
       // Bound the grazing response of compact soil in the legacy light pipeline.
       reflectedLight.directSpecular *= mix(.12, .22, damp);
       reflectedLight.indirectSpecular *= .18;
+      ${
+        useWet
+          ? `
+      reflectedLight.directSpecular *= 1.0 + ${glslNumber(SLATE_WET.specular)}*slateWet;
+      #ifdef USE_FOG
+      float slateFresnel = pow(1.0 - saturate(dot(geometryNormal, geometryViewDir)), 5.0);
+      vec3 slateSheen = mix(fogColor, vec3(dot(fogColor, vec3(.2126,.7152,.0722))), ${glslNumber(SLATE_WET.fresnelNeutral)});
+      reflectedLight.indirectSpecular += slateSheen*(slateWet*slateFresnel*${glslNumber(SLATE_WET.fresnel)});
+      #endif
+      `
+          : ""
+      }
     `,
         )
         .replace(

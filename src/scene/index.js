@@ -7,7 +7,7 @@ import { createLegacyWorld } from "./legacy-world.js";
 import { createDeferredWorld } from "./deferred-world.js";
 import { createFilmScene } from "./film-scene.js";
 import { chooseCinematicView, chooseCinematicAngle, cinematicSafeArea, createCinematicCamera, createQuietScene, layoutRect } from "./cinematic.js";
-import { configureMudShading } from "./mud-ground.js";
+import { configureMudShading, filmGroundSurface } from "./mud-ground.js";
 import { createHillSilhouette } from "./hill-silhouette.js";
 import { markScene, measureScene, sceneNow } from "./perf-marks.js";
 import { createPropScale } from "./prop-scale.js";
@@ -120,6 +120,8 @@ function setSrgbTexture(texture) {
     let filmActive = false, filmScene = null;
     const groundRepeats = new WeakMap();
     const quietSetting = modes.quiet;
+    // The default film ground is the dark cracked slate; comparisons keep theirs.
+    const slateGround = modes.ground === "slate";
     let webglContextAvailable = true;
     const reducedMotionMQ = window.matchMedia("(prefers-reduced-motion: reduce)");
     let reducedMotion = Boolean(reducedMotionMQ.matches);
@@ -452,24 +454,28 @@ function setSrgbTexture(texture) {
           currentGrass = grassDetail;
           const material = groundSurface?.material;
           if (!material) return;
-          configureMudShading(material, currentGroundMuddy, quietSetting, filmActive, currentGrass);
+          const { slate } = filmGroundSurface({ muddy: currentGroundMuddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL });
+          configureMudShading(material, currentGroundMuddy, quietSetting, filmActive, currentGrass, { slate });
           invalidateContent();
         },
-        onDetailChange({ colorMap, normalMap, normalScale, bumpMap, roughnessMap = null, muddy = false, earth = false }) {
+        onDetailChange({ colorMap, normalMap, normalScale, bumpMap, roughnessMap = null, muddy = false, filmTiled = false }) {
           const material = groundSurface?.material;
           if (!material) return;
           currentGroundMuddy = muddy;
-          if (qualityDebug) qualityDebug.groundTreatment = muddy ? "mud" : "baseline";
-          configureMudShading(material, muddy, quietSetting, filmActive, currentGrass);
+          // The slate tint and shading follow the mode, not the published
+          // maps, so the procedural loading and fallback surface is slate too.
+          const surface = filmGroundSurface({ muddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL });
+          if (qualityDebug) qualityDebug.groundTreatment = muddy ? "mud" : surface.slate ? "slate" : "baseline";
+          configureMudShading(material, muddy, quietSetting, filmActive, currentGrass, { slate: surface.slate });
           for (const texture of [colorMap, normalMap, roughnessMap, bumpMap].filter(Boolean)) {
             if (!groundRepeats.has(texture)) groundRepeats.set(texture, texture.repeat.clone());
-            texture.repeat.copy(groundRepeats.get(texture)).multiplyScalar(filmActive && !earth ? 384 / 176 : 1);
+            texture.repeat.copy(groundRepeats.get(texture)).multiplyScalar(filmActive && !filmTiled ? 384 / 176 : 1);
           }
           material.map = colorMap;
           material.roughnessMap = roughnessMap;
-          material.roughness = muddy ? 1 : filmActive ? .93 : GROUND_SURFACE_MATERIAL.roughness;
-          material.metalness = muddy || filmActive ? 0 : GROUND_SURFACE_MATERIAL.metalness;
-          material.color.setHex(muddy ? 0xffffff : filmActive ? 0x615447 : GROUND_SURFACE_MATERIAL.color);
+          material.roughness = surface.roughness;
+          material.metalness = surface.metalness;
+          material.color.setHex(surface.color);
           if (groundOverlay) groundOverlay.material.opacity = muddy ? .22 : .92;
           material.bumpMap = bumpMap;
           material.normalMap = normalMap;
@@ -723,7 +729,7 @@ function setSrgbTexture(texture) {
           } catch (error) {
             stopFailedScene("legacy-world", error);
           }
-          // The legacy build cycles the film earth off and on, and without the
+          // The legacy build cycles the film ground off and on, and without the
           // tower it never arrives: the procedural ground shows meanwhile.
           groundTextures.ensureProcedural?.();
         }

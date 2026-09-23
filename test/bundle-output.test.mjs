@@ -415,7 +415,7 @@ test("architecture stays deferred and each selected model fits both tier budgets
 });
 
 
-test("filmic earth maps are deferred and fit both material and complete-scene budgets", async () => {
+test("the ?ground=earth comparison's earth maps are deferred and fit both material and complete-scene budgets", async () => {
   const app=await readFile(await findHashedScript("app"),"utf8");assert.doesNotMatch(app,/earth-(?:color|normal|roughness)/);
   for(const [tier,size,limit,totalLimit] of [["high",1024,600*1024,6*1024*1024],["balanced",512,200*1024,3*1024*1024]]) {
     let bytes=0;
@@ -429,7 +429,7 @@ test("filmic earth maps are deferred and fit both material and complete-scene bu
   }
 });
 
-test("grass color/mask maps are deferred and fit both their own and the complete-scene budgets", async () => {
+test("the ?ground=earth comparison's grass color/mask maps are deferred and fit both their own and the complete-scene budgets", async () => {
   const app=await readFile(await findHashedScript("app"),"utf8");assert.doesNotMatch(app,/grass-(?:color|mask)/);
   for(const [tier,size,limit,totalLimit] of [["high",1024,250*1024,6*1024*1024],["balanced",512,90*1024,3*1024*1024]]) {
     let bytes=0;
@@ -441,6 +441,31 @@ test("grass color/mask maps are deferred and fit both their own and the complete
     for(const role of ["tower","tree"])bytes+=(await stat(path.join(projectRoot,"images","architecture",`${role}-${tier}.glb`))).size;
     for(const kind of ["color","normal","roughness"])bytes+=(await stat(path.join(projectRoot,"images","materials",`earth-${kind}-${size}.webp`))).size;
     assert.ok(bytes<=totalLimit,`${tier} scene incl. earth+grass: ${bytes}`);
+  }
+});
+
+test("the default film slate pair is deferred and fits both its own and the complete-scene budgets", async () => {
+  // Default film pages request only the authored ground color/normal pair (the
+  // ?ground=earth comparison keeps the earth and grass maps budgeted above).
+  const app = await readFile(await findHashedScript("app"), "utf8");
+  assert.doesNotMatch(app, /ground-(?:color|normal)/);
+  for (const [tier, size, limit, totalLimit] of [
+    ["high", 1024, 640 * 1024, 6 * 1024 * 1024],
+    ["balanced", 512, 224 * 1024, 3 * 1024 * 1024],
+  ]) {
+    let bytes = 0;
+    for (const kind of ["color", "normal"]) {
+      const file = `ground-${kind}-${size}.webp`;
+      const source = await readFile(path.join(projectRoot, "images", "materials", file));
+      assert.equal(source.toString("ascii", 8, 12), "WEBP");
+      assert.deepEqual(await readFile(path.join(distDir, "images", "materials", file)), source);
+      bytes += source.length;
+    }
+    assert.ok(bytes <= limit, `${tier} slate: ${bytes}`);
+    for (const role of ["tower", "tree"]) {
+      bytes += (await stat(path.join(projectRoot, "images", "architecture", `${role}-${tier}.glb`))).size;
+    }
+    assert.ok(bytes <= totalLimit, `${tier} scene incl. slate: ${bytes}`);
   }
 });
 
