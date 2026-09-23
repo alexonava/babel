@@ -1,5 +1,6 @@
 import { LoadingManager } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { measureScene, sceneNow } from "./perf-marks.js";
 
 const TOWER_ROLES = Object.freeze({
   assembled: ["stairs", "wall", "base", "crown"],
@@ -55,10 +56,43 @@ function validateEmbeddedGlb(buffer, maxBytes) {
   }
 }
 
-export async function loadArchitectureAsset(url, { signal, tier }) {
+// main.js starts the startup tier's model requests beside the scene bundle and
+// shares them here by URL. Each is taken at most once.
+function prefetchedResponses() {
+  const prefetched = globalThis.BabelSite?.scene?.prefetched;
+  return prefetched instanceof Map ? prefetched : null;
+}
+
+function releasePrefetchedResponses() {
+  const prefetched = prefetchedResponses();
+  prefetched?.forEach((entry) => entry.abort?.());
+  prefetched?.clear();
+}
+
+async function requestArchitectureAsset(url, signal) {
+  const prefetched = prefetchedResponses();
+  const entry = prefetched?.get(url);
+  if (entry) {
+    prefetched.delete(url);
+    // The early request has no signal of its own; this load's abort cancels it.
+    const cancel = () => entry.abort?.();
+    if (signal.aborted) cancel();
+    else signal.addEventListener("abort", cancel, { once: true });
+    try {
+      const response = await entry.response;
+      if (response.ok) return response;
+      cancel();
+    } catch {
+      // A failed early request falls back to the scene's own request.
+    }
+  }
+  return fetch(url, { signal });
+}
+
+export async function loadArchitectureAsset(url, { signal, tier, role = "asset" }) {
   const maxBytes = ARCHITECTURE_ASSET_BUDGETS[tier];
   if (!maxBytes) throw new Error("Invalid architecture quality tier");
-  const response = await fetch(url, { signal });
+  const response = await requestArchitectureAsset(url, signal);
   if (!response.ok) throw new Error(`Architecture asset response: ${response.status}`);
   if (Number(response.headers.get("content-length")) > maxBytes) {
     throw new Error("Architecture asset exceeds transfer budget");
@@ -85,11 +119,13 @@ export async function loadArchitectureAsset(url, { signal, tier }) {
     parser = sourceParser;
     return { name: "BabelArchitectureResources" };
   });
+  const parseStart = sceneNow();
   try {
     parsed = await loader.parseAsync(buffer, "");
     // GLTFLoader intentionally turns image failures into null maps. A missing
     // PBR map must retain our fallback instead of silently changing the asset.
     if (imageFailed) throw new Error("Architecture image decode failed");
+    measureScene(`glb-parse:${role}`, parseStart);
     return parsed;
   } catch (error) {
     const sources = await Promise.allSettled(Object.values(parser?.sourceCache || {}));
@@ -155,6 +191,7 @@ export function createArchitectureAssetController({
   }
   let disposed = false;
   let currentProfile = {};
+  let currentAssetTier;
   let live = false;
   let selectedTier;
   const assetReferences = new WeakMap();
@@ -178,7 +215,7 @@ export function createArchitectureAssetController({
       onStatus({
         kind: channel.kind,
         status,
-        tier: currentProfile.tier,
+        tier: currentAssetTier,
         ...(reason ? { reason } : {}),
       }),
     );
@@ -295,36 +332,45 @@ export function createArchitectureAssetController({
       });
   }
 
-  function setQuality(profile = {}, nextLive = false) {
+  // context.assetTier pins the model tier chosen at startup, so an adaptive
+  // cost step neither blanks the live models nor downloads another tier.
+  function setQuality(profile = {}, nextLive = false, context = {}) {
     if (disposed) return false;
     currentProfile = profile;
+    currentAssetTier = context?.assetTier ?? profile.tier;
     live = Boolean(nextLive);
     const tier =
-      !disabled && live && ARCHITECTURE_ASSET_BUDGETS[profile.tier] ? profile.tier : null;
-    if (tier === selectedTier) return false;
-    selectedTier = tier;
-    channels.forEach((channel) => stop(channel));
-    channels.forEach((channel) => {
-      if (tier) start(channel, tier);
-      else publish(channel, "procedural");
-    });
-    return true;
+      !disabled && live && ARCHITECTURE_ASSET_BUDGETS[currentAssetTier] ? currentAssetTier : null;
+    const changed = tier !== selectedTier;
+    if (changed) {
+      selectedTier = tier;
+      channels.forEach((channel) => stop(channel));
+      channels.forEach((channel) => {
+        if (tier) start(channel, tier);
+        else publish(channel, "procedural");
+      });
+    }
+    // The live selection has taken any early request it uses; the rest name
+    // another tier or tower model.
+    if (live) releasePrefetchedResponses();
+    return changed;
   }
 
   return {
     lifecycleOrder: 23,
     setQuality,
-    applyQuality(profile) {
-      return setQuality(profile, live);
+    applyQuality(profile, context) {
+      return setQuality(profile, live, context);
     },
     setLive(nextLive) {
-      return setQuality(currentProfile, nextLive);
+      return setQuality(currentProfile, nextLive, { assetTier: currentAssetTier });
     },
     dispose() {
       if (disposed) return false;
       disposed = true;
       selectedTier = null;
       channels.forEach((channel) => stop(channel));
+      releasePrefetchedResponses();
       return true;
     },
   };

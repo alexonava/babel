@@ -211,7 +211,10 @@ test("changing only fixture poster bytes changes only that poster URL", async ()
 test("architecture stays deferred and each selected model fits both tier budgets", async () => {
   const app = await readFile(await findHashedScript("app"), "utf8");
   const scene = await readFile(await findHashedScript("scene"), "utf8");
-  assert.doesNotMatch(app, /images\/architecture\//);
+  // The UI names the hashed models only to request them early; loading and
+  // validation stay in the scene bundle.
+  assert.doesNotMatch(app, /Invalid architecture GLB header/);
+  assert.match(scene, /Invalid architecture GLB header/);
   for (const [tier, limit] of [
     ["high", 6 * 1024 * 1024],
     ["balanced", 3 * 1024 * 1024],
@@ -229,6 +232,11 @@ test("architecture stays deferred and each selected model fits both tier budgets
       assert.ok(
         scene.includes("/images/architecture/" + hashedName),
         "scene must request the current fingerprint",
+      );
+      assert.equal(
+        app.includes("/images/architecture/" + hashedName),
+        role === "tower" || role === "tree",
+        "the UI names the current fingerprint of only the models it requests early",
       );
       assert.equal(source.toString("ascii", 0, 4), "glTF");
       assert.equal(source.readUInt32LE(8), source.length);
@@ -304,7 +312,7 @@ test("homepage discovers the deferred scene while its UI excludes the renderer a
   assert.match(app, /ensureSceneReady|initHomeScene/);
   assert.match(app, /getWebGLCapabilities/);
   assert.match(app, /initSceneMenu/);
-  assert.doesNotMatch(app, /gl_Position|WebGLRenderer|GLTFLoader|images\/architecture\//);
+  assert.doesNotMatch(app, /gl_Position|WebGLRenderer|GLTFLoader|Invalid architecture GLB/);
 });
 
 test("About model icon states are fingerprinted and emitted intact", async () => {

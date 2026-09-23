@@ -135,6 +135,24 @@ test("quality downgrade cancels high assets, ignores late completion, and select
   h.controller.dispose();
 });
 
+test("a pinned asset tier keeps the loaded pair through adaptive profile changes", async () => {
+  const h = harness();
+  h.requests.forEach((request) => request.resolve(h.image()));
+  await flush();
+  assert.equal(h.applied.length, 1);
+  for (const tier of ["balanced", "low", "high"]) {
+    assert.equal(h.controller.applyQuality({ tier }, { pixelRatio: 1, assetTier: "high" }), false);
+  }
+  assert.equal(h.requests.length, 2, "no other map size is fetched");
+  assert.deepEqual(h.resets, [], "the authored surface is never reset");
+  assert.equal(h.statuses.at(-1).status, "ready");
+  // Without a pinned tier, an explicit tier change still selects the other pair.
+  h.controller.applyQuality({ tier: "balanced" });
+  assert.equal(h.requests.length, 4);
+  assert.ok(h.requests.slice(2).every((r) => r.url.endsWith("-512.webp")));
+  h.controller.dispose();
+});
+
 test("disposing an in-flight layer prevents late canvas mutation and closes both images", async () => {
   const h = harness();
   assert.equal(h.controller.dispose(), true);

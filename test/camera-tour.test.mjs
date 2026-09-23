@@ -110,6 +110,25 @@ test("pause, panels, reduced motion and developer control hold the tour without 
     assert.equal(f.controller.shot.name, "Threshold");
     f.dispose();
   }
+  // A hold that lands mid-dip shows the held shot undimmed, then the same dip
+  // resumes and completes its cut once released.
+  for (const flag of ["panelOpen", "developer"]) {
+    const f = setup();
+    f.render(0);
+    f.render(4.9);
+    const dip = f.tour.fade;
+    assert.ok(dip > 0.5, "the dip before a cut is under way");
+    f.render(5, { [flag]: true });
+    assert.equal(f.tour.fade, 0);
+    f.render(40, { [flag]: true });
+    assert.equal(f.tour.fade, 0);
+    assert.equal(f.controller.shot.name, "The watch");
+    f.render(41);
+    assert.equal(f.tour.fade, dip);
+    f.render(41.2);
+    assert.equal(f.controller.shot.name, "Threshold");
+    f.dispose();
+  }
   const f = setup();
   f.render(0);
   f.render(2);

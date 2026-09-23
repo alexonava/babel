@@ -2,6 +2,7 @@ import { wantsFilmTreatment } from "./directed-shots.js";
 import { createEarthDetail } from "./filmic-earth.js";
 import { createGrassDetail } from "./grass-detail.js";
 import { makeMudCanvases, MUD_TILE_WIDTH } from "./mud-ground.js";
+import { measureScene, sceneNow } from "./perf-marks.js";
 import {
   createStoneDetailController,
   groundMaterialUrl,
@@ -218,38 +219,8 @@ import {
     };
   };
 
-  scene.createGroundTextures = function ({
-    THREE,
-    lowPower,
-    qualityProfile,
-    chooseAnisotropy,
-    search = "",
-    onDetailChange = () => {},
-    onDetailStatus = () => {},
-    onGrassChange = () => {},
-    onGrassStatus = () => {},
-  }) {
-    const profile = resolveProfile(qualityProfile, lowPower);
-    const balanced = profile.tier === "balanced";
-    const size = profile.textures.groundSize;
-    const colorCanvas = document.createElement("canvas");
-    const bumpCanvas = document.createElement("canvas");
-    colorCanvas.width = size;
-    colorCanvas.height = size;
-    bumpCanvas.width = size;
-    bumpCanvas.height = size;
-
-    const colorCtx = colorCanvas.getContext("2d");
-    const bumpCtx = bumpCanvas.getContext("2d");
-    if (!colorCtx || !bumpCtx) {
-      return { colorMap: null, bumpMap: null, applyQuality: () => false, dispose: () => false };
-    }
-
-    colorCtx.fillStyle = groundPalette.baseColor;
-    colorCtx.fillRect(0, 0, size, size);
-    bumpCtx.fillStyle = groundPalette.bumpBase;
-    bumpCtx.fillRect(0, 0, size, size);
-
+  // Blotches, dust, pebbles, moss and tonal breakup over the ground's base fill.
+  function paintGroundDetail({ colorCtx, bumpCtx, size, lowPower, balanced }) {
     const dirtBlotchCount = lowPower ? 60 : balanced ? 90 : 120;
     for (let idx = 0; idx < dirtBlotchCount; idx += 1) {
       const cx = hashNoise(idx, 601) * size;
@@ -470,6 +441,51 @@ import {
       colorCtx.arc(cx, cy, radius, 0, 2 * Math.PI);
       colorCtx.fill();
     }
+  }
+
+  scene.createGroundTextures = function ({
+    THREE,
+    lowPower,
+    qualityProfile,
+    chooseAnisotropy,
+    search = "",
+    invalidate = () => {},
+    onDetailChange = () => {},
+    onDetailStatus = () => {},
+    onGrassChange = () => {},
+    onGrassStatus = () => {},
+  }) {
+    const profile = resolveProfile(qualityProfile, lowPower);
+    const balanced = profile.tier === "balanced";
+    const size = profile.textures.groundSize;
+    const colorCanvas = document.createElement("canvas");
+    const bumpCanvas = document.createElement("canvas");
+    const colorCtx = colorCanvas.getContext("2d");
+    const bumpCtx = bumpCanvas.getContext("2d");
+    if (!colorCtx || !bumpCtx) {
+      return { colorMap: null, bumpMap: null, applyQuality: () => false, dispose: () => false };
+    }
+
+    const filmRequested = wantsFilmTreatment(search) && !["desert", "procedural"].includes(new URLSearchParams(search).get("ground"));
+    // The film earth maps replace this pair on high and balanced, so start-up
+    // fills only a flat preview and paints the detail in a task of its own
+    // right after (or sooner through ensureProcedural()). The reveal, an earth
+    // reset and a fallback then all show the painted ground while maps load.
+    let detailed = false;
+    function paintGround(detail) {
+      const start = sceneNow();
+      const paintSize = detail ? size : 4;
+      for (const canvas of [colorCanvas, bumpCanvas]) canvas.width = canvas.height = paintSize;
+      colorCtx.fillStyle = groundPalette.baseColor;
+      colorCtx.fillRect(0, 0, paintSize, paintSize);
+      bumpCtx.fillStyle = groundPalette.bumpBase;
+      bumpCtx.fillRect(0, 0, paintSize, paintSize);
+      if (!detail) return;
+      paintGroundDetail({ colorCtx, bumpCtx, size, lowPower, balanced });
+      detailed = true;
+      measureScene("ground-paint", start);
+    }
+    paintGround(!filmRequested || !["high", "balanced"].includes(profile.tier));
 
     const aniso = chooseAnisotropy(profile.anisotropy.min, profile.anisotropy.max);
     const textures = {
@@ -487,13 +503,31 @@ import {
         tex.anisotropy = aniso;
       }),
     };
+    // Never throws: it runs from a timer, load callbacks and fallback statuses.
+    function ensureProcedural() {
+      if (detailed) return false;
+      try {
+        paintGround(true);
+      } catch {
+        return false;
+      }
+      for (const texture of [textures.colorMap, textures.bumpMap]) {
+        texture.dispose(); // The canvases grew; the next upload reallocates storage.
+        texture.needsUpdate = true;
+      }
+      invalidate();
+      return true;
+    }
+    let paintTimer = detailed ? null : setTimeout(() => {
+      paintTimer = null;
+      ensureProcedural();
+    }, 0);
 
     // The authored maps replace the procedural pair only after they decode; the
     // procedural canvases stay alive so a reset or fallback can rebind them.
     let authored = null;
     let mud = null;
     let mudActive = false;
-    const filmRequested = wantsFilmTreatment(search) && !["desert", "procedural"].includes(new URLSearchParams(search).get("ground"));
     function publishGround() {
       if (!authored) { onDetailChange({ ...textures, normalMap: null, roughnessMap: null, normalScale: 0, muddy: false }); return; }
       if (mudActive && !mud) {
@@ -562,7 +596,10 @@ import {
     });
     const earth = createEarthDetail({ profile, disabled: !filmRequested, anisotropy: aniso,
       publish: onDetailChange, restore: publishGround,
-      report(status) { if (filmRequested) onDetailStatus({ ...status, material: "Poly Haven Dirt" }); },
+      report(status) {
+        if (status.status === "fallback") ensureProcedural();
+        if (filmRequested) onDetailStatus({ ...status, material: "Poly Haven Dirt" });
+      },
     });
     // Grass is a secondary shader-only blend over the earth ground, never a
     // base map swap, so it publishes through its own channel rather than
@@ -573,6 +610,7 @@ import {
     });
     return {
       ...textures,
+      ensureProcedural,
       setFilmActive(active) { publishGround(); earth.setActive(active); grass.setActive(active); },
       setMudActive(active) {
         mudActive = Boolean(active);
@@ -580,8 +618,12 @@ import {
         catch { mudActive = false; publishGround(); onDetailStatus({ status: "fallback", reason: "mud-preparation" }); }
       },
       lifecycleOrder: detail.lifecycleOrder,
-      applyQuality(profile) { detail.applyQuality(profile); earth.applyQuality(profile); grass.applyQuality(profile); },
-      dispose() { earth.dispose(); grass.dispose(); return detail.dispose(); },
+      applyQuality(profile, context) { detail.applyQuality(profile, context); earth.applyQuality(profile, context); grass.applyQuality(profile, context); },
+      dispose() {
+        clearTimeout(paintTimer);
+        paintTimer = null;
+        earth.dispose(); grass.dispose(); return detail.dispose();
+      },
     };
   };
 

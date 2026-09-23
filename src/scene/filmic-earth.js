@@ -45,7 +45,11 @@ export function createEarthDetail({
   let active = false,
     disposed = false,
     current = profile,
+    context = {},
     maps = null;
+  function sync() {
+    detail.applyQuality(active ? current : { tier: "low" }, active ? context : {});
+  }
   function clear() {
     restore(); // Restore material bindings before disposing their resources.
     if (maps) Object.values(maps).forEach((texture) => texture.dispose());
@@ -97,12 +101,13 @@ export function createEarthDetail({
     setActive(next) {
       if (disposed) return;
       active = Boolean(next);
-      detail.applyQuality(active ? current : { tier: "low" });
+      sync();
     },
-    applyQuality(next) {
+    applyQuality(next, nextContext = {}) {
       if (disposed) return;
       current = next;
-      detail.applyQuality(active ? current : { tier: "low" });
+      context = nextContext;
+      sync();
     },
     dispose() {
       if (disposed) return false;

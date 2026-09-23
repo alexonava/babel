@@ -44,10 +44,11 @@ export function createStoneDetailController({
   let pending = null;
   let rendered = false;
 
-  function applyQuality(nextProfile = {}) {
+  // context.assetTier (adaptive quality) keeps the startup map size loaded.
+  function applyQuality(nextProfile = {}, context = {}) {
     if (disposed) return false;
-    const tier =
-      !disabled && ["high", "balanced"].includes(nextProfile.tier) ? nextProfile.tier : null;
+    const requested = context?.assetTier ?? nextProfile.tier;
+    const tier = !disabled && ["high", "balanced"].includes(requested) ? requested : null;
     if (tier === currentTier) return false;
     currentTier = tier;
     const requestRevision = ++revision;
@@ -58,7 +59,7 @@ export function createStoneDetailController({
       rendered = false;
     }
     if (!tier) {
-      report({ status: "procedural", tier: nextProfile.tier });
+      report({ status: "procedural", tier: requested });
       return true;
     }
 

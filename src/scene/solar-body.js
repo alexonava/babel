@@ -301,6 +301,8 @@ export function createSolarBody({ parent, camera, position, profile = {} }) {
   corona.name = "solar-corona";
   corona.renderOrder = 102;
   root.add(corona);
+  // Prominences keep the 2.2 CSS-pixel width reviewed at DPR 1. Their offset
+  // is in NDC, so the CSS viewport sets it whatever the target's pixel ratio.
   const resolution = new Vector2(1, 1);
   const loopMaterial = new ShaderMaterial({
     name: "SolarProminences",
@@ -320,21 +322,16 @@ export function createSolarBody({ parent, camera, position, profile = {} }) {
   loops.renderOrder = 101;
   rotating.add(loops);
   let disposed = false,
-    tier = celestialTier(profile),
-    ratio = 1,
-    viewportWidth = 1,
-    viewportHeight = 1;
+    tier = celestialTier(profile);
   const controller = {
     lifecycleOrder: 31,
     root,
     get tier() {
       return tier;
     },
-    applyQuality(next = {}, { pixelRatio = ratio } = {}) {
+    applyQuality(next = {}) {
       if (disposed) return false;
       tier = celestialTier(next);
-      ratio = pixelRatio;
-      resolution.set(viewportWidth * ratio, viewportHeight * ratio);
       uDetail.value = SOLAR_QUALITY[tier].detail;
       loops.geometry.setDrawRange(
         0,
@@ -343,12 +340,9 @@ export function createSolarBody({ parent, camera, position, profile = {} }) {
       loops.visible = SOLAR_QUALITY[tier].loops > 0;
       return true;
     },
-    resize({ width = 1, height = 1, pixelRatio = ratio } = {}) {
+    resize({ width = 1, height = 1 } = {}) {
       if (disposed) return false;
-      viewportWidth = width;
-      viewportHeight = height;
-      ratio = pixelRatio;
-      resolution.set(Math.max(1, width * ratio), Math.max(1, height * ratio));
+      resolution.set(Math.max(1, width), Math.max(1, height));
       return true;
     },
     update({ elapsedSeconds = 0, reducedMotion = false } = {}) {

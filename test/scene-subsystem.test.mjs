@@ -146,7 +146,10 @@ test("scene bootstrap registers rendering before initialization and propagates q
   assert.ok(createIndex >= 0);
   assert.ok(registerIndex > createIndex);
   assert.ok(initializeIndex > registerIndex);
-  assert.match(source, /subsystemRegistry\.applyQuality\(state\.profile, \{ pixelRatio \}\);/);
+  assert.match(
+    source,
+    /subsystemRegistry\.applyQuality\(state\.profile, \{ pixelRatio, assetTier \}\);/,
+  );
   assert.doesNotMatch(source, /rendering\.applyQuality\(/);
   assert.equal(source.match(/subsystemRegistry\.register\(rendering\);/g)?.length, 1);
 });

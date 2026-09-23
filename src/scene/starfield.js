@@ -65,6 +65,7 @@ export function createStarfield({ parent, camera, profile = {}, nebulaLayers = {
     blending: AdditiveBlending,
     uniforms: {
       uTime: { value: 0 },
+      // aSize is in CSS pixels; this scales it to the device-pixel composer target.
       uPixelRatio: { value: 1 },
       uVisibility: { value: 1 },
       // Borrowed from the sky: film activation, fallback and tiers change once.

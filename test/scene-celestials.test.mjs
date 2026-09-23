@@ -67,7 +67,8 @@ test("solar tiers, pixel ratio, motion, and resource ownership survive repeated 
     controller.applyQuality({ tier }, { pixelRatio: 1.5 });
     assert.equal(loops.geometry.drawRange.count, SOLAR_QUALITY[tier].loops * 56 * 6);
     assert.equal(loops.visible, tier !== "low");
-    assert.equal(loops.material.uniforms.uResolution.value.x, 1500);
+    // Prominence width stays in CSS pixels, as reviewed at DPR 1.
+    assert.deepEqual(loops.material.uniforms.uResolution.value.toArray(), [1000, 600]);
   }
   controller.update({ elapsedSeconds: 0 });
   controller.update({ elapsedSeconds: 4 });

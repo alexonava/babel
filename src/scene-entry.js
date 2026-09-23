@@ -1,9 +1,11 @@
 // Deferred scene entry for esbuild.
 //
 // Each scene module attaches to window.BabelSite.scene as a side effect when
-// imported. Order matters: shared helpers come first, then textures.js and
-// scene/index.js read helpers, palette, world, quality, and visibility at
-// import time.
+// imported. Order matters: perf-marks.js comes first so its timestamp marks
+// the start of evaluation, then shared helpers, then textures.js and
+// scene/index.js, which read helpers, palette, world, quality, and visibility
+// at import time.
+import { markSceneEvaluated } from "./scene/perf-marks.js";
 import "./shared/color.js";
 import "./shared/webgl-probe.js";
 import "./shared/motion.js";
@@ -14,3 +16,5 @@ import "./scene/visibility.js";
 import "./scene/textures.js";
 import "./scene/dev-mode.js";
 import "./scene/index.js";
+
+markSceneEvaluated();

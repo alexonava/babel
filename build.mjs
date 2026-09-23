@@ -86,15 +86,22 @@ async function architectureAssetManifest() {
   return { urls, files };
 }
 
+// The scene loads every role. The UI requests only the startup tier's tower
+// and tree beside the scene bundle, so it names only those: the other roles'
+// hashes then never change the UI bundle.
 async function buildScriptBundle(entry, architecture) {
   const options = scriptBuildOptions(entry);
-  if (entry === SCENE_ENTRY) {
-    options.define = {
-      __BABEL_ARCHITECTURE_URLS__: JSON.stringify(
-        (architecture ?? (await architectureAssetManifest())).urls,
-      ),
-    };
-  }
+  const { urls } = architecture ?? (await architectureAssetManifest());
+  options.define =
+    entry === SCENE_ENTRY
+      ? { __BABEL_ARCHITECTURE_URLS__: JSON.stringify(urls) }
+      : {
+          __BABEL_ARCHITECTURE_PREFETCH_URLS__: JSON.stringify(
+            Object.fromEntries(
+              Object.entries(urls).map(([tier, { tower, tree }]) => [tier, { tower, tree }]),
+            ),
+          ),
+        };
   const result = await build(options);
   const out = result.outputFiles?.[0];
   if (!out) throw new Error(`esbuild produced no output for ${entry}`);
@@ -255,7 +262,8 @@ async function main() {
       directories: BUILD_INPUT_DIRS,
     });
   } else if (mode === "--check") {
-    for (const { entry } of SCRIPT_ENTRIES) await buildScriptBundle(entry);
+    const architecture = await architectureAssetManifest();
+    for (const { entry } of SCRIPT_ENTRIES) await buildScriptBundle(entry, architecture);
     console.log(`verified ${SCRIPT_ENTRIES.map(({ entry }) => entry).join(", ")}`);
   } else {
     await buildDist(outputDirectory, { retainAssets });

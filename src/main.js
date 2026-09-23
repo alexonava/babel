@@ -171,6 +171,72 @@
     });
   }
 
+  // The scene used to request its models only after its first frame. Once the
+  // live scene is chosen, request the startup tier's tower and tree beside the
+  // bundle. architecture-assets.js takes a response whose URL matches once and
+  // releases the rest.
+  let modelPrefetchStarted = false;
+  function prefetchArchitectureModels(capabilities) {
+    if (modelPrefetchStarted) return;
+    // A hidden page draws no frame, so the scene would not take the responses,
+    // and a background tab may never be viewed.
+    if (document.hidden === true) {
+      deferPrefetchUntilVisible(capabilities);
+      return;
+    }
+    modelPrefetchStarted = true;
+    const urls =
+      typeof __BABEL_ARCHITECTURE_PREFETCH_URLS__ !== "undefined"
+        ? __BABEL_ARCHITECTURE_PREFETCH_URLS__
+        : null;
+    if (!urls || typeof fetch !== "function" || typeof AbortController !== "function") return;
+    try {
+      // Comparison URLs may select other tower models; they keep the scene's requests.
+      if (new URLSearchParams(window.location?.search || "").has("architecture")) return;
+      const scene = (site.scene = site.scene || {});
+      // Unknown limits would make the scene probe again; do not guess its tier.
+      const caps = scene.qualityCapsFromProbe?.(capabilities);
+      if (!caps || typeof scene.createSceneQualityState !== "function") return;
+      const tierUrls = urls[scene.createSceneQualityState({ caps }).initialTier];
+      if (!tierUrls) return;
+      const prefetched = (scene.prefetched = new Map());
+      for (const url of [tierUrls.tower, tierUrls.tree]) {
+        if (!url) continue;
+        const controller = new AbortController();
+        const response = fetch(url, { priority: "low", signal: controller.signal });
+        response.catch(() => {});
+        prefetched.set(url, { response, abort: () => controller.abort() });
+      }
+    } catch {
+      // The scene requests its own models when an early request cannot start.
+    }
+  }
+
+  // Shown while the bundle still loads, the page makes the early request then.
+  // Once the scene has initialized, its first frame requests the models itself.
+  let deferredPrefetch = null;
+  function deferPrefetchUntilVisible(capabilities) {
+    if (deferredPrefetch || typeof document.addEventListener !== "function") return;
+    deferredPrefetch = () => {
+      if (document.hidden === true) return;
+      cancelDeferredPrefetch();
+      prefetchArchitectureModels(capabilities);
+    };
+    document.addEventListener("visibilitychange", deferredPrefetch);
+  }
+
+  function cancelDeferredPrefetch() {
+    if (!deferredPrefetch) return;
+    document.removeEventListener?.("visibilitychange", deferredPrefetch);
+    deferredPrefetch = null;
+  }
+
+  function releaseArchitecturePrefetch() {
+    const prefetched = site.scene?.prefetched;
+    prefetched?.forEach((entry) => entry.abort());
+    prefetched?.clear();
+  }
+
   async function loadAndInitScene() {
     await site.ensureSceneReady();
   }
@@ -199,10 +265,15 @@
     }
 
     try {
-      await loadScriptOnce(getSceneScriptUrl());
+      const sceneScript = loadScriptOnce(getSceneScriptUrl());
+      // Issued after the bundle request, which keeps its head start.
+      prefetchArchitectureModels(capabilities);
+      await sceneScript;
+      cancelDeferredPrefetch();
       enableSceneHost();
       const initialized = initScene();
       if (!initialized) {
+        releaseArchitecturePrefetch();
         disableSceneHost();
         return false;
       }
@@ -210,6 +281,8 @@
       return true;
     } catch (error) {
       console.warn("Scene bundle failed to load.", error);
+      cancelDeferredPrefetch();
+      releaseArchitecturePrefetch();
       disableSceneHost();
       return false;
     }

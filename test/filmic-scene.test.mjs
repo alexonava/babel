@@ -18,6 +18,7 @@ import {
 } from "../src/scene/directed-shots.js";
 import { createCinematicCamera, cinematicSafeArea } from "../src/scene/cinematic.js";
 import { createEarthGeometry, createEarthDetail, EARTH } from "../src/scene/filmic-earth.js";
+import { createGrassDetail } from "../src/scene/grass-detail.js";
 import { createFilmScene } from "../src/scene/film-scene.js";
 
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-5, `${a} != ${b}`);
@@ -247,6 +248,47 @@ test("a failed earth companion map retains the procedural surface without paid o
   assert.equal(published, 0);
   assert.equal(closed, 2);
   earth.dispose();
+});
+
+test("earth and grass keep their loaded maps through adaptive profile changes with a pinned asset tier", async () => {
+  for (const [create, kinds] of [
+    [createEarthDetail, 3],
+    [createGrassDetail, 2],
+  ]) {
+    const pending = [];
+    let published = 0,
+      restored = 0;
+    const layer = create({
+      profile: { tier: "high" },
+      anisotropy: 4,
+      createCanvas: canvas,
+      publish: () => published++,
+      restore: () => restored++,
+      loadImage: (url, { signal }) =>
+        new Promise((resolve) => pending.push({ url, signal, resolve })),
+    });
+    layer.applyQuality({ tier: "high" }, { pixelRatio: 2, assetTier: "high" });
+    layer.setActive(true);
+    assert.equal(pending.length, kinds);
+    pending.forEach((r) => r.resolve({ width: 1024, height: 1024, close() {} }));
+    await tick();
+    await tick();
+    assert.equal(published, 1);
+    const restoredBefore = restored;
+    for (const tier of ["balanced", "low", "high"]) {
+      layer.applyQuality({ tier }, { pixelRatio: 1, assetTier: "high" });
+    }
+    assert.equal(pending.length, kinds, "no other map size is fetched");
+    assert.ok(pending.every(({ signal }) => !signal.aborted));
+    assert.equal(restored, restoredBefore, "the bound maps are never restored away");
+    // Reactivation reuses the pinned tier rather than the latest adaptive profile.
+    layer.setActive(false);
+    layer.applyQuality({ tier: "balanced" }, { pixelRatio: 1, assetTier: "high" });
+    layer.setActive(true);
+    assert.equal(pending.length, 2 * kinds);
+    assert.ok(pending.slice(kinds).every(({ url }) => url.endsWith("-1024.webp")));
+    layer.dispose();
+  }
 });
 
 test("low shots retain terrain clearance throughout the bounded camera arc", () => {

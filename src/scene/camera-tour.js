@@ -39,6 +39,7 @@ export function createCameraTour({ camera, interval = 5, invalidate = () => {}, 
     wasActive = false,
     paused = false,
     reduced = false,
+    held = false,
     ready = false,
     disposed = false;
   function next() {
@@ -56,8 +57,10 @@ export function createCameraTour({ camera, interval = 5, invalidate = () => {}, 
     invalidate();
   }
   return {
+    // A dialog or the developer camera can hold the tour mid-dip; show the
+    // held shot undimmed rather than freezing a near-black backdrop.
     get fade() {
-      if (disposed || !ready || paused || reduced) return 0;
+      if (disposed || !ready || paused || reduced || held) return 0;
       let f = 0;
       if (elapsed < TOUR_FADE.in) f = 1 - elapsed / TOUR_FADE.in;
       else if (elapsed > duration - TOUR_FADE.out)
@@ -84,8 +87,9 @@ export function createCameraTour({ camera, interval = 5, invalidate = () => {}, 
     update({ elapsedSeconds, reducedMotion = false, developer = false, panelOpen = false }) {
       if (disposed) return null;
       reduced = reducedMotion;
+      held = developer || panelOpen;
       ready = camera.ready && camera.isAvailable(camera.current);
-      const active = ready && !paused && !reduced && !developer && !panelOpen;
+      const active = ready && !paused && !reduced && !held;
       if (active && wasActive && lastTime !== null)
         elapsed += Math.max(0, elapsedSeconds - lastTime);
       if (elapsed >= duration) next();

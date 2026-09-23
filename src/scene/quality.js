@@ -104,10 +104,11 @@
       towerScale: 1,
     },
   };
+  // dprCap bounds the canvas and every composer target, so fragment cost grows
+  // with its square; postprocessSamples multisamples those targets on WebGL2.
   const SCENE_QUALITY_PROFILES = {
     high: {
-      dprCap: 2,
-      antialias: true,
+      dprCap: 1.5,
       anisotropy: { min: 1, max: 8 },
       textures: {
         groundSize: 1024,
@@ -131,6 +132,7 @@
       postprocessBloom: true,
       postprocessVignette: true,
       postprocessGrain: true,
+      postprocessSamples: 4,
       postprocessSettings: {
         bloomStrength: 0.2,
         celMix: 0.24,
@@ -175,8 +177,7 @@
       },
     },
     balanced: {
-      dprCap: 1.5,
-      antialias: true,
+      dprCap: 1.25,
       anisotropy: { min: 1, max: 6 },
       textures: {
         groundSize: 768,
@@ -203,6 +204,7 @@
       postprocessBloom: false,
       postprocessVignette: true,
       postprocessGrain: true,
+      postprocessSamples: 0,
       postprocessSettings: {
         bloomStrength: 0,
         celMix: 0.24,
@@ -247,8 +249,8 @@
       },
     },
     low: {
-      dprCap: 1.3,
-      antialias: false,
+      // Low keeps the 1x composer resolution it has always rendered at.
+      dprCap: 1,
       anisotropy: { min: 1, max: 4 },
       textures: {
         groundSize: 512,
@@ -272,6 +274,7 @@
       postprocessBloom: false,
       postprocessVignette: false,
       postprocessGrain: false,
+      postprocessSamples: 0,
       postprocessSettings: {
         bloomStrength: 0,
         celMix: 0.2,
@@ -330,7 +333,6 @@
       tier,
       isLow: tier === "low",
       dprCap: profile.dprCap,
-      antialias: profile.antialias,
       anisotropy: { ...profile.anisotropy },
       textures: { ...profile.textures },
       geometry: { ...profile.geometry },
@@ -339,6 +341,7 @@
       postprocessBloom: profile.postprocessBloom,
       postprocessVignette: profile.postprocessVignette,
       postprocessGrain: profile.postprocessGrain,
+      postprocessSamples: profile.postprocessSamples,
       postprocessSettings: { ...profile.postprocessSettings },
       lighting: { ...profile.lighting },
       counts: { ...profile.counts },
@@ -375,7 +378,7 @@
     let gl = null;
     try {
       gl =
-        probeCanvas.getContext("webgl", { powerPreference: "high-performance" }) ||
+        probeCanvas.getContext("webgl", { powerPreference: "default" }) ||
         probeCanvas.getContext("experimental-webgl");
     } catch (_err) {
       gl = null;
@@ -414,6 +417,17 @@
 
     return {
       maxAnisotropy: Math.max(1, Math.round(maxAnisotropy || 1)),
+      maxTextureSize,
+    };
+  }
+
+  // shared/webgl-probe.js reads the same limits from the context it already
+  // opened. Returns null when they are unknown, so the caller probes instead.
+  function qualityCapsFromProbe(capabilities) {
+    const maxTextureSize = Number(capabilities?.maxTextureSize) || 0;
+    if (!capabilities?.available || maxTextureSize <= 0) return null;
+    return {
+      maxAnisotropy: Math.max(1, Math.round(Number(capabilities.maxAnisotropy) || 1)),
       maxTextureSize,
     };
   }
@@ -484,23 +498,14 @@
     return false;
   }
 
-  // Small phones with a high devicePixelRatio render the same pixel count as
-  // mid-range laptops while shipping ~4x the fragment work. Apple hides
-  // deviceMemory for privacy, so we can't classify those phones as "low" via
-  // the normal path. Drop their effective DPR ceiling a notch instead — at
-  // phone physical sizes it's invisible but the fragment-count win is real.
-  function resolveEffectiveDprCap(
-    profile,
-    { touchPrimary = false, navigatorInfo = {}, caps = {} } = {},
-  ) {
+  // Every composer target renders at this ratio, so fragment work grows with
+  // its square: uncapped, a 3x phone would shade nine pixels per CSS pixel.
+  // Apple hides deviceMemory, so phones can't be classified by memory; touch-
+  // primary devices stop at 1.25 on every tier instead, still sharper than the
+  // 1x targets they previously upscaled.
+  function resolveEffectiveDprCap(profile, { touchPrimary = false } = {}) {
     const baseCap = profile && typeof profile.dprCap === "number" ? profile.dprCap : 1;
-    const unknownMemory = typeof navigatorInfo.deviceMemory !== "number";
-    const flagshipCaps =
-      (caps.maxTextureSize || 0) >= 8192 &&
-      (caps.maxAnisotropy || 1) >= 8 &&
-      (navigatorInfo.hardwareConcurrency || 0) >= 6;
-    if (touchPrimary && unknownMemory && !flagshipCaps) return Math.min(baseCap, 1.25);
-    return baseCap;
+    return touchPrimary ? Math.min(baseCap, 1.25) : baseCap;
   }
 
   function indexForTier(tier) {
@@ -517,11 +522,21 @@
     return TIER_ORDER[Math.min(ceiling, current + 1)];
   }
 
+  const ascending = (left, right) => left - right;
+  // A 60 Hz display interval plus rAF jitter.
+  const DISPLAY_FLOOR_MAX_MS = 17.5;
+  // Frames after a resize, resume, context restore, dialog release or asset
+  // commit carry uploads and shader compiles, so they are not sampled.
+  const SAMPLE_HOLD_MS = 3000;
+
   function createSceneQualityGovernor({
     initialTier = "high",
     overrideTier = null,
     downsampleFrames = 60,
     warmupFrames = 60,
+    recoveryFrames = 300,
+    recoveryDelayMs = 10000,
+    maxOscillations = 2,
   } = {}) {
     const stableInitialTier = normalizeTier(initialTier, "high");
     const fixedTier = normalizeTier(overrideTier, null);
@@ -530,12 +545,30 @@
     let recoveryFrameStreak = 0;
     let lastChangeMs = 0;
     let sampleCount = 0;
+    let recovered = false;
+    let oscillations = 0;
     const samples = [];
+    const sortedSamples = [];
     let sampleSum = 0;
 
     function resetCounters() {
       highFrameStreak = 0;
       recoveryFrameStreak = 0;
+    }
+
+    // Samples are display intervals, not render cost, so a 60 Hz panel never
+    // beats a fixed 15 ms. The window's 10th percentile is the display's own
+    // interval only while frames keep up with it; under steady load it is the
+    // load. Recovery counts only at a 60 Hz or faster floor: a slower one is a
+    // capped or GPU-bound rate, which never shows that the heavier tier fits.
+    // The threshold stays under the 20 ms downgrade line, so a tier under
+    // pressure never climbs.
+    function recoveryThreshold() {
+      sortedSamples.length = 0;
+      for (const value of samples) sortedSamples.push(value);
+      sortedSamples.sort(ascending);
+      const floor = Math.max(6, sortedSamples[Math.floor((sortedSamples.length - 1) * 0.1)]);
+      return floor <= DISPLAY_FLOOR_MAX_MS ? Math.max(15, 1.1 * floor) : 0;
     }
 
     return {
@@ -551,7 +584,8 @@
       isFixed() {
         return Boolean(fixedTier);
       },
-      sample(frameTimeMs, nowMs = 0) {
+      // floorTier bounds downgrades; the scene raises it once revealed.
+      sample(frameTimeMs, nowMs = 0, floorTier = "low") {
         if (!(frameTimeMs >= 0)) return null;
 
         samples.push(frameTimeMs);
@@ -574,23 +608,30 @@
         }
 
         const average = sampleSum / samples.length;
+        // Each recovery that is followed by another downgrade doubles the
+        // next recovery's streak and delay; after maxOscillations it stops.
+        const backoff = 2 ** oscillations;
+        const canRecover = currentTier !== stableInitialTier && oscillations < maxOscillations;
 
         highFrameStreak = average > 20 ? highFrameStreak + 1 : 0;
-        recoveryFrameStreak = average < 15 ? recoveryFrameStreak + 1 : 0;
+        recoveryFrameStreak =
+          canRecover && average <= recoveryThreshold() ? recoveryFrameStreak + 1 : 0;
 
-        if (highFrameStreak >= 120 && currentTier !== "low") {
+        if (highFrameStreak >= 120 && indexForTier(currentTier) > indexForTier(floorTier)) {
           currentTier = nextLowerTier(currentTier);
+          if (recovered) oscillations += 1;
+          recovered = false;
           lastChangeMs = nowMs;
           resetCounters();
           return currentTier;
         }
 
         if (
-          recoveryFrameStreak >= 300 &&
-          currentTier !== stableInitialTier &&
-          nowMs - lastChangeMs >= 10000
+          recoveryFrameStreak >= recoveryFrames * backoff &&
+          nowMs - lastChangeMs >= recoveryDelayMs * backoff
         ) {
           currentTier = nextHigherTier(currentTier, stableInitialTier);
+          recovered = true;
           lastChangeMs = nowMs;
           resetCounters();
           return currentTier;
@@ -623,6 +664,11 @@
       initialTier,
       overrideTier: controls.overrideTier,
     });
+    // A revealed scene never steps its visuals down to low. The governor's low
+    // step keeps the current profile and lowers only the pixel ratio to 1, the
+    // composer resolution every tier rendered at before device-pixel targets.
+    let resolutionRelief = false;
+    let sampleResumeAt = null;
 
     return {
       caps: resolvedCaps,
@@ -639,11 +685,28 @@
         return governor.getTier();
       },
       resolveDprCap(profile) {
-        return resolveEffectiveDprCap(profile, { touchPrimary, navigatorInfo, caps: resolvedCaps });
+        const cap = resolveEffectiveDprCap(profile, { touchPrimary });
+        return resolutionRelief ? Math.min(cap, 1) : cap;
       },
-      sample(frameTimeMs, nowMs) {
-        const nextTier = governor.sample(frameTimeMs, nowMs);
+      sample(frameTimeMs, nowMs, floorTier) {
+        const nextTier = governor.sample(frameTimeMs, nowMs, floorTier);
         return nextTier ? cloneProfile(nextTier) : null;
+      },
+      // Skips samples for SAMPLE_HOLD_MS from the next sampled frame.
+      holdSampling() {
+        sampleResumeAt = null;
+      },
+      // Samples the revealed scene. timestamp is the rAF clock the hold runs
+      // on; nowMs is the scene clock the governor's delays run on. Returns the
+      // profile to apply after a step (the current one for a resolution-only
+      // step), else null.
+      sampleRevealed({ frameMs, nowMs, timestamp, profile }) {
+        sampleResumeAt ??= timestamp + SAMPLE_HOLD_MS;
+        if (timestamp < sampleResumeAt) return null;
+        const nextTier = governor.sample(frameMs, nowMs, "low");
+        if (!nextTier) return null;
+        resolutionRelief = nextTier === "low" && profile?.tier !== "low";
+        return resolutionRelief ? profile : cloneProfile(nextTier);
       },
     };
   }
@@ -683,6 +746,7 @@
     return cloneProfile(normalizeTier(tier, "high"));
   };
   scene.readSceneQualityControls = readSceneQualityControls;
+  scene.qualityCapsFromProbe = qualityCapsFromProbe;
   scene.readWebGLQualityCaps = readWebGLQualityCaps;
   scene.selectSceneQualityTier = selectSceneQualityTier;
 })();
