@@ -43,6 +43,7 @@ import {
   createSceneFrameScheduler,
   createSceneResizeController,
   createShaderWarmup,
+  createVisitorHold,
   hasMeaningfulScalarChange,
 } from "./runtime.js";
 import {
@@ -105,6 +106,14 @@ function setSrgbTexture(texture) {
     let sceneFailed = false;
     // Dialogs hold rendering once their dim overlay has faded in (~440ms).
     let panelHold = null;
+    // A visitor's Pause scene holds rendering once the scene is revealed.
+    let visitorHold = null;
+    // Behind a visitor pause, content changes (models, maps, shaders, fonts)
+    // still draw one still frame; scroll and tour cuts do not.
+    function invalidateContent() {
+      visitorHold?.redraw();
+      frameScheduler?.invalidate();
+    }
     const quietObjects = [];
     const modes = resolveSceneModes(window.location.search);
     const filmEnabled = modes.film;
@@ -215,7 +224,7 @@ function setSrgbTexture(texture) {
       height: window.innerHeight,
       lighting: lightingConfig,
       onInvalidate() {
-        frameScheduler?.invalidate();
+        invalidateContent();
       },
       onContextLost() {
         webglContextAvailable = false;
@@ -226,6 +235,8 @@ function setSrgbTexture(texture) {
         webglContextAvailable = true;
         sceneReadyMarked = false;
         qualityState.holdSampling();
+        // The restored canvas is blank; a paused scene draws it once.
+        visitorHold?.redraw();
         frameScheduler?.resume();
       },
       profile: state.profile,
@@ -351,7 +362,7 @@ function setSrgbTexture(texture) {
     homeScene.add(sceneRoot);
     const atmosphereSystem = createSceneAtmosphere({
       onInvalidate() {
-        frameScheduler?.invalidate();
+        invalidateContent();
       },
       parent: homeScene,
       profile: state.profile,
@@ -418,7 +429,7 @@ function setSrgbTexture(texture) {
         chooseAnisotropy: chooseAnisotropy,
         search: window.location?.search || "",
         invalidate() {
-          frameScheduler?.invalidate();
+          invalidateContent();
         },
         onDetailStatus(status) {
           if (status.status === "ready") qualityState.holdSampling();
@@ -433,7 +444,7 @@ function setSrgbTexture(texture) {
           const material = groundSurface?.material;
           if (!material) return;
           configureMudShading(material, currentGroundMuddy, quietSetting, filmActive, currentGrass);
-          frameScheduler?.invalidate();
+          invalidateContent();
         },
         onDetailChange({ colorMap, normalMap, normalScale, bumpMap, roughnessMap = null, muddy = false, earth = false }) {
           const material = groundSurface?.material;
@@ -455,7 +466,7 @@ function setSrgbTexture(texture) {
           material.normalMap = normalMap;
           material.normalScale.set(normalScale, normalScale);
           material.needsUpdate = true;
-          frameScheduler?.invalidate();
+          invalidateContent();
         },
       }),
       groundMesh = new Mesh(
@@ -501,7 +512,7 @@ function setSrgbTexture(texture) {
       circleGeometry, clamp01, cloudAnchor, createGroundOverlayTexture,
       createMarbleMaterial, createMarbleTextures, createTowerTextures,
       environmentSystem, filmEffects, filmEnabled, groundHeight, environmentRoot, towerRoot,
-      homeScene, invalidate: () => frameScheduler?.invalidate(), overlaySegments,
+      homeScene, invalidate: invalidateContent, overlaySegments,
       plantPalette, pointFieldCount, groundPositions, qualityDebug, quietObjects,
       quietSetting, registerDecorativeSystem, renderer, rendering, towerGroundY,
       collapseYaw, setShadowParticipation, setSrgbTexture, smoothstep01, state,
@@ -587,7 +598,7 @@ function setSrgbTexture(texture) {
         treeVisibility = classicTree.visible;
         classicTree.visible = false;
       }
-      frameScheduler?.invalidate();
+      invalidateContent();
     }
     // A failed fallback cannot be revealed or retried. Leave the static poster
     // rather than a partial scene or a loop waiting on a status.
@@ -608,7 +619,7 @@ function setSrgbTexture(texture) {
         measureScene(`shaders:${label}`, start);
         if (qualityDebug) (qualityDebug.shaders ||= {})[label] = ready ? "ready" : "unwarmed";
         rendering.invalidateShadows();
-        frameScheduler?.invalidate();
+        invalidateContent();
       });
     }
     const architectureAssets = createArchitectureAssetController({
@@ -641,7 +652,7 @@ function setSrgbTexture(texture) {
         cinematic.setSubject("tower", replacement.root);
         replacedMeshes.forEach((mesh) => { mesh.visible = false; });
         rendering.invalidateShadows();
-        frameScheduler?.invalidate();
+        invalidateContent();
         measureScene("assembly:tower", assemblyStart);
         warmShaders("tower", towerVisibility.some(([, visible]) => visible) ? null : replacement.root);
         return () => {
@@ -661,7 +672,7 @@ function setSrgbTexture(texture) {
         towerVisibility.forEach(([mesh, visible]) => { mesh.visible = visible; });
         towerVisibility = [];
         rendering.invalidateShadows();
-        frameScheduler?.invalidate();
+        invalidateContent();
       },
       onTreeReady(asset) {
         const assemblyStart = sceneNow();
@@ -678,7 +689,7 @@ function setSrgbTexture(texture) {
         replacement.setFilmTreatment(filmActive);
         cinematic.setSubject("tree", replacement.root);
         rendering.invalidateShadows();
-        frameScheduler?.invalidate();
+        invalidateContent();
         measureScene("assembly:tree", assemblyStart);
         warmShaders("tree", replacesVisible ? null : replacement.root);
         return () => { replacement.dispose(); treeArchitecture = null; };
@@ -689,7 +700,7 @@ function setSrgbTexture(texture) {
         propScale.setTree(null);
         if (classicTree) classicTree.visible = treeVisibility;
         rendering.invalidateShadows();
-        frameScheduler?.invalidate();
+        invalidateContent();
       },
       onStatus(status) {
         if (status.status === "ready") qualityState.holdSampling();
@@ -707,7 +718,7 @@ function setSrgbTexture(texture) {
           // tower it never arrives: the procedural ground shows meanwhile.
           groundTextures.ensureProcedural?.();
         }
-        frameScheduler?.invalidate();
+        invalidateContent();
         if (qualityDebug) {
           qualityDebug.architecture ||= { mode: architectureEnabled ? (completeTowerEnabled ? "complete" : "assembled") : "classic" };
           qualityDebug.architecture[status.kind] = status;
@@ -787,8 +798,10 @@ function setSrgbTexture(texture) {
         height,
         width,
       });
-      // Resizing clears the canvas; draw one frame behind an open dialog.
+      // Resizing clears the canvas; draw one frame behind an open dialog or
+      // a visitor pause.
       panelHold?.redraw();
+      visitorHold?.redraw();
       frameScheduler?.invalidate();
     }
     const resizeController = createSceneResizeController({
@@ -805,7 +818,7 @@ function setSrgbTexture(texture) {
     // resize, so reading it inside the scroll handler avoids a layout-flushing
     // window.innerHeight access per scroll event.
     const onWindowResize = () => resizeController.resize();
-    const onFontsLoaded = () => { cinematicArea = measureCinematicArea(viewport.width, viewport.height); frameScheduler?.invalidate(); };
+    const onFontsLoaded = () => { cinematicArea = measureCinematicArea(viewport.width, viewport.height); invalidateContent(); };
     document.fonts?.addEventListener?.("loadingdone", onFontsLoaded);
     const onWindowScroll = () => {
       viewport.scrollTarget = Math.min(window.scrollY / (1.8 * viewport.height), 1.25);
@@ -885,6 +898,7 @@ function setSrgbTexture(texture) {
         }
       }
       panelHold?.frameRendered();
+      visitorHold?.frameRendered();
       if (qualityDebug) {
         debugRenderWindowStart ??= timestamp;
         debugRenderFrameCount += 1;
@@ -908,6 +922,8 @@ function setSrgbTexture(texture) {
       // Until the reveal, the transparent canvas redraws only when invalidated
       // (status, model commit, resize) instead of animating through downloads.
       frameScheduler?.setStill(!sceneShown);
+      // A paused visitor keeps the first revealed frame.
+      if (sceneShown) visitorHold?.reveal();
     }
     frameScheduler = createSceneFrameScheduler({
       isRenderable() {
@@ -944,6 +960,21 @@ function setSrgbTexture(texture) {
       typeof MutationObserver === "function" ? new MutationObserver(() => panelHold.sync()) : null;
     panelObserver?.observe(document.body, { attributes: true, attributeFilter: ["data-panel-open"] });
     panelHold.sync();
+    // The footer's Pause scene control stops the tour, drift and clouds and
+    // holds rendering. The UI may leave a stored choice in
+    // visitorPausedPreference before this bundle loads.
+    visitorHold = createVisitorHold({
+      onRelease: () => qualityState.holdSampling(),
+      scheduler: frameScheduler,
+    });
+    scene.setVisitorPaused = (paused) => {
+      const next = Boolean(paused);
+      scene.visitorPausedPreference = next;
+      cameraTour?.setPaused(next);
+      return visitorHold.set(next);
+    };
+    scene.isVisitorPaused = () => visitorHold.paused;
+    scene.setVisitorPaused(scene.visitorPausedPreference === true);
     // The developer camera hides all page UI, so only diagnostic sessions
     // (?sceneDebug=1) get its activation key. dispose() is safe without attach.
     if (qualityControls.debug && scene.devMode && typeof scene.devMode.attach === "function") {
@@ -953,7 +984,10 @@ function setSrgbTexture(texture) {
         homeScene,
         canvas: renderer.domElement,
         ensureOutlinePass: rendering.ensureOutlinePass,
+        // The developer camera hides the Pause scene control, so it renders
+        // through a visitor pause and restores the held frame on exit.
         onActivityChange(active) {
+          visitorHold.suspend(active);
           frameScheduler.setForceAnimation(active);
         },
       });
@@ -976,6 +1010,7 @@ function setSrgbTexture(texture) {
       sceneIntersectionObserver = null;
       panelObserver?.disconnect();
       panelHold.dispose();
+      visitorHold.dispose();
       resizeController.dispose();
       frameScheduler.dispose();
       if (scene.devMode && typeof scene.devMode.dispose === "function") {
@@ -986,6 +1021,8 @@ function setSrgbTexture(texture) {
       frameScheduler = null;
       scene.setClouds = () => false;
       scene.toggleClouds = () => false;
+      scene.setVisitorPaused = () => false;
+      scene.isVisitorPaused = () => false;
       scene.disposeHomeSceneRuntime = () => false;
       return disposedResources;
     };

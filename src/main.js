@@ -8,8 +8,11 @@
   function initUi() {
     const ui = site.ui || {};
     if (typeof ui.initHeroChrome === "function") ui.initHeroChrome();
-    if (typeof ui.initSceneMenu === "function") ui.initSceneMenu();
-    else if (typeof ui.initPanels === "function") ui.initPanels();
+    if (typeof ui.initSceneMenu === "function") {
+      // Deep links drive the enhanced dialogs; the fallback keeps native anchors.
+      if (ui.initSceneMenu() === true && typeof ui.initDeepLinks === "function") ui.initDeepLinks();
+    } else if (typeof ui.initPanels === "function") ui.initPanels();
+    if (typeof ui.initSceneControls === "function") ui.initSceneControls();
   }
 
   function initScene() {

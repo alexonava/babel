@@ -17,7 +17,7 @@ These instructions apply to agents working in this checkout.
 
 ## Current visual contract
 
-The default is the fitted directed camera opening on The watch and cycling through seven tower/tree shots at five-second intervals. Masonry study remains available only as an explicit comparison. The historical fixed orbit radius/height is not the default composition. Shot focal volumes, responsive safe areas, terrain clearance, and portrait overrides govern framing. Use directed-shots.js, cinematic.js, and camera-tour.js for the corresponding responsibilities.
+The default is the fitted directed camera opening on The watch and cycling through seven tower/tree shots with a 20-second dwell and an occasional five-second wildcard. The footer's Pause scene button is the tour's only visitor control. Masonry study remains available only as an explicit comparison. The historical fixed orbit radius/height is not the default composition. Shot focal volumes, responsive safe areas, terrain clearance, and portrait overrides govern framing. Use directed-shots.js, cinematic.js, and camera-tour.js for the corresponding responsibilities.
 
 The tower remains the world anchor. Preserve the accepted identity, poster, About estate, readable fallback, paper dialogs, focus restoration, and reduced-motion/data behavior. Comparison parameters and procedural fallbacks remain supported. A source reorganization must not quietly change default or legacy visuals.
 

@@ -1,0 +1,418 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { createCameraTour } from "../src/scene/camera-tour.js";
+import { DIRECTED_SHOTS } from "../src/scene/directed-shots.js";
+import {
+  createPanelHold,
+  createSceneFrameScheduler,
+  createVisitorHold,
+} from "../src/scene/runtime.js";
+
+function createFrameHarness() {
+  let nextId = 1;
+  const callbacks = new Map();
+  return {
+    cancelFrame(id) {
+      callbacks.delete(id);
+    },
+    get pending() {
+      return callbacks.size;
+    },
+    requestFrame(callback) {
+      const id = nextId++;
+      callbacks.set(id, callback);
+      return id;
+    },
+    step(timestamp) {
+      const entry = callbacks.entries().next().value;
+      assert.ok(entry, "expected a queued frame");
+      callbacks.delete(entry[0]);
+      entry[1](timestamp);
+    },
+  };
+}
+
+function createTimers() {
+  let nextId = 1;
+  const timers = new Map();
+  return {
+    clearTimer(id) {
+      timers.delete(id);
+    },
+    fire() {
+      const entries = [...timers.values()];
+      timers.clear();
+      entries.forEach((callback) => callback());
+    },
+    setTimer(callback) {
+      const id = nextId++;
+      timers.set(id, callback);
+      return id;
+    },
+  };
+}
+
+// The tour needs only the directed camera's selection and readiness.
+function createTourCamera(state) {
+  return {
+    angle: 0,
+    current: "tower",
+    get ready() {
+      return state.ready;
+    },
+    isAvailable: () => true,
+    setPreviewShot(subject, angle) {
+      this.current = subject;
+      this.angle = angle;
+      return true;
+    },
+  };
+}
+
+// Mirrors index.js: each drawn frame updates the tour, reports itself to both
+// holds, then shows the canvas and reveals once the camera is ready.
+function createSceneHarness({ paused = false, ready = true } = {}) {
+  const frames = createFrameHarness();
+  const timers = createTimers();
+  const state = { developer: false, open: false, panelReleases: 0, ready, visitorReleases: 0 };
+  const drawn = [];
+  const camera = createTourCamera(state);
+  let panelHold = null;
+  let visitorHold = null;
+  const scheduler = createSceneFrameScheduler({
+    cancelFrame: frames.cancelFrame,
+    onUpdate({ deltaSeconds, elapsedSeconds }) {
+      tour.update({ developer: state.developer, elapsedSeconds, panelOpen: state.open });
+      drawn.push({
+        deltaSeconds,
+        elapsedSeconds,
+        fade: tour.fade,
+        shot: DIRECTED_SHOTS[camera.current][camera.angle].name,
+      });
+      panelHold.frameRendered();
+      visitorHold.frameRendered();
+      scheduler.setStill(!state.ready);
+      if (state.ready) visitorHold.reveal();
+    },
+    requestFrame: frames.requestFrame,
+  });
+  const tour = createCameraTour({
+    camera,
+    interval: 5,
+    invalidate: () => scheduler.invalidate(),
+  });
+  panelHold = createPanelHold({
+    clearTimer: timers.clearTimer,
+    isOpen: () => state.open,
+    onRelease: () => (state.panelReleases += 1),
+    scheduler,
+    setTimer: timers.setTimer,
+  });
+  visitorHold = createVisitorHold({
+    onRelease: () => (state.visitorReleases += 1),
+    scheduler,
+  });
+  function setVisitorPaused(next) {
+    tour.setPaused(next);
+    return visitorHold.set(next);
+  }
+  function setDialogOpen(open) {
+    state.open = open;
+    panelHold.sync();
+    if (open) timers.fire();
+  }
+  // As index.js's developer-camera onActivityChange does.
+  function setDeveloper(active) {
+    state.developer = active;
+    visitorHold.suspend(active);
+    scheduler.setForceAnimation(active);
+  }
+  // Both holds redraw after a resize, as applySceneSize() does.
+  function resize() {
+    panelHold.redraw();
+    visitorHold.redraw();
+    scheduler.invalidate();
+  }
+  setVisitorPaused(paused);
+  scheduler.start();
+  let time = 0;
+  return {
+    drawn,
+    frames,
+    resize,
+    scheduler,
+    setDeveloper,
+    setDialogOpen,
+    setVisitorPaused,
+    state,
+    tour,
+    visitorHold,
+    // Advances the rAF clock by 100ms per step while frames are queued.
+    run(steps) {
+      for (let i = 0; i < steps && frames.pending; i += 1) frames.step((time += 100));
+    },
+    skip(ms) {
+      time += ms;
+    },
+  };
+}
+
+test("a visitor pause settles a tour dip in one frame, then stops rendering", () => {
+  const scene = createSceneHarness();
+  scene.run(50);
+  const dip = scene.drawn.at(-1);
+  assert.equal(dip.shot, "The watch");
+  assert.ok(dip.fade > 0.5, "the dip before a cut is under way");
+
+  assert.equal(scene.setVisitorPaused(true), true);
+  assert.equal(scene.visitorHold.paused, true);
+  assert.equal(scene.visitorHold.held, false, "one more frame draws first");
+  const count = scene.drawn.length;
+  scene.run(100);
+  assert.equal(scene.drawn.length, count + 1);
+  assert.equal(scene.drawn.at(-1).fade, 0, "the paused shot is undimmed");
+  assert.equal(scene.drawn.at(-1).shot, "The watch");
+  assert.equal(scene.visitorHold.held, true);
+  assert.equal(scene.scheduler.getState().held, true);
+  assert.equal(scene.frames.pending, 0, "drift, clouds and the tour stop drawing");
+  scene.scheduler.invalidate();
+  scene.scheduler.resume();
+  assert.equal(scene.frames.pending, 0, "invalidation does not draw a paused scene");
+  scene.scheduler.dispose();
+});
+
+test("unpausing resumes the same shot from the clear paused frame without a time jump", () => {
+  const scene = createSceneHarness();
+  scene.run(50);
+  const dip = scene.drawn.at(-1).fade;
+  scene.setVisitorPaused(true);
+  scene.run(1);
+  const paused = scene.drawn.at(-1);
+  scene.skip(60_000);
+
+  assert.equal(scene.setVisitorPaused(false), false);
+  assert.equal(scene.state.visitorReleases, 1);
+  assert.equal(scene.frames.pending, 1);
+  scene.run(1);
+  const resumed = scene.drawn.at(-1);
+  assert.equal(resumed.deltaSeconds, 0, "no giant delta after a long pause");
+  assert.equal(resumed.elapsedSeconds, paused.elapsedSeconds);
+  assert.equal(resumed.shot, "The watch");
+  assert.equal(resumed.fade, 0, "the first resumed frame matches the clear paused frame");
+  scene.run(2);
+  const dipping = scene.drawn.slice(-2);
+  assert.deepEqual(dipping.map(({ shot }) => shot), ["The watch", "The watch"]);
+  assert.ok(dipping[0].fade > 0 && dipping[0].fade < dipping[1].fade, "the dip rises from clear");
+  assert.ok(Math.abs(dipping[1].fade - dip) < 1e-9, "the interrupted dip replays in full");
+  scene.run(2);
+  assert.equal(scene.drawn.at(-1).shot, "Threshold", "the cut completes");
+  assert.equal(scene.frames.pending, 1, "animation continues");
+
+  scene.setVisitorPaused(false);
+  assert.equal(scene.state.visitorReleases, 1, "an unpaused scene releases nothing");
+  scene.scheduler.dispose();
+});
+
+test("a resize while paused draws exactly one still frame", () => {
+  const scene = createSceneHarness();
+  scene.run(10);
+  scene.setVisitorPaused(true);
+  scene.run(1);
+  const count = scene.drawn.length;
+  const held = scene.drawn.at(-1);
+
+  scene.resize();
+  assert.equal(scene.visitorHold.held, false);
+  assert.equal(scene.frames.pending, 1, "the cleared canvas is redrawn");
+  scene.run(10);
+  assert.equal(scene.drawn.length, count + 1);
+  const redrawn = scene.drawn.at(-1);
+  assert.equal(redrawn.deltaSeconds, 0);
+  assert.equal(redrawn.elapsedSeconds, held.elapsedSeconds, "scene time stays frozen");
+  assert.equal(redrawn.fade, 0);
+  assert.equal(scene.visitorHold.held, true, "the drawn frame restores the hold");
+  assert.equal(scene.frames.pending, 0);
+
+  scene.resize();
+  scene.resize();
+  scene.run(10);
+  assert.equal(scene.drawn.length, count + 2, "repeated redraws coalesce");
+  assert.equal(scene.frames.pending, 0);
+  scene.scheduler.dispose();
+});
+
+test("visitor and dialog holds compose in either order", () => {
+  const scene = createSceneHarness();
+  scene.run(10);
+  scene.setVisitorPaused(true);
+  scene.run(1);
+  const count = scene.drawn.length;
+
+  scene.setDialogOpen(true);
+  scene.setDialogOpen(false);
+  assert.equal(scene.state.panelReleases, 1);
+  assert.equal(scene.frames.pending, 0, "closing a dialog keeps a paused scene held");
+
+  scene.setDialogOpen(true);
+  scene.resize();
+  assert.equal(scene.frames.pending, 1, "a resize redraws behind both holds");
+  scene.run(10);
+  assert.equal(scene.drawn.length, count + 1);
+  assert.equal(scene.frames.pending, 0, "both holds return after one frame");
+
+  scene.setVisitorPaused(false);
+  assert.equal(scene.frames.pending, 0, "unpausing behind a dialog keeps the panel hold");
+  scene.setDialogOpen(false);
+  assert.equal(scene.frames.pending, 1, "the scene resumes once both are released");
+  scene.run(3);
+  assert.equal(scene.drawn.length, count + 4);
+
+  // A pause taken behind a held dialog draws its settling frame on close.
+  scene.setDialogOpen(true);
+  scene.setVisitorPaused(true);
+  assert.equal(scene.frames.pending, 0);
+  scene.setDialogOpen(false);
+  scene.run(10);
+  assert.equal(scene.drawn.length, count + 5);
+  assert.equal(scene.visitorHold.held, true);
+  scene.scheduler.dispose();
+});
+
+test("a stored pause keeps the first revealed frame, then holds", () => {
+  const scene = createSceneHarness({ paused: true, ready: false });
+  scene.run(1);
+  assert.equal(scene.visitorHold.paused, true);
+  assert.equal(scene.visitorHold.held, false, "the hidden canvas still draws on demand");
+  assert.equal(scene.scheduler.getState().still, true);
+  scene.resize();
+  scene.run(1);
+  const count = scene.drawn.length;
+
+  scene.state.ready = true;
+  scene.scheduler.invalidate();
+  scene.run(10);
+  assert.equal(scene.drawn.length, count + 1, "only the revealed frame draws");
+  assert.equal(scene.drawn.at(-1).fade, 0, "the paused tour does not open from black");
+  assert.equal(scene.visitorHold.held, true);
+  assert.equal(scene.frames.pending, 0);
+
+  scene.setVisitorPaused(false);
+  scene.run(3);
+  assert.equal(scene.drawn.length, count + 4, "unpausing starts the tour");
+  assert.equal(scene.drawn.at(-3).fade, 0, "and it still does not open from black");
+  scene.scheduler.dispose();
+
+  // Without a stored pause the same reveal opens from black and animates.
+  const open = createSceneHarness({ ready: false });
+  open.run(1);
+  open.state.ready = true;
+  open.scheduler.invalidate();
+  open.run(1);
+  assert.equal(open.drawn.at(-1).fade, 1);
+  assert.equal(open.visitorHold.held, false);
+  assert.equal(open.frames.pending, 1);
+  open.scheduler.dispose();
+});
+
+test("the developer camera renders through a visitor pause and restores the held frame", () => {
+  const scene = createSceneHarness();
+  scene.run(10);
+  scene.setVisitorPaused(true);
+  scene.run(1);
+  const count = scene.drawn.length;
+  assert.equal(scene.visitorHold.held, true);
+
+  scene.setDeveloper(true);
+  assert.equal(scene.visitorHold.held, false);
+  assert.equal(scene.visitorHold.paused, true, "the visitor's choice is kept");
+  assert.equal(scene.state.visitorReleases, 1);
+  scene.run(5);
+  assert.equal(scene.drawn.length, count + 5, "the developer camera animates");
+  scene.resize();
+  scene.setVisitorPaused(false);
+  scene.setVisitorPaused(true);
+  scene.run(3);
+  assert.equal(scene.drawn.length, count + 8, "redraws and pauses do not re-hold it");
+  assert.equal(scene.frames.pending, 1);
+
+  scene.setDeveloper(false);
+  scene.run(10);
+  assert.equal(scene.drawn.length, count + 9, "one frame restores the paused shot");
+  assert.equal(scene.drawn.at(-1).fade, 0);
+  assert.equal(scene.visitorHold.held, true);
+  assert.equal(scene.frames.pending, 0);
+  scene.scheduler.dispose();
+
+  // An unpaused scene keeps animating after the developer camera exits, and a
+  // stored pause waits for the developer camera before holding its reveal.
+  const live = createSceneHarness();
+  live.run(2);
+  live.setDeveloper(true);
+  live.setDeveloper(false);
+  assert.equal(live.state.visitorReleases, 0);
+  live.run(3);
+  assert.equal(live.frames.pending, 1);
+  live.scheduler.dispose();
+
+  const stored = createSceneHarness({ paused: true, ready: false });
+  stored.run(1);
+  stored.setDeveloper(true);
+  stored.state.ready = true;
+  stored.run(3);
+  assert.equal(stored.visitorHold.held, false);
+  assert.equal(stored.frames.pending, 1);
+  stored.setDeveloper(false);
+  stored.run(10);
+  assert.equal(stored.visitorHold.held, true);
+  assert.equal(stored.frames.pending, 0);
+  stored.scheduler.dispose();
+});
+
+test("a disposed visitor hold ignores later pauses, reveals and redraws", () => {
+  const frames = createFrameHarness();
+  const scheduler = createSceneFrameScheduler({
+    cancelFrame: frames.cancelFrame,
+    onUpdate() {},
+    requestFrame: frames.requestFrame,
+  });
+  const hold = createVisitorHold({ scheduler });
+  scheduler.start();
+  hold.dispose();
+  assert.equal(hold.set(true), false);
+  hold.reveal();
+  hold.redraw();
+  hold.suspend(true);
+  hold.suspend(false);
+  assert.equal(hold.held, false);
+  assert.equal(scheduler.getState().held, false);
+  scheduler.dispose();
+});
+
+test("scene bootstrap exposes the visitor pause and wires its hold", async () => {
+  const source = await readFile(new URL("../src/scene/index.js", import.meta.url), "utf8");
+
+  // The API pauses the tour's own state and the "visitor" scheduler hold.
+  assert.match(
+    source,
+    /scene\.setVisitorPaused = \(paused\) => \{\s*const next = Boolean\(paused\);\s*scene\.visitorPausedPreference = next;\s*cameraTour\?\.setPaused\(next\);\s*return visitorHold\.set\(next\);/,
+  );
+  assert.match(source, /scene\.isVisitorPaused = \(\) => visitorHold\.paused;/);
+  assert.match(source, /scene\.setVisitorPaused\(scene\.visitorPausedPreference === true\);/);
+  // The frame that shows the canvas reveals; later frames report a redraw.
+  assert.match(source, /frameScheduler\?\.setStill\(!sceneShown\);\s*[^]*?if \(sceneShown\) visitorHold\?\.reveal\(\);/);
+  assert.match(source, /panelHold\?\.frameRendered\(\);\s*visitorHold\?\.frameRendered\(\);/);
+  assert.match(source, /function applySceneSize\([^]*?panelHold\?\.redraw\(\);\s*visitorHold\?\.redraw\(\);/);
+  assert.match(source, /onContextRestored\(\) \{[^}]*?visitorHold\?\.redraw\(\);/);
+  // The developer camera lifts the hold while it runs.
+  assert.match(source, /onActivityChange\(active\) \{\s*visitorHold\.suspend\(active\);\s*frameScheduler\.setForceAnimation\(active\);/);
+  // Content changes draw a still frame behind the pause; scroll does not.
+  assert.match(source, /function invalidateContent\(\) \{\s*visitorHold\?\.redraw\(\);\s*frameScheduler\?\.invalidate\(\);/);
+  assert.match(source, /rendering\.invalidateShadows\(\);\s*invalidateContent\(\);\s*\}\);/);
+  const scroll = source.slice(source.indexOf("const onWindowScroll"), source.indexOf("window.addEventListener(\"resize\""));
+  assert.doesNotMatch(scroll, /invalidateContent|redraw/);
+  // Disposal releases the hold and retires the API.
+  const dispose = source.slice(source.indexOf("function disposeHomeSceneRuntime"));
+  assert.match(dispose, /panelHold\.dispose\(\);\s*visitorHold\.dispose\(\);[^]*?frameScheduler\.dispose\(\);/);
+  assert.match(dispose, /scene\.setVisitorPaused = \(\) => false;\s*scene\.isVisitorPaused = \(\) => false;/);
+});

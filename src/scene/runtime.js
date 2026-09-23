@@ -281,6 +281,88 @@ export function createPanelHold({
 }
 
 /**
+ * Holds scene rendering for a visitor's pause through the scheduler's
+ * "visitor" hold, which composes with the dialog's "panel" hold. A pause
+ * before the reveal waits for it and keeps the first revealed frame; a later
+ * pause draws one more frame, so a tour dip settles clear, then holds. As with
+ * createPanelHold(), redraw() releases the hold only until frameRendered()
+ * reports the next drawn frame. suspend() lifts the hold while the developer
+ * camera runs, keeping the pause, and draws one frame before it returns.
+ * Releasing a held pause calls onRelease.
+ */
+export function createVisitorHold({ onRelease = () => {}, scheduler }) {
+  let disposed = false;
+  let held = false;
+  let paused = false;
+  let redrawing = false;
+  let revealed = false;
+  let suspended = false;
+
+  function setHeld(next) {
+    if (held === next) return;
+    held = next;
+    scheduler.setHold("visitor", next);
+  }
+
+  function release() {
+    const released = held || redrawing;
+    redrawing = false;
+    setHeld(false);
+    if (released) onRelease();
+  }
+
+  return {
+    get held() {
+      return held;
+    },
+    get paused() {
+      return paused;
+    },
+    set(value) {
+      const next = Boolean(value);
+      if (disposed || paused === next) return paused;
+      paused = next;
+      if (!paused) release();
+      else if (revealed) {
+        redrawing = true;
+        scheduler.invalidate();
+      }
+      return paused;
+    },
+    // Called once the frame that shows the canvas has drawn.
+    reveal() {
+      if (disposed || revealed) return;
+      revealed = true;
+      if (paused && !suspended) setHeld(true);
+    },
+    redraw() {
+      if (disposed || !held) return;
+      redrawing = true;
+      setHeld(false);
+    },
+    frameRendered() {
+      if (!redrawing) return;
+      redrawing = false;
+      if (paused && !suspended) setHeld(true);
+    },
+    suspend(value) {
+      const next = Boolean(value);
+      if (disposed || suspended === next) return;
+      suspended = next;
+      if (suspended) release();
+      else if (paused && revealed) {
+        redrawing = true;
+        scheduler.invalidate();
+      }
+    },
+    dispose() {
+      disposed = true;
+      redrawing = false;
+    },
+  };
+}
+
+/**
  * Links new scene programs through compile() in a task of its own, instead of
  * in a blocking first draw or inside the commit that added them. pending counts
  * warm-ups not yet settled. A subject passed to warm() stays hidden until its

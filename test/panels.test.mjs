@@ -132,6 +132,10 @@ class FakeElement {
     this.document.activeElement = this;
   }
 
+  click() {
+    this.dispatchEvent(createEvent("click"));
+  }
+
   contains(node) {
     if (node === this) return true;
     return this.children.some((child) => child.contains(node));
@@ -267,6 +271,9 @@ function matchesSimpleSelector(element, selector) {
   }
   if (selector.startsWith("#")) {
     return element.id === selector.slice(1);
+  }
+  if (/^(\.[\w-]+)+$/.test(selector)) {
+    return selector.slice(1).split(".").every((name) => element.classList.contains(name));
   }
   return false;
 }
@@ -1054,4 +1061,126 @@ test("repeated initialization while a child is open preserves nested navigation 
   document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
   assert.equal(document.activeElement, about.entry);
   assert.equal(about.panel.hidden, true);
+});
+
+// Dialog changes are announced on the document for URL and scene listeners.
+class FakeCustomEvent {
+  constructor(type, init = {}) {
+    this.type = type;
+    this.detail = init.detail;
+  }
+}
+
+function recordPanelChanges(dom) {
+  dom.window.CustomEvent = FakeCustomEvent;
+  const changes = [];
+  dom.document.addEventListener("babel:panelchange", (event) => {
+    changes.push({
+      ...event.detail,
+      panelOpen: dom.document.body.getAttribute("data-panel-open"),
+      focus: dom.document.activeElement,
+    });
+  });
+  return changes;
+}
+
+test("each open and close announces the dialog now showing after the page settles", async () => {
+  for (const method of ["button", "backdrop", "Escape"]) {
+    const dom = createSceneEstateDom();
+    const { document, about, destinations: { profile } } = dom;
+    const changes = recordPanelChanges(dom);
+    await loadPanels(dom.window, document);
+    about.entry.dispatchEvent(createEvent("click"));
+    profile.button.dispatchEvent(createEvent("click"));
+    dismissPanel(document, profile.panel, profile.close, method);
+    dismissPanel(document, about.panel, about.close, method);
+    assert.deepEqual(
+      changes.map(({ id, open }) => [id, open]),
+      [["about", true], ["profile", true], ["about", true], [null, false]],
+      `${method}: switching to a category never reports an intermediate close`,
+    );
+    assert.equal(changes[0].focus, about.close, "announced after focus moves into About");
+    assert.equal(changes[1].focus, profile.close);
+    assert.equal(changes[2].focus, profile.button, "announced after focus returns to the map");
+    assert.ok(changes.slice(0, 3).every((change) => change.panelOpen === "true"));
+    assert.equal(changes[3].panelOpen, null);
+    assert.equal(changes[3].focus, about.entry, "announced after focus returns to the scene");
+  }
+});
+
+test("direct dialogs announce their open and final close", async () => {
+  const dom = createEstateDom();
+  const changes = recordPanelChanges(dom);
+  await loadPanels(dom.window, dom.document);
+  const { contact, experience } = dom.destinations;
+  contact.button.dispatchEvent(createEvent("click"));
+  contact.close.dispatchEvent(createEvent("click"));
+  experience.button.dispatchEvent(createEvent("click"));
+  experience.button.dispatchEvent(createEvent("click"));
+  assert.deepEqual(
+    changes.map(({ id, open }) => [id, open]),
+    [["contact", true], [null, false], ["experience", true], [null, false]],
+  );
+});
+
+test("a deep link opens its category through About so Back and Escape step out normally", async () => {
+  const deepLinksSource = await readFile(
+    path.join(projectRoot, "src", "ui", "deep-links.js"),
+    "utf8",
+  );
+  const dom = createSceneEstateDom();
+  const { document, about, destinations } = dom;
+  const hashListeners = [];
+  const urls = [];
+  Object.assign(dom.window, {
+    CustomEvent: FakeCustomEvent,
+    location: { pathname: "/", search: "", hash: "#contact-text" },
+    history: {
+      state: null,
+      replaceState(state, title, url) {
+        urls.push(url);
+        dom.window.location.hash = url.includes("#") ? url.slice(url.indexOf("#")) : "";
+      },
+    },
+    addEventListener(type, handler) {
+      if (type === "hashchange") hashListeners.push(handler);
+    },
+  });
+  const followHash = (hash) => {
+    dom.window.location.hash = hash;
+    hashListeners.forEach((handler) => handler({ type: "hashchange" }));
+  };
+  await loadPanels(dom.window, document);
+  vm.runInNewContext(deepLinksSource, { window: dom.window, document }, {
+    filename: "src/ui/deep-links.js",
+  });
+  assert.equal(dom.window.BabelSite.ui.initDeepLinks(), true);
+
+  assert.equal(destinations.contact.panel.hidden, false);
+  assert.equal(about.panel.hidden, true);
+  assert.equal(about.entry.getAttribute("aria-expanded"), "true");
+  assert.equal(document.activeElement, destinations.contact.close);
+  assert.equal(dom.window.location.hash, "#contact");
+  document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
+  assert.equal(about.panel.hidden, false, "Escape returns to the map");
+  assert.equal(document.activeElement, destinations.contact.button);
+  assert.equal(dom.window.location.hash, "#about");
+  document.dispatchEvent(createEvent("keydown", { key: "Escape" }));
+  assert.equal(about.panel.hidden, true);
+  assert.equal(document.activeElement, about.entry);
+  assert.equal(dom.window.location.hash, "");
+  assert.equal(urls.at(-1), "/");
+
+  followHash("#experience");
+  assert.equal(destinations.experience.panel.hidden, false);
+  followHash("#profile");
+  assert.equal(destinations.experience.panel.hidden, true);
+  assert.equal(destinations.profile.panel.hidden, false);
+  destinations.profile.close.dispatchEvent(createEvent("click"));
+  assert.equal(about.panel.hidden, false, "Back returns to the map after a hash switch");
+  assert.equal(document.activeElement, destinations.profile.button);
+  about.close.dispatchEvent(createEvent("click"));
+  assert.equal(document.activeElement, about.entry);
+  assert.equal(document.body.getAttribute("data-panel-open"), null);
+  assert.equal(dom.window.location.hash, "");
 });

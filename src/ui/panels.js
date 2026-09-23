@@ -22,6 +22,14 @@
     }
   }
 
+  // Reports the dialog now showing, or none, for URL and scene listeners.
+  function announce(id) {
+    if (typeof window.CustomEvent !== "function") return;
+    document.dispatchEvent(
+      new window.CustomEvent("babel:panelchange", { detail: { id, open: id !== null } }),
+    );
+  }
+
   let initialized = false;
 
   ui.initPanels = function initPanels() {
@@ -132,8 +140,10 @@
     function closePanel({ restoreFocus = true } = {}) {
       if (restoreFocus && panelHistory.length) {
         const entry = panelHistory.pop();
-        openPanel(entry.panel.id.replace("panel-", ""), entry.rootTrigger);
+        const parentId = entry.panel.id.replace("panel-", "");
+        openPanel(parentId, entry.rootTrigger, false);
         focusElement(entry.childTrigger);
+        announce(parentId);
         return;
       }
       if (activePanel) {
@@ -150,10 +160,11 @@
 
       if (restoreFocus) {
         restoreFocusTarget = null;
+        announce(null);
       }
     }
 
-    function openPanel(panelId, trigger) {
+    function openPanel(panelId, trigger, announceChange = true) {
       const panel = document.getElementById(`panel-${panelId}`);
       if (!panel) return;
 
@@ -176,6 +187,7 @@
       setExpandedState(panelId);
       setBackgroundInert(true);
       focusPanel(panel);
+      if (announceChange) announce(panelId);
     }
 
     function trapFocus(event) {

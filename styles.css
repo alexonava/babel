@@ -626,7 +626,7 @@ main:focus {
 }
 
 .bottom-bar .bottom-btn,
-.site-copyright {
+.site-footer {
   animation: hero-rise 820ms both;
   animation-delay: 560ms;
 }
@@ -769,6 +769,16 @@ main:focus {
   box-shadow: none;
 }
 
+/* A modest warm pool of ground light behind the satchel. */
+.bottom-btn--icon::before {
+  position: absolute;
+  inset: 10% -16% -12%;
+  z-index: -1;
+  content: "";
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(242, 226, 196, 0.16) 35%, rgba(242, 226, 196, 0));
+}
+
 .bottom-btn--icon::after {
   content: "";
   position: absolute;
@@ -816,9 +826,9 @@ main:focus {
   left: 50%;
   bottom: calc(100% + 8px);
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   opacity: 1;
   transform: translate(-50%, 0);
@@ -839,17 +849,139 @@ main:focus {
   transform: translate(-50%, 0);
 }
 
-.site-copyright {
+/* Copyright and Email hold the left inset; Pause scene mirrors it on the right.
+   Lines are 16px tall and the controls' 44px targets hang into negative
+   margins, so the row keeps the copyright's baseline. */
+.site-footer {
   position: fixed;
-  left: max(20px, calc(env(safe-area-inset-left) + 8px));
+  right: max(20px, calc(env(safe-area-inset-right) + 8px));
   bottom: max(30px, calc(22px + env(safe-area-inset-bottom)));
+  left: max(20px, calc(env(safe-area-inset-left) + 8px));
   z-index: 10;
-  margin: 0;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: end;
+  row-gap: 6px;
   color: var(--text-accent);
   font-size: 12px;
+  line-height: 16px;
   letter-spacing: 0.08em;
-  pointer-events: none;
   text-shadow: var(--text-meta-shadow);
+  pointer-events: none;
+}
+
+.site-copyright {
+  margin: 0;
+}
+
+.site-copyright::after {
+  content: "\00b7";
+  content: "\00b7" / "";
+  margin-inline: 0.6em;
+}
+
+.site-footer__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: -14px;
+  padding: 0 14px;
+  border-radius: 6px;
+  color: inherit;
+  letter-spacing: inherit;
+  text-decoration: none;
+  text-shadow: inherit;
+  pointer-events: auto;
+  transition: color 180ms ease;
+}
+
+/* The shared ring hugs the 16px line, 2px clear of the text, so a stacked
+   footer line never falls inside it. */
+.site-footer__link:focus-visible {
+  outline-offset: -12px;
+}
+
+.scene-pause[data-paused="true"] {
+  color: var(--text);
+}
+
+/* Touch browsers keep :hover after a tap; brightening follows real hover only. */
+@media (hover: hover) {
+  .site-footer__link:hover {
+    color: var(--text);
+  }
+
+  .site-footer__email:hover {
+    text-decoration: underline;
+    text-decoration-color: rgba(229, 228, 223, 0.5);
+    text-underline-offset: 3px;
+  }
+}
+
+/* Shown with the live scene; the fade matches the canvas reveal. */
+.scene-pause {
+  grid-column: 4;
+  animation: scene-pause-in 480ms ease-out both;
+}
+
+.scene-pause[data-paused="true"]::before {
+  width: 4px;
+  height: 4px;
+  margin-right: 8px;
+  border-radius: 999px;
+  content: "";
+  background: currentColor;
+}
+
+@keyframes scene-pause-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Below 480px the one-line row would reach the centered About control. The
+   copyright keeps the bottom line, beneath the satchel artwork, and Email
+   stacks above it; Pause scene stays on the copyright's baseline. */
+@media (max-width: 480px) {
+  .site-footer {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .site-copyright {
+    grid-area: 2 / 1;
+  }
+
+  .site-copyright::after {
+    content: none;
+  }
+
+  .site-footer__email {
+    grid-area: 1 / 1;
+    justify-self: start;
+  }
+
+  .scene-pause {
+    grid-area: 2 / 3;
+  }
+}
+
+/* One dim layer holds steady while the map and paper overlays cross-fade. */
+body::after {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  content: "";
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 88%, rgba(188, 198, 190, 0.12) 0%, rgba(188, 198, 190, 0) 26%),
+    rgba(8, 10, 16, 0.64);
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+
+body[data-panel-open]::after {
+  opacity: 1;
+  transition-duration: 440ms;
 }
 
 .panel-overlay {
@@ -865,9 +997,7 @@ main:focus {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   -webkit-overflow-scrolling: touch;
-  background:
-    radial-gradient(circle at 50% 88%, rgba(188, 198, 190, 0.12) 0%, rgba(188, 198, 190, 0) 26%),
-    rgba(8, 10, 16, 0.64);
+  background: transparent;
   opacity: 0;
   pointer-events: none;
   transition: opacity 240ms ease;
@@ -1025,6 +1155,17 @@ main:focus {
 
 #panel-contact .panel-parchment__sheet .panel-body {
   font-size: clamp(17px, 1.55vw, 20px);
+}
+
+/* The address is the Contact paper's one action; the ID outranks the paper
+   link and scene-home body rules. */
+#panel-contact .panel-body a {
+  display: inline-block;
+  margin-top: 8px;
+  color: #211c16;
+  font: 500 clamp(24px, 2.4vw, 30px) / 1.2 var(--font-display);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
 }
 
 .panel-parchment__sheet .panel-body a,
@@ -1207,7 +1348,8 @@ main:focus {
     opacity: 1;
   }
 
-  .site-copyright {
+  .site-footer {
+    right: max(16px, calc(env(safe-area-inset-right) + 8px));
     left: max(16px, calc(env(safe-area-inset-left) + 8px));
   }
 
@@ -1221,6 +1363,17 @@ main:focus {
     transform: translate(-50%, 0);
     opacity: 1;
   }
+
+  /* Without hover, map labels keep a resting underline and taps tint. */
+  .scene-home .panel-estate .estate-destination span {
+    text-decoration: underline;
+    text-decoration-color: rgba(72, 53, 30, 0.35);
+    text-underline-offset: 5px;
+  }
+
+  .panel-estate .estate-destination:active {
+    background: rgba(78, 54, 26, 0.08);
+  }
 }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -1230,7 +1383,8 @@ main:focus {
   }
 
   .hero-minimal::before,
-  .bottom-bar::before {
+  .bottom-bar::before,
+  .bottom-btn--icon::before {
     display: none;
   }
 }
@@ -1249,7 +1403,9 @@ main:focus {
   .panel-card,
   .panel-surface,
   .panel-parchment__sheet,
-  .bottom-btn--icon::after {
+  .bottom-btn--icon::after,
+  .site-footer__link,
+  body::after {
     transition: none;
   }
 
@@ -1262,7 +1418,8 @@ main:focus {
   .scene-shell,
   .site-shell,
   .bottom-bar .bottom-btn,
-  .site-copyright,
+  .site-footer,
+  .scene-pause,
   .panel-parchment__sheet {
     animation: none;
   }
@@ -1380,11 +1537,32 @@ main:focus {
   }
 }
 
+/* Past the 1600px reference, the identity and footer anchor to a proportional
+   left gutter instead of drifting inward with the centered column. */
+@media (min-width: 1681px) {
+  :root {
+    --gutter: clamp(64px, 5.5vw, 160px);
+  }
+
+  .hero {
+    width: auto;
+    margin-inline: 0;
+    padding-inline: max(var(--gutter), env(safe-area-inset-left))
+      max(var(--gutter), env(safe-area-inset-right));
+  }
+
+  .site-footer {
+    right: max(var(--gutter), calc(env(safe-area-inset-right) + 8px));
+    left: max(var(--gutter), calc(env(safe-area-inset-left) + 8px));
+  }
+}
+
 /* When developer-mode is active, hide the showcase UI so only the scene and
    the HUD are visible. The body class is toggled by src/scene/dev-mode.js on
    enter/exit. !important guards against open-panel styles whose specificity
    would otherwise win. */
-body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
+body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud),
+body.dev-mode-active::after {
   display: none !important;
 }
 
@@ -1451,7 +1629,9 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
   }
 
   .hero-minimal::before,
-  .bottom-bar::before {
+  .bottom-bar::before,
+  .bottom-btn--icon::before,
+  .scene-pause[data-paused="true"]::before {
     display: none;
   }
 
@@ -1460,8 +1640,19 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
     color: HighlightText;
   }
 
-  a {
+  a,
+  .site-footer__email {
     color: LinkText;
+  }
+
+  .scene-pause {
+    border: 1px solid ButtonText;
+    color: ButtonText;
+  }
+
+  .scene-pause[data-paused="true"] {
+    background: Highlight;
+    color: HighlightText;
   }
 
   .panel-parchment,
@@ -1589,7 +1780,10 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
   font-synthesis-weight: none; text-shadow: none;
 }
 .estate-destination:hover, .estate-destination:focus-visible { transform: none; background: rgba(78,54,26,.035); }
-.estate-destination:hover span { text-decoration: underline; text-underline-offset: 5px; }
+/* Touch browsers keep :hover after a tap; the underline follows real hover only. */
+@media (hover: hover) {
+  .estate-destination:hover span { text-decoration: underline; text-underline-offset: 5px; }
+}
 .estate-destination:focus-visible { outline: 2px solid #59452b; outline-offset: 3px; }
 .panel-estate .panel-close { margin: 3% 3% 0 0; background: rgba(230,211,175,.85); }
 @media (max-width: 600px) {
@@ -1637,7 +1831,8 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
 :is(.estate-home, .scene-home) .panel-parchment__sheet .eyebrow { text-align: left; margin: 0 0 14px; }
 :is(.estate-home, .scene-home) .panel-parchment__sheet h2 { margin: 0; max-width: 13ch; font-size: clamp(34px, 4vw, 52px); }
 :is(.estate-home, .scene-home) .panel-parchment__sheet .panel-body { margin: 24px 0 0; max-width: 38ch; font: 400 17px/1.65 var(--font-body); text-shadow: none; }
-:is(.estate-home, .scene-home) .panel-parchment .panel-close { margin: 18px; }
+/* 30px clears the 24px deckled edge so Back sits wholly on the paper. */
+:is(.estate-home, .scene-home) .panel-parchment .panel-close { margin: 30px; }
 @media (max-width: 600px) {
   .estate-main { width: calc(100% - 24px); padding-top: 28px; }
   .estate-identity { margin-bottom: 24px; }
@@ -1678,7 +1873,9 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
   background: none;
   text-shadow: 0 1px rgba(255, 249, 231, .38);
 }
-.scene-home .panel-estate .estate-destination:hover span { text-decoration-color: rgba(72, 53, 30, .55); }
+@media (hover: hover) {
+  .scene-home .panel-estate .estate-destination:hover span { text-decoration-color: rgba(72, 53, 30, .55); }
+}
 .scene-home .panel-estate .panel-close {
   background: rgba(242, 230, 203, .58);
   border-color: rgba(81, 61, 35, .22);
@@ -1728,4 +1925,104 @@ body.dev-mode-active > *:not(.scene-shell):not(.dev-mode-hud) {
   .scene-home .panel-estate .estate-destination span { color: CanvasText; text-shadow: none; }
   .scene-home .panel-estate .panel-close { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
   .scene-home .panel-estate .panel-close:focus-visible { outline-color: Highlight; }
+  #panel-contact .panel-body a { color: LinkText; }
+}
+
+/* The 404 is one cotton-paper sheet, built like the category dialogs. */
+.not-found {
+  display: grid;
+  place-items: center;
+}
+
+.not-found .section {
+  padding-block: 32px;
+}
+
+.not-found .story-shell {
+  isolation: isolate;
+  width: min(100%, 560px);
+  margin-inline: auto;
+  padding: clamp(56px, 8vw, 72px) clamp(44px, 8vw, 72px);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: #211c16;
+  filter: drop-shadow(0 22px 30px rgba(3, 4, 8, 0.4)) drop-shadow(0 6px 12px rgba(3, 4, 8, 0.26));
+}
+
+.not-found .story-shell::before,
+.not-found .story-shell::after {
+  position: absolute;
+  z-index: -1;
+  content: "";
+  pointer-events: none;
+}
+
+.not-found .story-shell::before {
+  inset: 23px;
+  background: #e8ddc8 url("/images/paper-grain.webp") repeat;
+  background-size: 384px;
+}
+
+.not-found .story-shell::after {
+  inset: 0;
+  border: 24px solid transparent;
+  border-image: url("/images/paper-edge.webp") 96 / 24px / 0 stretch;
+}
+
+.not-found .story-shell .eyebrow {
+  color: #60492e;
+  opacity: 1;
+}
+
+.not-found .story-shell h1 {
+  color: #211c16;
+  font-size: clamp(34px, 5vw, 52px);
+  font-weight: 500;
+}
+
+.not-found .story-text {
+  color: #393229;
+}
+
+.not-found .back-link {
+  min-height: 44px;
+  border-color: rgba(64, 47, 30, 0.22);
+  background: rgba(88, 72, 50, 0.08);
+  color: #3b2c1e;
+}
+
+.not-found .back-link:hover {
+  border-color: rgba(64, 47, 30, 0.34);
+  background: rgba(88, 72, 50, 0.16);
+  color: #241910;
+}
+
+.not-found .story-shell :focus-visible {
+  outline-color: #59472f;
+}
+
+@media (forced-colors: active) {
+  .not-found .story-shell {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    filter: none;
+  }
+
+  .not-found .story-shell::before,
+  .not-found .story-shell::after {
+    display: none;
+  }
+
+  .not-found .story-shell :is(h1, .eyebrow, .story-text) {
+    color: CanvasText;
+  }
+
+  .not-found .back-link {
+    border-color: LinkText;
+    background: Canvas;
+    color: LinkText;
+  }
 }
