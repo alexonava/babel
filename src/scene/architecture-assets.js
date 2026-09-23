@@ -22,9 +22,11 @@ const STABLE_ARCHITECTURE_ASSET_URLS = Object.freeze(
   ),
 );
 
+// build.mjs defines the hashed manifest as a JSON string, which keeps it in
+// the scene entry chunk rather than the shared Three.js chunk.
 export const ARCHITECTURE_ASSET_URLS =
   typeof __BABEL_ARCHITECTURE_URLS__ !== "undefined"
-    ? __BABEL_ARCHITECTURE_URLS__
+    ? JSON.parse(__BABEL_ARCHITECTURE_URLS__)
     : STABLE_ARCHITECTURE_ASSET_URLS;
 
 function validateEmbeddedGlb(buffer, maxBytes) {

@@ -21,11 +21,48 @@ after(async () => {
 });
 await execFileP(process.execPath, ["build.mjs", "--dist", "--outdir", distDir], { cwd: projectRoot });
 
+// The entry itself (app.HASH.js / scene.HASH.js), not one of its chunks.
 async function findHashedScript(prefix) {
   const entries = await readdir(scriptsDir);
-  const match = entries.find((name) => name.startsWith(`${prefix}.`) && name.endsWith(".js"));
-  if (!match) throw new Error(`no built bundle for ${prefix}.*.js in ${scriptsDir}`);
-  return path.join(scriptsDir, match);
+  const pattern = new RegExp(`^${prefix}\\.[a-f0-9]{8}\\.js$`);
+  const matches = entries.filter((name) => pattern.test(name));
+  if (matches.length !== 1) throw new Error(`expected one ${prefix}.HASH.js in ${scriptsDir}`);
+  return path.join(scriptsDir, matches[0]);
+}
+
+// Chunks a module names in static import/export-from statements (downloaded
+// with it) and in dynamic import() calls (downloaded on demand).
+function chunkImports(text) {
+  const named = (pattern) => [...text.matchAll(pattern)].map((match) => match[1]);
+  return {
+    static: named(/(?:\bimport\s*(?:[\w$*{][^;()"'`]*?\bfrom\s*)?|\bexport\s*\{[^}]*\}\s*from\s*)["']\.\/([^"']+)["']/g),
+    dynamic: named(/\bimport\(\s*["']\.\/([^"']+)["']\s*\)/g),
+  };
+}
+
+// Everything a default visitor's scene load fetches: the entry named by the
+// page plus every chunk reachable through static imports. Lazily imported
+// chunks (the ?sceneDebug=1 developer tools) are listed separately.
+async function sceneScripts() {
+  const entry = path.basename(await findHashedScript("scene"));
+  const loaded = new Map();
+  const lazy = new Set();
+  const pending = [entry];
+  while (pending.length) {
+    const name = pending.pop();
+    if (loaded.has(name)) continue;
+    const text = await readFile(path.join(scriptsDir, name), "utf8");
+    loaded.set(name, text);
+    const imports = chunkImports(text);
+    pending.push(...imports.static);
+    imports.dynamic.forEach((chunk) => lazy.add(chunk));
+  }
+  for (const name of loaded.keys()) lazy.delete(name);
+  return { entry, loaded, lazy: [...lazy] };
+}
+
+async function readSceneStatic() {
+  return [...(await sceneScripts()).loaded.values()].join("\n");
 }
 
 test("UI bundle stays under the LCP budget", async () => {
@@ -36,12 +73,78 @@ test("UI bundle stays under the LCP budget", async () => {
 });
 
 test("scene bundle stays under the deferred-payload budget", async () => {
-  const file = await findHashedScript("scene");
-  const { size } = await stat(file);
-  const kb = size / 1024;
-  // Budget bumped from 800 to 810 kB when EffectComposer + OutlinePass were
-  // added for developer-mode outline highlighting (~+24 kB observed).
-  assert.ok(kb < 810, `scene bundle is ${kb.toFixed(1)} kB; budget is 810 kB`);
+  // The budget covers every byte a default visitor's scene load downloads:
+  // the entry and each chunk it imports statically. The ?sceneDebug=1
+  // developer tools (developer camera + OutlinePass) load on demand only.
+  const { loaded } = await sceneScripts();
+  assert.ok(loaded.size >= 1 && loaded.size <= 2, `scene loads ${[...loaded.keys()]}`);
+  let bytes = 0;
+  for (const name of loaded.keys()) bytes += (await stat(path.join(scriptsDir, name))).size;
+  const kb = bytes / 1024;
+  assert.ok(
+    kb < 810,
+    `scene bundle (${[...loaded.keys()].join(" + ")}) is ${kb.toFixed(1)} kB; budget is 810 kB`,
+  );
+});
+
+test("developer tools are a lazy scene chunk that default visitors never download", async () => {
+  const { entry, loaded, lazy } = await sceneScripts();
+  assert.equal(lazy.length, 1, "exactly one lazily imported scene chunk");
+  const [developerName] = lazy;
+  assert.match(developerName, /^scene\.developer-tools\.[a-f0-9]{8}\.js$/);
+  const developer = await readFile(path.join(scriptsDir, developerName), "utf8");
+  const statics = [...loaded.values()].join("\n");
+  // Markers that survive minification: the developer HUD id and an OutlinePass method.
+  for (const marker of [/dev-mode-hud/, /changeVisibilityOfSelectedObjects/, /Backquote/]) {
+    assert.match(developer, marker);
+    assert.doesNotMatch(statics, marker, `${marker} leaked into the visitor scene payload`);
+  }
+  assert.match(loaded.get(entry), new RegExp(`import\\(\\s*"\\./${developerName.replaceAll(".", "\\.")}"\\s*\\)`));
+  // The lazy chunk reuses the visitor's Three.js instead of carrying a copy.
+  const threeMarker = "Multiple instances of Three.js being imported";
+  assert.ok(!developer.includes(threeMarker), "Three.js is duplicated in the developer chunk");
+  assert.equal(statics.split(threeMarker).length - 1, 1, "Three.js ships exactly once");
+  for (const chunk of chunkImports(developer).static) {
+    assert.ok(loaded.has(chunk), `developer tools import ${chunk}, which visitors do not load`);
+  }
+  // A statically imported chunk evaluates before the entry's ordered imports
+  // (scene-entry.js), so it must carry no first-party BabelSite registration.
+  for (const [name, text] of loaded) {
+    if (name !== entry) {
+      assert.doesNotMatch(text, /BabelSite/, `${name} carries ordered scene side effects`);
+    }
+  }
+});
+
+test("the UI names exactly the scene entry's static chunks for modulepreload", async () => {
+  const app = await readFile(await findHashedScript("app"), "utf8");
+  const { entry, loaded, lazy } = await sceneScripts();
+  const named = new Set(app.match(/\/scripts\/scene\.[\w.-]+\.js/g) ?? []);
+  const statics = [...loaded.keys()].filter((name) => name !== entry);
+  assert.ok(statics.length >= 1, "the shared Three.js chunk is a static import");
+  assert.deepEqual([...named].sort(), statics.map((name) => `/scripts/${name}`).sort());
+  // The page names the entry; the developer chunk is never preloaded.
+  for (const name of [entry, ...lazy]) assert.ok(!app.includes(name), `${name} is named by the UI`);
+  assert.match(app, /modulepreload/);
+});
+
+test("every published script is named for the hash of its bytes under an immutable prefix", async () => {
+  const names = await readdir(scriptsDir);
+  const scene = names.filter((name) => name.startsWith("scene."));
+  assert.ok(scene.length >= 2, "the scene entry and its chunks are published");
+  for (const name of names) {
+    // _headers marks /scripts/app.*.js and /scripts/scene.*.js immutable.
+    assert.match(name, /^(?:app|scene)\.(?:[a-z][a-z-]*\.)?[a-f0-9]{8}\.js$/);
+    const bytes = await readFile(path.join(scriptsDir, name));
+    const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
+    assert.ok(name.endsWith(`.${hash}.js`), `${name} must fingerprint its emitted bytes`);
+  }
+  for (const name of scene) {
+    const { static: statics, dynamic } = chunkImports(await readFile(path.join(scriptsDir, name), "utf8"));
+    for (const chunk of [...statics, ...dynamic]) {
+      assert.ok(scene.includes(chunk), `${name} imports unpublished ${chunk}`);
+    }
+  }
 });
 
 test("Three.js does not leak into the UI bundle", async () => {
@@ -54,7 +157,7 @@ test("Three.js does not leak into the UI bundle", async () => {
 
 test("authored material requests stay inside the deferred scene bundle", async () => {
   const app = await readFile(await findHashedScript("app"), "utf8");
-  const scene = await readFile(await findHashedScript("scene"), "utf8");
+  const scene = await readSceneStatic();
   assert.doesNotMatch(app, /images\/materials\/stone-/);
   assert.match(scene, /images\/materials\/stone-/);
   assert.doesNotMatch(app, /images\/materials\/ground-/);
@@ -84,7 +187,7 @@ test("authored material pairs fit transfer budgets and are copied intact into di
 
 test("construction geometry requests and BRK1 decoder stay inside the deferred scene bundle", async () => {
   const app = await readFile(await findHashedScript("app"), "utf8");
-  const scene = await readFile(await findHashedScript("scene"), "utf8");
+  const scene = await readSceneStatic();
   for (const marker of [
     /images\/materials\/stone-brick\.bin/,
     /images\/materials\/stone-tread\.bin/,
@@ -165,6 +268,36 @@ test("published responsive posters use content hashes and retain intact compatib
   assert.doesNotMatch(html, /\/images\/scene-poster-(landscape|portrait)\.webp/);
 });
 
+test("the build refuses a shared scene chunk that would carry first-party modules", async () => {
+  const fixture = await mkdtemp(path.join(scratchRoot, "shared-chunk-build-"));
+  try {
+    // The sanitized static payload supplies the model files the manifest reads.
+    await cp(distDir, fixture, { recursive: true });
+    await cp(path.join(projectRoot, "build.mjs"), path.join(fixture, "build.mjs"));
+    await cp(path.join(projectRoot, "tools"), path.join(fixture, "tools"), { recursive: true });
+    await mkdir(path.join(fixture, "src"));
+    await writeFile(path.join(fixture, "src", "app.js"), "void 0;");
+    // A lazily imported module that shares a registration with the entry moves
+    // it into a chunk that would evaluate before the entry's ordered imports.
+    await writeFile(path.join(fixture, "src", "helpers.js"), "globalThis.BabelSite = { scene: {} };");
+    await writeFile(path.join(fixture, "src", "tools.js"), 'import "./helpers.js";');
+    await writeFile(
+      path.join(fixture, "src", "scene-entry.js"),
+      'import "./helpers.js";\nif (globalThis.debug) import("./tools.js");',
+    );
+    await assert.rejects(
+      execFileP(process.execPath, ["build.mjs", "--check"], { cwd: fixture }),
+      (error) => /Shared scene chunk would reorder side-effect modules: src\/helpers\.js/.test(error.stderr),
+    );
+    // Without the shared registration the same layout builds.
+    await writeFile(path.join(fixture, "src", "tools.js"), "export const tools = 1;");
+    await execFileP(process.execPath, ["build.mjs", "--check"], { cwd: fixture });
+  } finally {
+    assert.equal(path.dirname(path.resolve(fixture)), scratchRoot);
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("changing only fixture poster bytes changes only that poster URL", async () => {
   const scratchRoot = path.join(projectRoot, ".tmp-preview-review");
   await mkdir(scratchRoot, { recursive: true });
@@ -210,7 +343,15 @@ test("changing only fixture poster bytes changes only that poster URL", async ()
 
 test("architecture stays deferred and each selected model fits both tier budgets", async () => {
   const app = await readFile(await findHashedScript("app"), "utf8");
-  const scene = await readFile(await findHashedScript("scene"), "utf8");
+  const scene = await readSceneStatic();
+  // The hashed model manifest lives in the entry, so a model revision changes
+  // only the entry's URL and never the shared Three.js chunk's.
+  const { entry, loaded } = await sceneScripts();
+  const manifestUrl = /\/images\/architecture\/tower-high\.[a-f0-9]{8}\.glb/;
+  assert.match(loaded.get(entry), manifestUrl);
+  for (const [name, text] of loaded) {
+    if (name !== entry) assert.doesNotMatch(text, /\/images\/architecture\//, name);
+  }
   // The UI names the hashed models only to request them early; loading and
   // validation stay in the scene bundle.
   assert.doesNotMatch(app, /Invalid architecture GLB header/);

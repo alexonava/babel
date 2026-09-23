@@ -72,6 +72,7 @@ function createContext({
   logger = console,
   maxAnisotropy = 1,
   maxTextureSize = 0,
+  modulePreloads,
   prefetch = false,
   reducedMotion = false,
   saveData = false,
@@ -84,6 +85,7 @@ function createContext({
 } = {}) {
   const host = { hidden: false };
   const scripts = [];
+  const links = [];
   const events = [];
   const fetches = [];
   const domContentLoadedListeners = new Set();
@@ -135,6 +137,11 @@ function createContext({
     readyState: "loading",
     head: {
       appendChild(script) {
+        if (script.rel === "modulepreload") {
+          links.push(script);
+          events.push(`modulepreload:${script.href}`);
+          return;
+        }
         scriptAppendCount += 1;
         scripts.push(script);
         events.push("script");
@@ -156,6 +163,7 @@ function createContext({
       if (type === "visibilitychange") visibilityListeners.delete(handler);
     },
     createElement(tagName) {
+      if (tagName === "link") return { tagName: "LINK" };
       if (tagName === "script") {
         return createScriptElement((script) => {
           const index = scripts.indexOf(script);
@@ -211,6 +219,8 @@ function createContext({
           },
         };
       }
+      const preloadMatch = selector.match(/^link\[rel="modulepreload"\]\[href="(.+)"\]$/);
+      if (preloadMatch) return links.find((link) => link.href === preloadMatch[1]) || null;
       const dynamicScriptMatch = selector.match(/^script\[data-dynamic-src="(.+)"\]$/);
       if (dynamicScriptMatch) {
         return scripts.find((script) => script.dataset.dynamicSrc === dynamicScriptMatch[1]) || null;
@@ -228,6 +238,8 @@ function createContext({
     requestAnimationFrame: window.requestAnimationFrame,
     setTimeout() {},
   };
+  // The build names the scene entry's statically imported chunks in the UI bundle.
+  if (modulePreloads) context.__BABEL_SCENE_MODULE_PRELOADS__ = modulePreloads;
   // The build defines the hashed model manifest in the UI bundle; fetch is
   // recorded and left pending, as a download in flight.
   if (prefetch) {
@@ -267,6 +279,7 @@ function createContext({
       return visibilityListeners.size;
     },
     motionQuery,
+    links,
     scripts,
     getScriptAppendCount: () => scriptAppendCount,
     getContextLossCount: () => contextLossCount,
@@ -419,6 +432,43 @@ test("scene loader reads the inert metadata content as the deferred bundle URL",
   assert.equal(loaded, true);
   assert.equal(scripts.length, 1);
   assert.equal(scripts[0].src, "/scripts/scene.content-hash.js");
+  // The split scene entry imports its chunks, so it must load as an ES module
+  // (deferred by nature; a classic defer flag would be meaningless).
+  assert.equal(scripts[0].type, "module");
+  assert.equal(scripts[0].defer, undefined);
+});
+
+test("scene loader preloads the entry's static chunks beside the module script, once", async () => {
+  const shared = "/scripts/scene.shared.0123abcd.js";
+  const harness = createContext({
+    logger: { warn() {} },
+    modulePreloads: [shared],
+    sceneUrl: "/scripts/scene.content-hash.js",
+    scriptOutcomes: ["error", "load"],
+  });
+  await loadMainWithQuality(harness.context);
+
+  assert.equal(await harness.context.window.BabelSite.ensureSceneReady(), false);
+  // The preload starts with the entry request rather than after the entry
+  // has downloaded and been parsed.
+  assert.deepEqual(harness.events.slice(0, 2), [`modulepreload:${shared}`, "script"]);
+  assert.equal(harness.links.length, 1);
+  assert.equal(harness.links[0].rel, "modulepreload");
+  assert.equal(harness.links[0].href, shared);
+
+  // A retry appends the entry again but reuses the earlier preload link.
+  assert.equal(await harness.context.window.BabelSite.ensureSceneReady(), true);
+  assert.equal(harness.getScriptAppendCount(), 2);
+  assert.equal(harness.links.length, 1);
+  assert.equal(harness.scripts[0].type, "module");
+});
+
+test("without a build-defined chunk list the scene loader adds no preload", async () => {
+  const harness = createContext();
+  await loadMainWithQuality(harness.context);
+  assert.equal(await harness.context.window.BabelSite.ensureSceneReady(), true);
+  assert.equal(harness.links.length, 0);
+  assert.equal(harness.scripts.length, 1);
 });
 
 test("scene loader removes a failed script so a later call can retry", async () => {

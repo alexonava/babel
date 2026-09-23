@@ -16,8 +16,9 @@
 // Drag-to-look (rather than pointer lock) is intentional: cursor stays
 // available for DevTools, copying text, and clicking UI while inspecting.
 //
-// The module is bundled into scripts/scene.HASH.js, but initHomeScene only
-// attaches it for ?sceneDebug=1 sessions; otherwise it registers nothing.
+// The module is not part of the visitor scene bundle: developer-tools.js
+// imports it, and initHomeScene imports that lazily split chunk and attaches
+// it only for ?sceneDebug=1 sessions; default visitors never download it.
 // Attached, it does nothing until the activation key; inactive cost is one
 // keydown listener. The debug HUD is built on first entry, not shipped in the
 // page markup. Touch devices are silently ignored (no click-and-drag look).

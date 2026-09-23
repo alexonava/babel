@@ -3,7 +3,7 @@
 ## Third-party libraries
 
 - **Three.js** (r160) — MIT License. Copyright (c) 2010-2021 three.js authors.
-  Packaged via npm and bundled into `dist/scripts/scene.HASH.js` during the build.
+  Packaged via npm and bundled into the content-hashed `dist/scripts/scene.*.js` chunks during the build (Three.js core in `scene.shared.HASH.js`).
   Source: https://github.com/mrdoob/three.js
 
 ## Typography

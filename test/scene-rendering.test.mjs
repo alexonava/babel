@@ -303,3 +303,61 @@ test("static shadows redraw the sun map only after reported changes", () => {
   assert.equal(rendering.setStaticShadows(true), false);
   assert.equal(shadow.autoUpdate, true);
 });
+
+test("the outline pass exists only when the developer tools supply its factory", () => {
+  const added = [];
+  const rendering = createSceneRendering({
+    container: { appendChild() {} },
+    createPipeline: () => ({
+      composer: { addPass: (pass) => added.push(pass), render() {}, setPixelRatio() {}, setSize() {} },
+      setQualityProfile() {},
+    }),
+    createRenderer: () => ({ domElement: {}, shadowMap: {}, setClearColor() {} }),
+    disposeResources: () => ({}),
+    height: 600,
+    lighting: {
+      ambientColor: 0xffffff,
+      ambientIntensity: 0.22,
+      directionalColor: 0xffffff,
+      directionalIntensity: 2.9,
+      directionalPosition: { x: 21, y: 29, z: 23 },
+      fogColor: 0x222222,
+      fogFar: 150,
+      fogNear: 62,
+      hemisphereGroundColor: 0x111111,
+      hemisphereIntensity: 0.71,
+      hemisphereSkyColor: 0x888888,
+    },
+    profile: createProfile(),
+    threeExports: {},
+    width: 800,
+    world: {
+      CAMERA_FAR: 210,
+      CAMERA_FOV: 48,
+      CAMERA_NEAR: 0.5,
+      FILL_LIGHT_POSITION: [-20, 14, -18],
+      SHADOW_CAMERA_FAR: 120,
+      SHADOW_CAMERA_HALF_EXTENT: 34,
+      SHADOW_CAMERA_NEAR: 0.5,
+    },
+  });
+
+  // Visitors' rendering carries no OutlinePass constructor of its own.
+  assert.equal(rendering.ensureOutlinePass(), null);
+  assert.equal(rendering.outlinePass, null);
+  assert.deepEqual(added, []);
+
+  const outline = { hiddenEdgeColor: { set() {} }, visibleEdgeColor: { set() {} } };
+  const created = [];
+  const factory = (size, homeScene, camera) => {
+    created.push([size.x, size.y, homeScene, camera]);
+    return outline;
+  };
+  assert.equal(rendering.ensureOutlinePass(factory), outline);
+  assert.equal(rendering.ensureOutlinePass(factory), outline, "the pass is created once");
+  assert.deepEqual(created, [[800, 600, rendering.homeScene, rendering.camera]]);
+  assert.deepEqual(added, [outline]);
+  assert.equal(outline.enabled, false, "the pass waits for a developer-camera target");
+  rendering.dispose();
+  assert.equal(rendering.ensureOutlinePass(factory), null, "a disposed rendering adds no pass");
+});

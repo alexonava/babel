@@ -22,7 +22,7 @@ Open [localhost:4173](http://127.0.0.1:4173/). Development mode builds the publi
 | npm test | Run the regression suite |
 | npm run audit:ci | Check dependency advisories against the existing gate |
 
-Edit JavaScript in src, markup in index.html, styles in styles.css, and runtime artwork in images. Never hand-edit dist. The build emits content-hashed scripts/app.HASH.js, deferred scripts/scene.HASH.js, and css/styles.HASH.css.
+Edit JavaScript in src, markup in index.html, styles in styles.css, and runtime artwork in images. Never hand-edit dist. The build emits content-hashed scripts/app.HASH.js, deferred scripts/scene.HASH.js (an ES module that imports its content-hashed scripts/scene.*.js chunks; the sceneDebug developer tools load on demand), and css/styles.HASH.css.
 
 ## Find the right file
 

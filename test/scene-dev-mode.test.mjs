@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
@@ -604,10 +604,62 @@ test("scene bootstrap attaches the developer camera only for sceneDebug sessions
   // The flag comes from the quality controls already parsed from the URL.
   assert.match(source, /const qualityControls = qualityState\.controls \|\|/);
   assert.equal(source.match(/scene\.devMode\.attach\(/g)?.length, 1);
+  // The developer tools are imported on demand behind the flag. The request
+  // starts as soon as the flag is known, so the download overlaps
+  // initialization; attach waits for the chunk and runs only if the runtime is
+  // still alive. Load and attach failures are both reported.
+  assert.equal(source.match(/import\("\.\/developer-tools\.js"\)/g)?.length, 1);
   assert.match(
     source,
-    /if \(qualityControls\.debug && scene\.devMode && typeof scene\.devMode\.attach === "function"\) \{\s*scene\.devMode\.attach\(/,
+    /const developerTools = qualityControls\.debug\s*\? import\("\.\/developer-tools\.js"\)\.catch\(\(error\) => \{\s*console\.warn\("Scene developer tools failed to load\.", error\);\s*return null;\s*\}\)\s*: null;/,
   );
+  assert.ok(
+    source.indexOf("const developerTools = ") < source.indexOf("createSceneRendering("),
+    "the developer chunk is requested before the renderer is built",
+  );
+  assert.match(
+    source,
+    /developerTools\s*\?\.then\(\(tools\) => \{\s*if \(!tools \|\| runtimeDisposed \|\| typeof scene\.devMode\?\.attach !== "function"\) return;\s*scene\.devMode\.attach\(/,
+  );
+  assert.match(
+    source,
+    /\.catch\(\(error\) => console\.warn\("Scene developer tools failed to attach\.", error\)\);/,
+  );
+  assert.match(
+    source,
+    /ensureOutlinePass: \(\) => rendering\.ensureOutlinePass\(tools\.createOutlinePass\)/,
+  );
+});
+
+test("default visitors' scene modules never import the developer camera or OutlinePass", async () => {
+  const read = (...parts) => readFile(path.join(projectRoot, "src", ...parts), "utf8");
+  const entry = await read("scene-entry.js");
+  const rendering = await read("scene", "rendering.js");
+  const tools = await read("scene", "developer-tools.js");
+  assert.doesNotMatch(entry, /^import[^\n]*(?:dev-mode|developer-tools)/m);
+  assert.doesNotMatch(rendering, /OutlinePass\.js/);
+  assert.match(rendering, /createOutlinePass = null,/);
+  // developer-tools.js is the only module that brings both in.
+  assert.match(tools, /^import "\.\/dev-mode\.js";$/m);
+  assert.match(
+    tools,
+    /^import \{ OutlinePass \} from "three\/examples\/jsm\/postprocessing\/OutlinePass\.js";$/m,
+  );
+  assert.match(tools, /export function createOutlinePass\(size, homeScene, camera\) \{/);
+  const sources = [];
+  const walk = async (dir) => {
+    for (const item of await readdir(dir, { withFileTypes: true })) {
+      const file = path.join(dir, item.name);
+      if (item.isDirectory()) await walk(file);
+      else if (item.name.endsWith(".js")) sources.push(file);
+    }
+  };
+  await walk(path.join(projectRoot, "src"));
+  for (const file of sources) {
+    if (file.endsWith(`${path.sep}developer-tools.js`)) continue;
+    const text = await readFile(file, "utf8");
+    assert.doesNotMatch(text, /import[^;]*["'][^"']*(?:dev-mode|OutlinePass)\.js["']/, file);
+  }
 });
 
 test("dispose is safe when the developer camera was never attached", async () => {

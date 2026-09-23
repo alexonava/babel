@@ -33,6 +33,15 @@
     return configuredUrl || "/scripts/scene.js";
   }
 
+  // The build names the chunks the scene entry imports statically (the shared
+  // Three.js chunk). Unaided, the browser finds that import only after it has
+  // downloaded and parsed the entry, one round trip later.
+  function getSceneModulePreloads() {
+    return typeof __BABEL_SCENE_MODULE_PRELOADS__ !== "undefined"
+      ? __BABEL_SCENE_MODULE_PRELOADS__
+      : [];
+  }
+
   // src/shared/webgl-probe.js is bundled into both the UI and scene entries so
   // the pre-download gate here and the in-scene check (`scene.supportsWebGL`)
   // share one implementation. Skipping the scene-bundle download on static
@@ -139,7 +148,7 @@
     staticRecoveryInstalled = staticRecoveryCleanups.length > 0;
   }
 
-  function loadScriptOnce(src) {
+  function loadScriptOnce(src, modulePreloads = []) {
     const existing = document.querySelector(`script[data-dynamic-src="${src}"]`);
     if (existing) {
       if (existing.dataset.loaded === "true") return Promise.resolve();
@@ -151,8 +160,11 @@
 
     return new Promise((resolve, reject) => {
       const script = document.createElement("script");
+      // The scene entry is an ES module: it imports its shared Three.js chunk
+      // and, for ?sceneDebug=1 only, the developer tools. A module script is
+      // deferred by nature; error also fires when an imported chunk fails.
+      script.type = "module";
       script.src = src;
-      script.defer = true;
       script.dataset.dynamicSrc = src;
       script.addEventListener(
         "load",
@@ -170,6 +182,24 @@
         },
         { once: true },
       );
+      // babel:scene-request starts the span that covers both scene chunks'
+      // downloads and Three.js evaluation, which the scene's own
+      // babel:scene-entry mark (taken after the shared chunk ran) cannot see.
+      try {
+        window.performance?.mark?.("babel:scene-request");
+      } catch {
+        // User Timing is best-effort, as in scene/perf-marks.js.
+      }
+      // Each preloaded chunk downloads beside the entry, and the entry's import
+      // reuses it. A failed preload surfaces as the script's own error. A
+      // retry keeps the earlier link rather than adding another.
+      for (const href of modulePreloads) {
+        if (document.querySelector(`link[rel="modulepreload"][href="${href}"]`)) continue;
+        const link = document.createElement("link");
+        link.rel = "modulepreload";
+        link.href = href;
+        document.head.appendChild(link);
+      }
       document.head.appendChild(script);
     });
   }
@@ -268,7 +298,7 @@
     }
 
     try {
-      const sceneScript = loadScriptOnce(getSceneScriptUrl());
+      const sceneScript = loadScriptOnce(getSceneScriptUrl(), getSceneModulePreloads());
       // Issued after the bundle request, which keeps its head start.
       prefetchArchitectureModels(capabilities);
       await sceneScript;

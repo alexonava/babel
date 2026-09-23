@@ -141,6 +141,15 @@ function setSrgbTexture(texture) {
       requestedTier: "auto",
     };
     const qualityDebug = qualityControls.debug ? (window.BabelSite.sceneDebug = {}) : null;
+    // ?sceneDebug=1 only: request the lazily split developer chunk now so its
+    // download overlaps initialization; the developer camera attaches below.
+    // A failed load is reported here even if initialization stops early.
+    const developerTools = qualityControls.debug
+      ? import("./developer-tools.js").catch((error) => {
+          console.warn("Scene developer tools failed to load.", error);
+          return null;
+        })
+      : null;
     // Downloaded models and terrain maps keep the startup tier. Adaptive steps
     // change only per-frame cost (DPR, shadows, post, counts, leaves).
     const assetTier = qualityState.initialTier || fallbackProfile.tier;
@@ -976,22 +985,29 @@ function setSrgbTexture(texture) {
     scene.isVisitorPaused = () => visitorHold.paused;
     scene.setVisitorPaused(scene.visitorPausedPreference === true);
     // The developer camera hides all page UI, so only diagnostic sessions
-    // (?sceneDebug=1) get its activation key. dispose() is safe without attach.
-    if (qualityControls.debug && scene.devMode && typeof scene.devMode.attach === "function") {
-      scene.devMode.attach({
-        THREE,
-        camera,
-        homeScene,
-        canvas: renderer.domElement,
-        ensureOutlinePass: rendering.ensureOutlinePass,
-        // The developer camera hides the Pause scene control, so it renders
-        // through a visitor pause and restores the held frame on exit.
-        onActivityChange(active) {
-          visitorHold.suspend(active);
-          frameScheduler.setForceAnimation(active);
-        },
-      });
-    }
+    // (?sceneDebug=1) get its activation key. It and Three's OutlinePass live
+    // in a lazily imported chunk that default visitors never request. That
+    // request started above, and initHomeScene is synchronous, so attach runs
+    // after init returns, once the chunk has arrived (normally by then).
+    // dispose() is safe without attach.
+    developerTools
+      ?.then((tools) => {
+        if (!tools || runtimeDisposed || typeof scene.devMode?.attach !== "function") return;
+        scene.devMode.attach({
+          THREE,
+          camera,
+          homeScene,
+          canvas: renderer.domElement,
+          ensureOutlinePass: () => rendering.ensureOutlinePass(tools.createOutlinePass),
+          // The developer camera hides the Pause scene control, so it renders
+          // through a visitor pause and restores the held frame on exit.
+          onActivityChange(active) {
+            visitorHold.suspend(active);
+            frameScheduler.setForceAnimation(active);
+          },
+        });
+      })
+      .catch((error) => console.warn("Scene developer tools failed to attach.", error));
     scene.disposeHomeSceneRuntime = function disposeHomeSceneRuntime() {
       if (runtimeDisposed) return false;
       runtimeDisposed = true;

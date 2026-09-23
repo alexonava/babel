@@ -12,7 +12,6 @@ import {
   Vector2,
   WebGLRenderer,
 } from "three";
-import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { createPostprocessPipeline } from "./postprocess.js";
 import { disposeSceneRuntimeResources } from "./runtime.js";
 
@@ -41,7 +40,9 @@ export function createSceneRendering({
   threeExports,
   width,
   world,
-  createOutlinePass = (size, homeScene, camera) => new OutlinePass(size, homeScene, camera),
+  // The developer camera supplies OutlinePass from its lazily imported chunk
+  // (developer-tools.js), so the visitor bundle never carries the pass.
+  createOutlinePass = null,
   createPipeline = createPostprocessPipeline,
   createRenderer = (options) => new WebGLRenderer(options),
   disposeResources = disposeSceneRuntimeResources,
@@ -188,10 +189,11 @@ export function createSceneRendering({
     },
     postprocessPipeline,
     renderer,
-    ensureOutlinePass() {
+    ensureOutlinePass(create = createOutlinePass) {
       if (disposed) return null;
       if (outlinePass) return outlinePass;
-      outlinePass = createOutlinePass(
+      if (typeof create !== "function") return null;
+      outlinePass = create(
         new Vector2(devicePixels(currentWidth), devicePixels(currentHeight)),
         homeScene,
         camera,
