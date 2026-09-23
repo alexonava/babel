@@ -33,9 +33,11 @@ export const ARCHITECTURE = Object.freeze({
 });
 
 const MATERIAL_PROFILES = Object.freeze({
+  // The supplied timber lookout: a pale weathered-wood atlas with a baked
+  // tangent-space normal map read through its stored tangents at full strength.
   tower: {
-    color: 0xe5e0d6,
-    normalScale: 0.35,
+    color: 0xf2eee6,
+    normalScale: 1,
     roughness: 0.9,
     roughnessFloor: 0.9,
     saturation: 0.94,
@@ -76,12 +78,15 @@ const FILM_GRADES = Object.freeze({
   // The supplied maps contain their own warm daylight. Keep their authored
   // detail, but compress it beneath a cool moon key instead of just tinting
   // the entire asset blue. This leaves the lantern as the sole warm accent.
+  // The timber atlas is mid-dark with few bright texels, so it needs less
+  // highlight compression than the stone did, and a lighter shadow lift keeps
+  // the wood reading grey-brown rather than veiled blue-grey.
   tower: {
-    saturation: 0.73,
-    highlights: 0.42,
+    saturation: 0.75,
+    highlights: 0.3,
     tint: [0.93, 0.97, 1.0],
     shadowTint: [0.12, 0.15, 0.2],
-    lift: 0.13,
+    lift: 0.1,
   },
   tree: {
     saturation: 0.8,
@@ -346,9 +351,6 @@ function materialFor(asset, anisotropy, role) {
           float furrow = smoothstep(.5,.98,grain) * (.65+.35*sin(babelLocal.y*5.0+babelLocal.z*12.0));
           float detail = 1.0-smoothstep(.06,.18,fwidth(grain));
           diffuseColor.rgb *= 1.0 - babelFilm*(1.0-leafMask)*furrow*detail*.18;
-          ` : role === "tower" ? `
-          float timber = smoothstep(23.0, 26.0, babelLocal.y) * (1.0 - smoothstep(31.0, 34.0, babelLocal.y)) * (1.0 - smoothstep(0.11, 0.24, babelLuma));
-          diffuseColor.rgb *= mix(vec3(1.0), vec3(0.96, 0.9, 0.83), timber * babelFilm * 0.6);
           ` : ""}`,
         );
     };
@@ -525,8 +527,9 @@ export function createTowerArchitecture({
   }
 }
 
-// The supplied watchtower is fitted uniformly; its stone, timber, roof, and
-// entrance keep their authored proportions instead of becoming curved modules.
+// The supplied timber lookout is fitted uniformly; its lattice legs, ladder,
+// gallery, cabin and roof keep their authored proportions instead of becoming
+// curved modules. Its ladder and gallery opening face +Z, the access side.
 export function createCompleteTowerArchitecture({
   asset,
   groundY = 0,
@@ -582,8 +585,9 @@ export function createCompleteTowerArchitecture({
     tower.name = "complete-meshy-tower";
     tower.castShadow = tower.receiveShadow = true;
     root.add(tower);
-    // Upper plinth peaks near 1.7. A small overlap avoids a daylight gap beneath
-    // the irregular source footing without burying the entrance threshold.
+    // The four posts end at y 0 and the ladder foot about 0.21 above them. The
+    // earth footing (-0.22) sets the posts into the terrace and rests the ladder
+    // foot on it; on the retained plinth (top near 1.7) the posts overlap it slightly.
     root.position.y = groundY + footingOffset;
     root.rotation.y = yaw;
     root.userData.architecture = {

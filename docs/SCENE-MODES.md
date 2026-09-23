@@ -11,9 +11,9 @@ Append a query to the local preview, for example:
 | URL selection | Shot |
 | --- | --- |
 | view=tower&angle=1 | The watch |
-| view=tower&angle=2 | Threshold |
-| view=tower&angle=3 | Masonry study (comparison only; excluded from tour) |
-| view=tower&angle=4 | Gallery detail |
+| view=tower&angle=2 | Threshold (the ladder arriving at the gallery) |
+| view=tower&angle=3 | Masonry study (comparison only; excluded from tour; the name is kept for a lattice structure study) |
+| view=tower&angle=4 | Gallery detail (gallery floor to eave) |
 | view=tree&angle=1 | Portrait |
 | view=tree&angle=2 | Lantern study |
 | view=tree&angle=3 | Close-up |

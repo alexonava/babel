@@ -70,6 +70,32 @@ optimization, fitting, and texture preparation. Original files, hashes, and
 preparation records are preserved in the local artwork archive. No new
 Meshy generation was commissioned for this integration.
 
+## Supplied timber lookout tower
+
+The complete tower in `images/architecture/tower-{high,balanced}.glb` is a
+timber fire-lookout watchtower (lattice legs, ladder, railed gallery, half-walled
+cabin and gabled roof) from the Meshy model
+`Meshy_AI_watchtower_0923082652_texture.glb`, supplied by Alex Nava on
+2026-09-23 (29,926,940 bytes, SHA-256
+`5898eab40106aa3c7553b971d0d3caecf4664a65a1fc04358b5ef9e303dc1fc2`). It replaces
+the earlier supplied Meshy stone watchtower, whose source and delivery records
+remain in `Assets/Architecture/tower`.
+
+The source was processed locally without recoloring or new generation: scaled
+uniformly to unit height (+Y up, ladder and gallery access on +Z, no yaw baked),
+decimated in Blender 4.5 with a seam-weighted collapse to 23,714 (high) and 9,718
+(balanced) triangles while carrying the supplied UV layer, with folded UVs
+repaired, and its color and tangent-space normal maps re-baked by Cycles from the
+full-resolution source into those UVs. The maps ship as embedded WebP (2048 high,
+1024 balanced) with stored tangents and `KHR_mesh_quantization` geometry. The
+supplied roughness/metallic map was near uniform and is replaced by the site's
+0.90 roughness. The intake copy is kept in `Assets/Imports`; its extracted maps,
+preparation scripts, reports and QA renders are in `Assets/Architecture/tower-v2`
+(see its `SOURCE-AND-DELIVERY.md`); none are published. No new Meshy generation
+was commissioned.
+
+Tool: [Meshy](https://www.meshy.ai/).
+
 ## Authored ground material
 
 The ground colour and normal maps in `images/materials/ground-*.webp` were

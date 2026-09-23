@@ -1,5 +1,8 @@
 import { resolveSceneModes } from "./scene-modes.js";
-// Clear centreline opening: source high GLB, yaw 0, sill 1.64 to arch ~8.24.
+// The estate's human scale for props, trees and mud tiles: one doorway height.
+// It was measured on the earlier stone tower's arched door (sill 1.64 to arch
+// ~8.24). The timber lookout keeps the same scale: its cabin rises about 6.5
+// from gallery floor (29.9) to eave (36.4) above a railing about 3.9 high.
 export const DOOR_HEIGHT = 6.6;
 export const MUD_TILE_WIDTH = DOOR_HEIGHT * 1.6;
 export function wantsMud(search = "") {

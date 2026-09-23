@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BoxGeometry, Group, Mesh, MeshStandardMaterial, Texture } from "three";
+import { BoxGeometry, BufferAttribute, Group, Mesh, MeshStandardMaterial, Texture } from "three";
 import { createCompleteTowerArchitecture, createTreeArchitecture } from "../src/scene/architecture.js";
 
 function sourceAsset(mapped) {
@@ -91,4 +91,49 @@ test("tree preserves mapped roughness variation and texture ownership through qu
   assert.equal(tree.dispose(), false);
   assert.equal(source.disposals, 0);
   source.resources.forEach((resource) => resource.dispose());
+});
+
+test("timber lookout reads its baked normal map at full strength with one uniform wood grade", () => {
+  const scene = new Group(),
+    geometry = new BoxGeometry(1, 2, 1),
+    material = new MeshStandardMaterial({ roughness: 0.85 });
+  // The delivered GLB stores the bake's tangents as normalized int8
+  // (KHR_mesh_quantization). normalScale (1, 1) is only correct while they
+  // survive preparation: without them three.js falls back to derivative
+  // frames and the tree's inverted-green decode.
+  geometry.computeTangents();
+  const decoded = geometry.getAttribute("tangent"),
+    packed = new Int8Array(decoded.count * 4);
+  for (let i = 0; i < decoded.count; i++)
+    for (const [k, value] of [decoded.getX(i), decoded.getY(i), decoded.getZ(i), decoded.getW(i)].entries())
+      packed[i * 4 + k] = Math.round(value * 127);
+  geometry.setAttribute("tangent", new BufferAttribute(packed, 4, true));
+  const source = geometry.getAttribute("tangent");
+  material.map = new Texture();
+  material.normalMap = new Texture();
+  // GLTFLoader keeps normalScale (1, 1) for a mesh that stores its tangents.
+  material.normalScale.set(1, 1);
+  scene.add(new Mesh(geometry, material));
+  const tower = createCompleteTowerArchitecture({ asset: { scene } }),
+    mesh = tower.root.getObjectByName("complete-meshy-tower"),
+    runtime = mesh.material,
+    shader = materialShader(runtime),
+    tangent = mesh.geometry.getAttribute("tangent");
+  assert.ok(tangent, "the stored tangents must reach the runtime geometry");
+  assert.equal(tangent.itemSize, 4);
+  assert.equal(tangent.count, source.count);
+  // Uniform scale and translation leave each tangent's direction and handedness.
+  for (let i = 0; i < source.count; i++) {
+    for (const axis of ["X", "Y", "Z"])
+      assert.ok(Math.abs(tangent["get" + axis](i) - source["get" + axis](i)) < 0.02, `tangent ${i} ${axis}`);
+    assert.equal(tangent.getW(i), source.getW(i), `tangent ${i} handedness`);
+  }
+  assert.equal(tangent.getW(0), 1);
+  assert.equal(runtime.normalMap, material.normalMap);
+  assert.deepEqual(runtime.normalScale.toArray(), [1, 1]);
+  assert.equal(runtime.roughness, 0.9);
+  assert.doesNotMatch(shader.fragmentShader, /babelLocal\.y/,
+    "no height band may single out part of the all-timber tower");
+  tower.dispose();
+  for (const resource of [geometry, material, material.map, material.normalMap]) resource.dispose();
 });
