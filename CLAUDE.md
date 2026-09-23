@@ -2,7 +2,7 @@
 
 Read [AGENTS.md](AGENTS.md), [README.md](README.md), and [PLANS.md](PLANS.md). Read [STYLE.md](STYLE.md) before visual changes. [Architecture](docs/ARCHITECTURE.md) maps source ownership; [scene modes](docs/SCENE-MODES.md) documents the current camera and retained comparisons.
 
-This is the local Dreamlike estate direction for alexnava.me. Preserve existing unfinished work and the separate worktrees. JavaScript source is under src; dist is generated publish output.
+This is the source for alexnava.me. Preserve the separate worktrees. JavaScript source is under src; dist is generated publish output.
 
 - Develop locally: npm run dev
 - Build once: npm run build:dist

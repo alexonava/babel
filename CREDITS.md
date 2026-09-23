@@ -2,7 +2,7 @@
 
 ## Third-party libraries
 
-- **Three.js** (r160) — MIT License. Copyright (c) 2010-2021 three.js authors.
+- **Three.js** (r160) — MIT License. Copyright (c) 2010-2023 three.js authors.
   Packaged via npm and bundled into the content-hashed `dist/scripts/scene.*.js` chunks during the build (Three.js core in `scene.shared.HASH.js`).
   Source: https://github.com/mrdoob/three.js
 
@@ -56,8 +56,7 @@ The optional shared stair-tread geometry in `images/materials/stone-tread.bin`
 was generated for this site with Meshy 6 and prepared locally as a normalized
 BRK1 mesh with 180 triangles. It uses the existing Adobe Firefly/Meshy
 stone color and roughness maps described above; no additional generated image
-maps are shipped. Source masters remain outside the website payload. The tread
-and crown construction pilot is pending visual acceptance.
+maps are shipped. Source masters remain outside the website payload.
 
 ## Supplied Meshy architecture models
 
@@ -155,10 +154,10 @@ array in source; no binary asset, runtime fetch, or additional generation is
 used. Noted here for transparency, consistent with this file's practice of
 recording sourcing even where the license does not require it.
 
-## Navigation model renders
+## Navigation icons
 
 About uses the owner-supplied Meshy leather document case. These are
-transparent 256px WebP renders, not runtime 3D models. Original GLBs remain
+transparent 256px WebP images, not runtime 3D models. Original GLBs remain
 unchanged in the owner's Downloads folder and are excluded from the site
 payload. The earlier Contact envelope renders (from the stylized game prop
 below) are retired and no longer published.
@@ -166,23 +165,9 @@ below) are retired and no longer published.
 - Meshy_AI_Leather_Envelope_Case_0911015506_texture.glb — SHA-256 `a819c2ef4b466d5544e70ecbffdf806c1eb75b9ba3dfa2bc2ffcd88239989b60`.
 - Meshy_AI_Stylized_3D_game_prop_0911015500_texture.glb (retired Contact renders; historical) — SHA-256 `65d412aa8ac6786551ff41b3c3386b126b9d9d37ab3d707b85809a2255447aed`.
 
-Render recipe: Blender 4.5 Cycles, 96 samples with denoising, AgX, 512px
-transparent film, orthographic scale 2.3 and camera (0.35, -4, 0.7) looking at
-the origin after GLB import. Two soft area lights: (-2, -3, 4), 450 W / 4 units;
-(3, -2, 1), 110 W / 3 units. World color (0.35, 0.37, 0.42), strength 0.5.
-Downsample with Lanczos to 256px and export WebP quality 92, method 6, exact
-alpha. The published About pair (nav-about.webp and nav-about-active.webp) is
-16,310 bytes.
+The published About pair (nav-about.webp and nav-about-active.webp, 16,310 bytes) was generated with the built-in OpenAI image tool, using Blender renders of the case as references. Sources and export details are in `docs/history/NAV-ICONS-QA.md` (2.5D inventory refinement).
 
 
 ## Cotton paper panel material
 
-The About and Contact paper textures were generated with OpenAI's built-in image generation tool and prepared as local WebP material assets. Generation prompts, source provenance, export settings and validation are recorded in `PAPER-PANELS-QA.md`. They are decorative; all panel wording remains selectable HTML.
-
-
-## Illustrated navigation icons
-
-The superseded experimental About leather case and Contact stamped-envelope icons were original AI-generated 2D illustrations, using the previous supplied-model renders as object references. Generated with the built-in OpenAI image tool; prompt set, source files and export details are in `NAV-ICONS-QA.md`. The original GLBs remain unchanged and are not shipped as navigation assets.
-
-
-Current navigation uses the original supplied GLBs rendered with matching camera yaw (+15 degrees for both About and Contact), 6-degree elevation, and 80% baked brightness. See the current section of `NAV-ICONS-QA.md` for the reproducible camera/lighting/export recipe and validation. No generated illustration remains in the current navigation assets.
+The paper textures were generated with OpenAI's built-in image generation tool and prepared as local WebP material assets. Generation prompts, source provenance, export settings and validation are recorded in `docs/history/PAPER-PANELS-QA.md`. They are decorative; all panel wording remains selectable HTML.

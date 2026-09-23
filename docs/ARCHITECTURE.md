@@ -1,7 +1,5 @@
 # Current architecture
 
-This checkout holds the local Dreamlike estate direction. Its uncommitted work is part of the current source; a fresh clone or another worktree does not reproduce it automatically.
-
 ## Page and startup
 
 - [index.html](../index.html) owns identity, controls, fallback text, and dialog markup. [styles.css](../styles.css) owns type, spacing, responsive layout, and paper surfaces.
@@ -37,7 +35,7 @@ runtime.js renders only frames a visitor can see. Before the reveal, the transpa
 
 rendering.js also checks the underlying WebGL context before entering the composer. This covers physical context loss before the browser's queued loss event reaches Three.js, while preserving the existing restoration and disposal lifecycle.
 
-The composer's targets and passes follow the canvas in device pixels. The pixel ratio is capped at 1.5 on high, 1.25 on balanced and on every touch-primary device, and 1 on low. The renderer's own antialiasing is off because it would reach only the final full-screen pass. On WebGL2 with float color buffers, high draws the scene into one four-sample target, which Three resolves once per frame, and copies it into the composer's read buffer. Bloom and grading then draw into single-sample ping-pong targets, which carry no depth buffer while the scene has its own. A tier change reallocates the scene target. Star sprites and solar prominences are sized in CSS pixels, bloom keeps its CSS-pixel resolution, and the comparison views' ink contour samples one CSS pixel apart, so they keep the look reviewed at DPR 1.
+The composer's targets and passes follow the canvas in device pixels. The pixel ratio is capped at 1.5 on high, 1.25 on balanced and on every touch-primary device, and 1 on low. The renderer's own antialiasing is off because it would reach only the final full-screen pass. On WebGL2 with float color buffers, high draws the scene into one four-sample target, which Three resolves once per frame, and copies it into the composer's read buffer. Bloom and grading then draw into single-sample ping-pong targets, which carry no depth buffer while the scene has its own. A tier change reallocates the scene target. Star sprites and solar prominences are sized in CSS pixels, bloom keeps its CSS-pixel resolution, and the ink contour samples one CSS pixel apart, so they keep the look reviewed at DPR 1.
 
 ### Start-up cost
 
@@ -82,8 +80,6 @@ The complete tower models are the timber lookout prepared in `Assets/Architectur
 [build.mjs](../build.mjs) assembles source into ignored dist output, including separate hashed UI/scene scripts, hashed CSS, posters, and artwork. The UI is one IIFE; the scene is built as ESM with esbuild code splitting, and build.mjs renames each scene chunk after the hash of its final bytes, dependencies first, so a chunk change always yields a new entry URL. The scene builds before the UI, which names the shared chunk for its preload, so a shared-chunk change (a Three.js update) also yields a new UI bundle URL. The build log lists the files a default visitor's scene load downloads and, separately, the chunk loaded on demand. Edit source files, then build. Keep the internal AGENTS.md and historical docs out of the public payload; public discovery files are separate. [OPERATIONS.md](../OPERATIONS.md) remains the release authority.
 
 [tools/build-output.mjs](../tools/build-output.mjs) stages output safely. [tools/watch.mjs](../tools/watch.mjs) watches published inputs and serializes/coalesces rebuilds. [tools/dev.mjs](../tools/dev.mjs) combines that watcher with an owned local Wrangler process through [tools/owned-process.mjs](../tools/owned-process.mjs). Failed builds retain the last successful output; watch mode retains earlier hashed assets for pages already open. Refresh the browser after a successful rebuild. [tools/og-card.html](../tools/og-card.html) is the unpublished 1200×630 source for the /og.png share card; its header comment holds the headless-screenshot and palette-encode recipe (see [OPERATIONS](../OPERATIONS.md)).
-
-The September 21 candidate passes 391 tests, compilation/build and a zero-vulnerability dependency audit. Its active scene/UI bundles are 819,355 / 19,570 bytes, within existing budgets. All 32 desktop/phone visual pairs passed; an additional 14 motion-endpoint and four landscape views also passed. Authored models/maps remain unchanged, and both responsive posters are refreshed. The [validation report](VALIDATION-2026-09-21.md) binds the current source, build and review evidence. The [performance investigation](VALIDATION-2026-09-21.md#lighthouse-investigation) separates passing live readiness/render checks from the Lighthouse performance/TBT gates that still fail; no release-pass claim follows from local validation.
 
 ## History
 

@@ -4,14 +4,14 @@ Thanks for taking an interest in `babel`.
 
 ## Reporting defects
 
-- Use [GitHub Issues](https://github.com/alxnva/babel/issues) for bugs, UX regressions, broken links, and feature requests.
+- Use [GitHub Issues](https://github.com/alexonava/babel/issues) for bugs, UX regressions, broken links, and feature requests.
 - Include the page or interaction you exercised, what you expected, what happened instead, and any screenshots or console errors that help reproduce the problem.
 
 ## Proposing changes
 
 1. Create a branch from `main`.
 2. Make your change in source files only.
-3. Run `npm install` if needed, then `npm run verify` and `npm run build:dist`.
+3. Run `npm install` if needed, then `npm run verify`, `npm test`, and `npm run build:dist`.
 4. Open a pull request describing the change, the user-facing impact, and any testing you performed.
 
 ## Source of truth
