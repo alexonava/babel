@@ -1,8 +1,8 @@
 # alexnava.me
 
-This is the editable local Dreamlike estate direction for Alex Nava's website. The homepage opens on a cinematic tower/tree scene; About opens the illustrated estate menu and its Profile, Experience, and Contact dialogs. Readable text and the static poster remain available when enhancement cannot run.
+This is the source for Alex Nava's website. The homepage opens on a cinematic tower/tree scene; About opens the illustrated estate menu and its Profile, Experience, and Contact dialogs. Readable text and the static poster remain available when enhancement cannot run.
 
-This worktree contains unfinished local changes. Another checkout or a fresh GitHub clone is not a substitute for those files. The project workspace calls this folder **Site**; its physical location remains Worktrees/babel-dreamlike-estate.
+The project workspace calls this folder **Site**; its physical location remains Worktrees/babel-dreamlike-estate.
 
 ## Work locally
 
@@ -31,7 +31,7 @@ Edit JavaScript in src, markup in index.html, styles in styles.css, and runtime 
 - [STYLE.md](STYLE.md): accepted visual, motion, and accessibility constraints
 - [AGENTS.md](AGENTS.md): internal contributor instructions
 - [OPERATIONS.md](OPERATIONS.md): unchanged release gates, delivery policy, smoke checks, and rollback
-- [PLANS.md](PLANS.md): current work context and unresolved release evidence
+- [PLANS.md](PLANS.md): current work context
 - [Historical documentation](docs/history/README.md): prior briefs, QA, and exact pre-cleanup documentation
 
 The default camera opens on The watch and tours seven directed shots with a 20-second dwell and an occasional five-second wildcard, skipping Masonry study. Visitors can stop it with the footer's Pause scene button. Add view=tower&angle=1&tour=0 to the preview URL for a held review composition, or tour=5 for the faster review cadence. Full framing rules and legacy comparisons are in the scene-mode guide.
@@ -42,8 +42,6 @@ The current material pass keeps the supplied tower/tree silhouettes, UVs and map
 
 Run verify, tests, and build after implementation changes. Rendering and accessibility changes also need appropriate browser review. Historical screenshots and measurements are retained in the ignored .tmp-preview-review folder; their old results do not prove the current revision is release-ready.
 
-The September 21 refinement passes 391 tests, compilation, build and the dependency audit (zero vulnerabilities). All 32 matched desktop/phone view pairs passed review; 14 motion-endpoint and four landscape checks also passed. Landscape and portrait posters are refreshed. The active scene/UI bundles are 819,355 / 19,570 bytes, within existing limits. See the [validation report](docs/VALIDATION-2026-09-21.md) for the completed evidence and remaining qualifications.
-
-Current local three-run Lighthouse medians of the live scene are performance 71 and TBT 2,190.5 ms, still outside the existing 80 / 200 ms release gates. Accessibility, best practices and SEO are 100; LCP is 2,117.5 ms and CLS is zero. CI Lighthouse runs without a GPU, so it audits only the static poster path; OPERATIONS explains how the live scene is measured. Live readiness/render checks remain within the agreed threshold; the separate TBT increase is documented in the [performance investigation](docs/VALIDATION-2026-09-21.md#lighthouse-investigation). Keep the thresholds in OPERATIONS unchanged. Local work does not publish the site; production remains the approved protected-PR workflow to main.
+CI Lighthouse runs without a GPU, so it audits only the static poster path; OPERATIONS explains how the live scene is measured. Keep the thresholds in OPERATIONS unchanged. Local work does not publish the site; production remains the approved protected-PR workflow to main.
 
 [Repository](https://github.com/alexonava/babel) · [Live website](https://alexnava.me/) · [Credits](CREDITS.md) · [Security](SECURITY.md) · [MIT license](LICENSE)

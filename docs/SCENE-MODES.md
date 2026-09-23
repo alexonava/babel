@@ -1,6 +1,6 @@
 # Scene modes and camera review
 
-The normal local experience opens on **The watch** (tower, angle 1), with the 20-second tour. The seven tour shots comprise three tower views and four tree views. Masonry study is excluded from the tour; its explicit comparison URL remains available. These controls are defined by source, not by the numeric orbit guidance in older notes.
+The normal experience opens on **The watch** (tower, angle 1), with the 20-second tour. The seven tour shots comprise three tower views and four tree views. Masonry study is excluded from the tour; its explicit comparison URL remains available. These controls are defined by source, not by the numeric orbit guidance in older notes.
 
 ## Directed views
 

@@ -4,7 +4,7 @@ These instructions apply to agents working in this checkout.
 
 ## Identity and source
 
-- This is the selected local Dreamlike estate direction for alexnava.me, on the existing codex/dreamlike-estate worktree. Its unfinished edits are part of the current work.
+- This is the source for alexnava.me.
 - Stack: HTML, CSS, vanilla JavaScript, Three.js r160, and esbuild; npm on Node.js 22+.
 - Edit readable source in src, index.html, styles.css, images, and fonts. dist is generated, ignored publish output; never hand-edit or commit it.
 - The build keeps the UI separate from the deferred `scripts/scene.HASH.js` bundle; published CSS and script filenames are content-hashed.

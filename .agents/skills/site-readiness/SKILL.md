@@ -32,7 +32,7 @@ npm run audit:ci
 npm run build:dist
 ```
 
-For rendered work, start `npm run preview`, verify the home page and both About and Contact panels at desktop and mobile widths, and check for console errors, overlays, missing assets, broken focus behavior, and clipping. Use the in-app Browser when available. Otherwise, use `Invoke-WebRequest` or `curl` against the local preview for HTTP and asset smoke checks, and report browser-only visual and interaction checks as unverified; do not install Playwright just for a routine check.
+For rendered work, start `npm run preview`, verify the home page and every panel at desktop and mobile widths, and check for console errors, overlays, missing assets, broken focus behavior, and clipping. Use the in-app Browser when available. Otherwise, use `Invoke-WebRequest` or `curl` against the local preview for HTTP and asset smoke checks, and report browser-only visual and interaction checks as unverified; do not install Playwright just for a routine check.
 
 ## Preserve release boundaries
 
