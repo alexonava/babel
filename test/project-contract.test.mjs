@@ -83,6 +83,106 @@ test("public agent-discovery files are built from sanitized source artifacts", a
   assert.match(markdownHome, /^---[\s\S]*?title: Alex Nava/m);
 });
 
+// RFC 9309 groups: consecutive user-agent lines share the rules that follow them.
+function parseRobotsGroups(text) {
+  const groups = [];
+  const directives = [];
+  let current = null;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    const separator = line.indexOf(":");
+    assert.ok(separator > 0, `robots.txt line has no directive: ${rawLine}`);
+    const field = line.slice(0, separator).trim().toLowerCase();
+    const value = line.slice(separator + 1).trim();
+    directives.push(field);
+    if (field === "user-agent") {
+      if (!current || current.rules.length > 0) {
+        current = { agents: [], rules: [] };
+        groups.push(current);
+      }
+      current.agents.push(value.toLowerCase());
+    } else if (field === "allow" || field === "disallow") {
+      assert.ok(current, `robots.txt rule appears before any user-agent: ${rawLine}`);
+      current.rules.push(`${field}: ${value}`);
+    }
+  }
+  return { groups, directives };
+}
+
+test("robots.txt declines AI training but keeps search and citation crawlers welcome", async () => {
+  const robots = await readProjectFile("robots.txt");
+  const operations = await readProjectFile("OPERATIONS.md");
+  const { groups, directives } = parseRobotsGroups(robots);
+
+  // Lighthouse's robots-txt audit (SEO must stay at 1) fails on unknown directives.
+  for (const field of directives) {
+    assert.ok(
+      ["user-agent", "allow", "disallow", "sitemap"].includes(field),
+      `robots.txt uses a directive Lighthouse rejects: ${field}`,
+    );
+  }
+  assert.match(robots, /^Sitemap: https:\/\/alexnava\.me\/sitemap\.xml$/m);
+
+  const rulesFor = (token) =>
+    groups.filter((group) => group.agents.includes(token.toLowerCase())).flatMap((g) => g.rules);
+  assert.deepEqual(rulesFor("*"), ["allow: /"]);
+
+  // Exactly the training crawlers blocked in AI Crawl Control, plus Apple's opt-out token.
+  const trainingCrawlers = [
+    "Amazonbot",
+    "Applebot-Extended",
+    "Bytespider",
+    "CCBot",
+    "ClaudeBot",
+    "FacebookBot",
+    "GPTBot",
+    "meta-externalagent",
+  ];
+  const named = [...new Set(groups.flatMap((group) => group.agents))].filter((a) => a !== "*");
+  assert.deepEqual(
+    named.sort(),
+    trainingCrawlers.map((token) => token.toLowerCase()).sort(),
+    "robots.txt names exactly the training crawlers recorded in OPERATIONS item 6",
+  );
+  for (const token of trainingCrawlers) {
+    assert.deepEqual(rulesFor(token), ["disallow: /"], `${token} must be fully disallowed`);
+  }
+
+  // Search engines, AI search, archives, link previews, and assistants fetching a page for a
+  // person fall through to *, including the siblings of each blocked training crawler.
+  for (const token of [
+    "Googlebot",
+    "Google-Extended", // also governs Gemini grounding and citations
+    "Bingbot",
+    "Applebot",
+    "DuckDuckBot",
+    "YandexBot",
+    "Baiduspider",
+    "PetalBot",
+    "OAI-SearchBot",
+    "ChatGPT-User",
+    "Claude-SearchBot",
+    "Claude-User",
+    "PerplexityBot",
+    "Perplexity-User",
+    "DuckAssistBot",
+    "MistralAI-User",
+    "Amzn-SearchBot",
+    "Amzn-User",
+    "meta-webindexer",
+    "meta-externalfetcher",
+    "facebookexternalhit",
+    "archive.org_bot",
+    "Arquivo-web-crawler",
+  ]) {
+    assert.deepEqual(rulesFor(token), [], `${token} must not be named in robots.txt`);
+  }
+
+  // The decision is recorded next to the Cloudflare setting that enforces it.
+  assert.match(operations, /AI model training is declined/);
+});
+
 test("scene posters are committed, copied into dist, and use stable-asset caching", async () => {
   const buildScript = await readProjectFile("build.mjs");
   const headers = await readProjectFile("_headers");
@@ -117,11 +217,11 @@ test("Cloudflare Pages headers preserve the static security contract", async () 
     /Content-Security-Policy:\s*default-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; img-src 'self' data: blob:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self' blob:/,
   );
 
-  const hsts = headers.match(
-    /Strict-Transport-Security:\s*max-age=(\d+); includeSubDomains; preload/,
-  );
-  assert.ok(hsts, "HSTS must include subdomains and preload");
+  const hsts = headers.match(/Strict-Transport-Security:\s*max-age=(\d+); includeSubDomains\r?$/m);
+  assert.ok(hsts, "HSTS must include subdomains");
   assert.ok(Number(hsts[1]) >= 31_536_000, "HSTS max-age must be at least 12 months");
+  // Sending preload counts as a request to join the browser preload list (declined in OPERATIONS).
+  assert.doesNotMatch(headers, /Strict-Transport-Security:[^\r\n]*preload/i);
   assert.doesNotMatch(headers, /Access-Control-Allow-Origin:\s*\*/);
   assert.doesNotMatch(headers, /static\.cloudflareinsights\.com/);
   assert.doesNotMatch(indexHtml, /static\.cloudflareinsights\.com/);
@@ -474,7 +574,7 @@ test("static headers separate immutable fingerprints from revalidated stable ass
 
   assert.match(
     headers,
-    /Strict-Transport-Security:\s*max-age=31536000; includeSubDomains; preload/,
+    /Strict-Transport-Security:\s*max-age=31536000; includeSubDomains\r?$/m,
   );
   for (const directive of ["form-action 'none'", "frame-src 'none'", "worker-src 'none'"]) {
     assert.match(headers, new RegExp(directive.replace(" ", "\\s+")));
