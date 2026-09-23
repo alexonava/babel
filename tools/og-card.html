@@ -7,8 +7,8 @@
       --force-device-scale-factor=1 --window-size=1200,630 --virtual-time-budget=3000
       --user-data-dir=<scratch>\edge-profile --screenshot=<scratch>\og-raw.png
       file:///<repo>/tools/og-card.html
-    magick <scratch>\og-raw.png -alpha off -kmeans 256 -unique-colors <scratch>\og-pal.png
-    magick <scratch>\og-raw.png -alpha off -dither FloydSteinberg -define dither:diffusion-amount=80%
+    magick <scratch>\og-raw.png -alpha off -kmeans 224 -unique-colors <scratch>\og-pal.png
+    magick <scratch>\og-raw.png -alpha off -dither FloydSteinberg -define dither:diffusion-amount=55%
       -remap <scratch>\og-pal.png -strip -define png:compression-level=9 PNG8:og.png
   Keep og.png opaque, exactly 1200x630 and under 300 KB, then re-scrape it with LinkedIn Post Inspector.
 -->
