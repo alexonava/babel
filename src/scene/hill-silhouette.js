@@ -63,6 +63,12 @@ export const MOUNTAINS = Object.freeze({
   jag: Object.freeze({ octaves: Object.freeze([131, 241]), relief: Object.freeze([0.28, 0.16]) }),
   // Stepped aerial perspective, near to far: each range's share of the sky's
   // luma behind it, and how far its hue leans from night rock toward the sky.
+  // Painted form: each peak's sides turn toward or away from the moon along the
+  // crest's own slope (smoothed over `smooth` columns each way and scaled by
+  // `slope`), faces lean toward the viewer by `lean`, and a soft spur field
+  // (`spurs` cycles around the ring) shades gullies by up to `fold`. `soft`
+  // feathers the lit/shadow divide; far ranges keep `distance` less form.
+  form: Object.freeze({ smooth: 12, slope: 1.4, lean: 0.35, spurs: Object.freeze([61, 149]), fold: 0.12, soft: 0.45, distance: 0.2 }),
   tones: Object.freeze({ luma: Object.freeze([0.4, 0.5, 0.6, 0.7, 0.8]), sky: Object.freeze([0.1, 0.24, 0.38, 0.52, 0.66]) }),
   background: Object.freeze([
     [0, 3.1],
@@ -248,10 +254,45 @@ export function mountainCrests() {
 }
 
 const KEY = new Vector3(32, 28, 14).normalize();
+const smoothstep = (a, b, x) => {
+  const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+};
+
+// Per range and column, the baked light (0.3-1) from `light` (the key, or the
+// visible orb in the scene): a surface normal built
+// from the crest's slope along the ring (so each peak has a lit and a shadow
+// side, divided down from its summit), a lean toward the viewer, and soft spur
+// and gully folds. Feathered, and flatter with distance.
+export function mountainLight(crests = mountainCrests(), light = KEY) {
+  const { columns, form, radii } = MOUNTAINS,
+    step = (Math.PI * 2) / columns,
+    rad = Math.PI / 180;
+  return crests.map((crest, range) => {
+    const far = range / (radii.length - 1),
+      spurs = normalized(Array.from({ length: columns }, (_, j) => ridged(j / columns, 6007 + 13 * range, form.spurs)));
+    return crest.map((_, j) => {
+      const at = (k) => Math.tan(crest[(j + k + columns) % columns] * rad);
+      const slope = ((at(form.smooth) - at(-form.smooth)) / (2 * form.smooth * step)) * form.slope,
+        azimuth = j * step,
+        tangent = [-Math.sin(azimuth), 0, Math.cos(azimuth)],
+        inward = [-Math.cos(azimuth), 0, -Math.sin(azimuth)],
+        spur = spurs[j] * 2 - 1,
+        lean = form.lean * (1 + 0.35 * spur);
+      // Height falls along +tangent where the crest descends, so the normal
+      // tips that way; it also tips toward the viewer (inward).
+      const n = [-slope * tangent[0] + lean * inward[0], 1, -slope * tangent[2] + lean * inward[2]],
+        length = Math.hypot(...n),
+        lit = (n[0] * light.x + n[1] * light.y + n[2] * light.z) / length;
+      const shaded = smoothstep(-form.soft, form.soft, lit - 0.35) * (1 - form.fold * Math.max(0, -spur));
+      return 0.3 + 0.7 * (0.65 + (shaded - 0.65) * (1 - form.distance * far));
+    });
+  });
+}
 // Four ranges x four rows x one ring of columns; columns wrap, so there is no seam
 // column at azimuth 0. Triangles face the centre. aTerrain bakes per vertex: degrees
 // below this column's crest (ink and rim), range, moonlight from the key and snow.
-export function createMountainGeometry(crests = mountainCrests()) {
+export function createMountainGeometry(crests = mountainCrests(), light = KEY) {
   const { radii, rows, columns, foot } = MOUNTAINS,
     perRange = rows.length * columns;
   const positions = new Float32Array(radii.length * perRange * 3),
@@ -290,18 +331,18 @@ export function createMountainGeometry(crests = mountainCrests()) {
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new BufferAttribute(positions, 3));
   geometry.setIndex(new BufferAttribute(index, 1));
-  geometry.computeVertexNormals();
-  const normal = geometry.attributes.normal;
-  for (let v = 0; v < normal.count; v++) {
-    const ny = normal.getY(v),
-      lit = normal.getX(v) * KEY.x + ny * KEY.y + normal.getZ(v) * KEY.z,
-      row = Math.floor((v % perRange) / columns);
-    terrain[v * 4 + 2] = 0.24 + 0.62 * Math.max(lit, 0) + 0.14 * ny;
+  // Moonlight from each column's painted form (see MOUNTAINS.form): the
+  // silhouette stays exactly the crest; only the shading turns.
+  const shade = mountainLight(crests, light);
+  const vertices = positions.length / 3;
+  for (let v = 0; v < vertices; v++) {
+    const range = Math.floor(v / perRange),
+      j = v % columns;
+    terrain[v * 4 + 2] = shade[range][j];
     // Snow: the column's crest elevation, from which the fragment sizes a cap
     // that reaches further down taller peaks. The near range stays bare.
     terrain[v * 4 + 3] = terrain[v * 4 + 1] > 0 ? crestOf[v] : 0;
   }
-  geometry.deleteAttribute("normal");
   geometry.setAttribute("aTerrain", new BufferAttribute(terrain, 4));
   geometry.computeBoundingSphere();
   return geometry;
@@ -365,7 +406,9 @@ float k=vT.y/${glslFloat(MOUNTAINS.radii.length - 1)}, px=vT.x/max(fwidth(vT.x),
 float n=mn(vL.xz*(80./r)+vec2(vL.y*.2+vT.y*17.,vL.y*-.13));
 float tL=${steps("luma")}, tS=${steps("sky")};
 vec3 c=mix(mix(vec3(.1,.11,.15),vec3(.15,.16,.21),k),s,tS);
-c*=tL*dot(s,W)*mix(.84,1.1,vT.z)/max(dot(c,W),1e-4);
+c*=tL*dot(s,W)*mix(.74,1.16,vT.z)/max(dot(c,W),1e-4);
+c*=1.+.07*(1.-.6*k)*(1.-smoothstep(0.,3.,vT.x));
+c=max(c+(vT.z-.6)*vec3(.12,.14,.19)*(1.-.35*k),c*.5);
 c=mix(c,s*(tL+.1),(.2+.25*k)*(1.-smoothstep(.004,.03,vL.y/r)));
 c*=min(1.,.92*dot(s,W)/max(dot(c,W),1e-4));
 float cap=clamp((vT.w-${SNOW.line.toFixed(2)})*${SNOW.depth.toFixed(2)},0.,${SNOW.max.toFixed(2)});
@@ -418,7 +461,8 @@ export function createHillSilhouette({
     setFilmTreatment(active) {
       if (disposed) return false;
       if (active) {
-        mountainGeometry ||= createMountainGeometry();
+        // The form is lit from the visible orb, so peaks cross-light toward it.
+    mountainGeometry ||= createMountainGeometry(mountainCrests(), new Vector3(...sunPosition).normalize());
         mountainShading ||= mountainMaterial({ skyRadius, shellOpacity, sunPosition });
       }
       mesh.geometry = active ? mountainGeometry : geometry;

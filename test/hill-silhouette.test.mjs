@@ -14,6 +14,7 @@ import {
   mountainCrests,
   SNOW,
   snowReach,
+  mountainLight,
 } from "../src/scene/hill-silhouette.js";
 import { FILM_SKY_GLSL } from "../src/scene/estate-sky.js";
 import { createStarfield } from "../src/scene/starfield.js";
@@ -378,4 +379,18 @@ test("stars draw after the sky and before the mountains, which stay inside the f
   // The ground is fully hazed before the near range rises out of it.
   assert.ok(HORIZON_HAZE.far <= MOUNTAINS.radii[0] * MOUNTAINS.rows[2]);
   geometry.dispose();
+});
+
+test("each peak has a lit flank toward the orb and a shadow flank, softer with distance", () => {
+  const sun = { x: -85, y: 55, z: -14 },
+    length = Math.hypot(sun.x, sun.y, sun.z),
+    light = mountainLight(crests, { x: sun.x / length, y: sun.y / length, z: sun.z / length });
+  const n = MOUNTAINS.columns,
+    at = (range, degrees) => light[range][Math.round((degrees / 360) * n) % n];
+  for (const row of light) for (const value of row) assert.ok(value >= 0.3 && value <= 1);
+  // The Watch massif's summit (150 degrees, far range): the flank toward the
+  // orb (about 189 degrees) is lit, the other in shadow.
+  assert.ok(at(4, 154) - at(4, 147) > 0.15, `${at(4, 147)} -> ${at(4, 154)}`);
+  const spread = (row) => Math.max(...row) - Math.min(...row);
+  assert.ok(spread(light[4]) < spread(light[0]), "distance flattens form");
 });
