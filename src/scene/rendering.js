@@ -98,8 +98,9 @@ export function createSceneRendering({
 
   const handleContextLost = (event) => {
     event?.preventDefault?.();
-    // The kept crossfade frame goes with the context.
+    // The kept crossfade frame and the linked programs go with the context.
     postprocessPipeline.cancelTransition?.();
+    postprocessPipeline.invalidatePrograms?.();
     onContextLost?.(event);
   };
   const handleContextRestored = (event) => {

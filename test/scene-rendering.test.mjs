@@ -369,6 +369,7 @@ test("a lost context ends a tour crossfade before the scene hears of it", () => 
     container: { appendChild() {} },
     createPipeline: () => ({
       cancelTransition: () => calls.push("cancel"),
+      invalidatePrograms: () => calls.push("invalidate"),
       composer: { addPass() {}, render() {}, setPixelRatio() {}, setSize() {} },
       setQualityProfile() {},
     }),
@@ -411,7 +412,7 @@ test("a lost context ends a tour crossfade before the scene hears of it", () => 
   });
 
   listeners.webglcontextlost({ preventDefault: () => calls.push("prevented") });
-  assert.deepEqual(calls, ["prevented", "cancel", "lost"]);
+  assert.deepEqual(calls, ["prevented", "cancel", "invalidate", "lost"]);
   rendering.dispose();
   assert.equal(listeners.webglcontextlost, undefined);
 });

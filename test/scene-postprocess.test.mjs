@@ -604,6 +604,10 @@ test("compile links the crossfade programs once for their real targets; dispose 
   ]);
   assert.equal(renderer.getRenderTarget(), previous, "the previous target is restored");
   renderer.setRenderTarget(null);
+  // A lost context drops the programs: the next warm-up links them again.
+  pipeline.invalidatePrograms();
+  pipeline.compile();
+  assert.equal(draws.filter(([kind]) => kind === "compile").length, 4);
 
   const kept = capture()[1][1];
   let disposals = 0;
