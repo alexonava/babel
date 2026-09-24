@@ -5,17 +5,13 @@ import {
   Mesh,
   MeshLambertMaterial,
 } from "three";
+import { DEPTH_LAYER, stampDepthLayer } from "./depth-layers.js";
+import { ESTATE, estatePathDistance } from "./estate-layout.js";
+import { rockKeepouts } from "./rock-scatter.js";
 
 // The same winding approach stays clear in every camera and quality tier.
 // Its centerline joins the tower's entrance side to the tree's lantern clearing.
-export function estatePathDistance(x, z) {
-  const length = Math.hypot(55.1, 36.1),
-    dx = 55.1 / length,
-    dz = 36.1 / length;
-  const along = Math.max(0, Math.min(length, x * dx + z * dz));
-  const bend = Math.sin((along / length) * Math.PI * 2) * 2.4;
-  return Math.hypot(x - dx * along + dz * bend, z - dz * along - dx * bend);
-}
+export { estatePathDistance };
 
 export function createEstateGroundDetail(groundHeight) {
   let seed = 73421;
@@ -24,13 +20,21 @@ export function createEstateGroundDetail(groundHeight) {
     colors = [],
     indices = [];
   let count = 0;
+  // Growth never pokes through a scattered rock or its pebble (rock-scatter.js).
+  const rocks = rockKeepouts();
   for (let attempt = 0; attempt < 2400 && count < 360; attempt++) {
     const tree = attempt % 2,
-      angle = random() * Math.PI * 2;
+      angle = random() * Math.PI * 2,
+      anchor = tree ? ESTATE.tree : ESTATE.tower;
     const radius = (tree ? 5.9 : 10.5) + Math.pow(random(), 1.7) * (tree ? 10 : 17);
-    const x = (tree ? 55.1 : 0) + Math.cos(angle) * radius;
-    const z = (tree ? 36.1 : 0) + Math.sin(angle) * radius;
-    if (estatePathDistance(x, z) < 2.1 || Math.sin(x * 0.6 + Math.cos(z * 0.37)) < -0.35) continue;
+    const x = anchor.x + Math.cos(angle) * radius;
+    const z = anchor.z + Math.sin(angle) * radius;
+    if (
+      estatePathDistance(x, z) < ESTATE.path.clear ||
+      Math.sin(x * 0.6 + Math.cos(z * 0.37)) < -0.35 ||
+      rocks.some((rock) => Math.hypot(x - rock.x, z - rock.z) < rock.radius)
+    )
+      continue;
     const size = 0.13 + random() * 0.3,
       tone = random();
     for (let blade = 0; blade < 3; blade++) {
@@ -72,7 +76,11 @@ export function createEstateGroundDetail(groundHeight) {
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
-  const material = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide });
+  // Film-only growth dissolves with the ground it stands on.
+  const material = stampDepthLayer(
+    new MeshLambertMaterial({ vertexColors: true, side: DoubleSide }),
+    DEPTH_LAYER.ground,
+  );
   const mesh = new Mesh(geometry, material);
   mesh.name = "estate-ground-growth";
   mesh.castShadow = mesh.receiveShadow = false;
@@ -84,7 +92,7 @@ export function createEstateGroundDetail(groundHeight) {
     disposed = false;
   function apply() {
     mesh.visible = active && tier !== "low";
-    geometry.setDrawRange(0, Math.min(count, tier === "balanced" ? 210 : 360) * 18);
+    geometry.setDrawRange(0, Math.min(count, tier === "balanced" ? 300 : 360) * 18);
   }
   return {
     mesh,

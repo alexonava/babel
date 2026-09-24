@@ -1,8 +1,66 @@
 const DEFAULT_FRAME_SECONDS = 1 / 60;
+const REFRESH_RATES = [30, 48, 50, 60, 72, 75, 90, 100, 120, 144, 165, 180, 240, 360];
 
 function clampFrameSeconds(value, maximum) {
   if (!Number.isFinite(value) || value < 0) return 0;
   return Math.min(maximum, value);
+}
+
+/**
+ * Display frames per rendered frame, so renders land on every nth vsync near
+ * baseRate. "floor" keeps at least baseRate (144 Hz renders 72 fps); "ceil"
+ * keeps at most baseRate, which saves a phone's battery (90 Hz renders 45).
+ */
+export function renderDivisor(hz, { baseRate = 60, round = "floor" } = {}) {
+  if (!(hz > 0) || !(baseRate > 0)) return 1;
+  const ratio = hz / baseRate;
+  return Math.max(1, round === "ceil" ? Math.ceil(ratio - 0.05) : Math.floor(ratio + 0.05));
+}
+
+/**
+ * Estimates the display's refresh rate from rAF intervals. Every 16 samples
+ * the 30th percentile of the last 32 is snapped to a common rate within 4%;
+ * two agreeing estimates adopt it. Estimation never stops, so a monitor
+ * switch or an LTPO rate change is followed. reset() drops the samples and
+ * keeps the adopted rate; hz is 0 until one is adopted.
+ */
+export function createRefreshEstimator() {
+  const intervals = new Float64Array(32);
+  const sorted = new Float64Array(32);
+  let candidate = 0;
+  let count = 0;
+  let fresh = 0;
+  let hz = 0;
+  let next = 0;
+
+  return {
+    get hz() {
+      return hz;
+    },
+    reset() {
+      candidate = count = fresh = next = 0;
+    },
+    sample(intervalMs) {
+      if (!(intervalMs >= 2.5 && intervalMs <= 40)) return hz;
+      intervals[next] = intervalMs;
+      next = (next + 1) % intervals.length;
+      count = Math.min(intervals.length, count + 1);
+      if (++fresh < 16) return hz;
+      fresh = 0;
+      sorted.set(intervals);
+      const window = sorted.subarray(0, count).sort();
+      const rate = 1000 / window[Math.floor((count - 1) * 0.3)];
+      let snapped = 0;
+      for (const common of REFRESH_RATES) {
+        const error = Math.abs(rate - common);
+        const nearest = !snapped || error < Math.abs(rate - snapped);
+        if (error <= common * 0.04 && nearest) snapped = common;
+      }
+      if (snapped && snapped === candidate) hz = snapped;
+      candidate = snapped;
+      return hz;
+    },
+  };
 }
 
 /**
@@ -15,9 +73,17 @@ function clampFrameSeconds(value, maximum) {
  * resumes with a fresh delta. A separate per-rAF sample is retained when
  * frameStride > 1 so the quality governor does not mistake a deliberate 30fps
  * render cap for 30fps frame pressure.
+ *
+ * displayCadence ({ baseRate, round }) renders on every renderDivisor()th
+ * vsync of the estimated refresh rate, evenly spaced where a targetFrameRate
+ * accumulator alternates intervals (11/22 ms at 90 Hz); until a rate is
+ * adopted it caps at baseRate like targetFrameRate. A late vsync re-phases the
+ * cadence instead of drawing twice in a row, and the governor's sample reads a
+ * met cadence as one base-rate frame.
  */
 export function createSceneFrameScheduler({
   cancelFrame = globalThis.cancelAnimationFrame?.bind(globalThis),
+  displayCadence = null,
   frameStride = 1,
   isRenderable = () => true,
   maxDeltaSeconds = 0.1,
@@ -35,8 +101,15 @@ export function createSceneFrameScheduler({
   }
 
   const stableStride = Math.max(1, Math.floor(frameStride || 1));
+  const cadence = displayCadence || null;
+  const refresh = cadence ? createRefreshEstimator() : null;
+  // Until a refresh rate is adopted, a cadence caps at its base rate.
   const stableTargetFrameRate =
-    Number.isFinite(targetFrameRate) && targetFrameRate > 0 ? targetFrameRate : 0;
+    Number.isFinite(targetFrameRate) && targetFrameRate > 0
+      ? targetFrameRate
+      : cadence
+        ? cadence.baseRate || 60
+        : 0;
   const targetFrameSeconds = stableTargetFrameRate > 0 ? 1 / stableTargetFrameRate : 0;
   const frameToleranceSeconds = Math.min(0.00075, targetFrameSeconds * 0.05);
   let active = false;
@@ -77,6 +150,7 @@ export function createSceneFrameScheduler({
     renderAccumulatorSeconds = 0;
     frameTick = 0;
     hasRendered = false;
+    refresh?.reset();
   }
 
   function resume() {
@@ -106,6 +180,7 @@ export function createSceneFrameScheduler({
       pendingDeltaSeconds += sampleDeltaSeconds;
       renderAccumulatorSeconds += sampleDeltaSeconds;
       elapsedSeconds += sampleDeltaSeconds;
+      refresh?.sample(sampleDeltaSeconds * 1000);
       schedule();
     }
 
@@ -114,21 +189,35 @@ export function createSceneFrameScheduler({
       frameTick = (frameTick + 1) % stableStride;
       if (frameTick !== 0) return;
     }
+    const hz = refresh?.hz ?? 0;
+    const divisor = animated && hz > 0 ? renderDivisor(hz, cadence) : 1;
     if (
       animated &&
       hasRendered &&
-      targetFrameSeconds > 0 &&
-      renderAccumulatorSeconds + frameToleranceSeconds < targetFrameSeconds
+      (hz > 0
+        ? Math.round(renderAccumulatorSeconds * hz) < divisor
+        : targetFrameSeconds > 0 &&
+          renderAccumulatorSeconds + frameToleranceSeconds < targetFrameSeconds)
     ) {
       return;
     }
 
     const deltaSeconds = animated ? clampFrameSeconds(pendingDeltaSeconds, maxDeltaSeconds) : 0;
+    // A met cadence reads as one base-rate frame. A cadence slower than the
+    // base rate leaves out the vsyncs it waits by design; a faster one reports
+    // its real interval, so a late render counts as on a base-rate display.
+    const baseSeconds = 1 / (cadence?.baseRate || 60);
     const qualitySampleSeconds =
-      maxSampleDeltaSeconds > 0 ? maxSampleDeltaSeconds : DEFAULT_FRAME_SECONDS;
+      divisor > 1
+        ? Math.max(baseSeconds, pendingDeltaSeconds - Math.max(0, divisor / hz - baseSeconds))
+        : maxSampleDeltaSeconds > 0
+          ? maxSampleDeltaSeconds
+          : DEFAULT_FRAME_SECONDS;
     pendingDeltaSeconds = 0;
     maxSampleDeltaSeconds = 0;
-    if (targetFrameSeconds > 0) {
+    if (hz > 0) {
+      renderAccumulatorSeconds = 0;
+    } else if (targetFrameSeconds > 0) {
       renderAccumulatorSeconds =
         renderAccumulatorSeconds < targetFrameSeconds
           ? 0
@@ -284,10 +373,11 @@ export function createPanelHold({
  * Holds scene rendering for a visitor's pause through the scheduler's
  * "visitor" hold, which composes with the dialog's "panel" hold. A pause
  * before the reveal waits for it and keeps the first revealed frame; a later
- * pause draws one more frame, so a tour dip settles clear, then holds. As with
- * createPanelHold(), redraw() releases the hold only until frameRendered()
- * reports the next drawn frame. suspend() lifts the hold while the developer
- * camera runs, keeping the pause, and draws one frame before it returns.
+ * pause draws one more frame, so a tour crossfade settles on its incoming
+ * shot, then holds. As with createPanelHold(), redraw() releases the hold only
+ * until frameRendered() reports the next drawn frame. suspend() lifts the hold
+ * while the developer camera runs, keeping the pause, and draws one frame
+ * before it returns.
  * Releasing a held pause calls onRelease.
  */
 export function createVisitorHold({ onRelease = () => {}, scheduler }) {
@@ -408,6 +498,48 @@ export function createShaderWarmup({
             onSettled(ready);
           });
       });
+    },
+  };
+}
+
+/**
+ * Holds an adaptive quality step for a tour cut, where the crossfade's kept
+ * frame hides its one-off work. queue() links the new variant through
+ * prepare() at once; a newer step replaces a waiting one. take() returns the
+ * step on the first cut after prepare() settles (resolved or not), at once
+ * while the tour is not running, and after maxWaitMs at most.
+ */
+export function createDeferredQualityStep({ prepare = () => true, maxWaitMs = 30000 } = {}) {
+  let profile = null;
+  let queuedAt = 0;
+  let ready = false;
+  let version = 0;
+
+  return {
+    get pending() {
+      return profile !== null;
+    },
+    queue(nextProfile, nowMs = 0) {
+      if (!nextProfile) return;
+      const queued = ++version;
+      const settle = () => {
+        if (queued === version) ready = true;
+      };
+      profile = nextProfile;
+      queuedAt = nowMs;
+      ready = false;
+      try {
+        Promise.resolve(prepare(nextProfile)).then(settle, settle);
+      } catch {
+        settle();
+      }
+    },
+    take({ cut = false, running = false, nowMs = 0 } = {}) {
+      if (profile === null) return null;
+      if (running && !(cut && ready) && nowMs - queuedAt < maxWaitMs) return null;
+      const next = profile;
+      profile = null;
+      return next;
     },
   };
 }

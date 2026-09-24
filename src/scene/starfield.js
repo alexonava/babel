@@ -108,7 +108,8 @@ export function createStarfield({ parent, camera, profile = {}, nebulaLayers = {
   });
   const root = new Points(makeStarGeometry(), material);
   root.name = "celestial-starfield";
-  root.renderOrder = 0;
+  // After the sky shell (-1), before the film mountains (-0.5), which cover it.
+  root.renderOrder = -0.75;
   root.frustumCulled = false;
   parent.add(root);
   let disposed = false,

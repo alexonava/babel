@@ -28,6 +28,15 @@ export function groundMaterialUrl(kind, size) {
   return `/images/materials/ground-${kind}-${size}.webp`;
 }
 
+// build.mjs defines the hashed slate map names as a JSON string, like the
+// architecture manifest, so it stays in the scene entry chunk.
+const MATERIAL_URLS =
+  typeof __BABEL_MATERIAL_URLS__ !== "undefined" ? JSON.parse(__BABEL_MATERIAL_URLS__) : {};
+export function slateMaterialUrl(kind, size) {
+  const name = `slate-${kind}-${size}.webp`;
+  return MATERIAL_URLS[name] ?? `/images/materials/${name}`;
+}
+
 export function createStoneDetailController({
   profile,
   disabled = false,
@@ -37,6 +46,8 @@ export function createStoneDetailController({
   loadImage = loadStoneImage,
   kinds = STONE_DETAIL_KINDS,
   urlFor = stoneMaterialUrl,
+  // Pixel size of one kind at the tier's size: a shared map keeps its own.
+  sizeFor = (kind, size) => size,
 }) {
   let disposed = false;
   let revision = 0;
@@ -71,7 +82,7 @@ export function createStoneDetailController({
       const results = await Promise.allSettled(
         kinds.map(async (kind) => {
           try {
-            return await loadImage(urlFor(kind, size), {
+            return await loadImage(urlFor(kind, sizeFor(kind, size)), {
               signal: controller.signal,
             });
           } catch (error) {
@@ -90,7 +101,9 @@ export function createStoneDetailController({
           report({ status: "fallback", tier });
           return;
         }
-        if (images.some((image) => image.width !== size || image.height !== size)) {
+        if (
+          images.some((image, i) => image.width !== sizeFor(kinds[i], size) || image.height !== sizeFor(kinds[i], size))
+        ) {
           report({ status: "fallback", tier });
           return;
         }

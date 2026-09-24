@@ -75,23 +75,28 @@ test("UI bundle stays under the LCP budget", async () => {
 test("scene bundle stays under the deferred-payload budget", async () => {
   // The budget covers every byte a default visitor's scene load downloads:
   // the entry and each chunk it imports statically. The ?sceneDebug=1
-  // developer tools (developer camera + OutlinePass) load on demand only.
+  // developer tools (developer camera + OutlinePass) and the film's rock
+  // placement load on demand only. The owner raised the limit from 810 KiB to
+  // 820 KiB on 2026-09-24 for the slate v2 ground and rocks.
   const { loaded } = await sceneScripts();
   assert.ok(loaded.size >= 1 && loaded.size <= 2, `scene loads ${[...loaded.keys()]}`);
   let bytes = 0;
   for (const name of loaded.keys()) bytes += (await stat(path.join(scriptsDir, name))).size;
   const kb = bytes / 1024;
   assert.ok(
-    kb < 810,
-    `scene bundle (${[...loaded.keys()].join(" + ")}) is ${kb.toFixed(1)} kB; budget is 810 kB`,
+    kb < 820,
+    `scene bundle (${[...loaded.keys()].join(" + ")}) is ${kb.toFixed(1)} kB; budget is 820 kB`,
   );
 });
 
 test("developer tools are a lazy scene chunk that default visitors never download", async () => {
   const { entry, loaded, lazy } = await sceneScripts();
-  assert.equal(lazy.length, 1, "exactly one lazily imported scene chunk");
-  const [developerName] = lazy;
-  assert.match(developerName, /^scene\.developer-tools\.[a-f0-9]{8}\.js$/);
+  // The named lazy chunks: the developer tools and the film's rock placement.
+  assert.deepEqual(
+    lazy.map((name) => name.replace(/\.[a-f0-9]{8}\.js$/, "")).sort(),
+    ["scene.developer-tools", "scene.rock-build"],
+  );
+  const developerName = lazy.find((name) => name.startsWith("scene.developer-tools."));
   const developer = await readFile(path.join(scriptsDir, developerName), "utf8");
   const statics = [...loaded.values()].join("\n");
   // Markers that survive minification: the developer HUD id and an OutlinePass method.
@@ -114,6 +119,19 @@ test("developer tools are a lazy scene chunk that default visitors never downloa
       assert.doesNotMatch(text, /BabelSite/, `${name} carries ordered scene side effects`);
     }
   }
+});
+
+test("the film's rock placement is a lazy chunk that imports nothing", async () => {
+  const { entry, loaded, lazy } = await sceneScripts();
+  const rockName = lazy.find((name) => name.startsWith("scene.rock-build."));
+  const rocks = await readFile(path.join(scriptsDir, rockName), "utf8");
+  const statics = [...loaded.values()].join("\n");
+  // Its Three.js classes and first-party helpers arrive as arguments, so it
+  // neither splits the shared chunk nor pulls scene modules into it.
+  assert.deepEqual(chunkImports(rocks), { static: [], dynamic: [] });
+  assert.match(rocks, /film-rocks/);
+  assert.doesNotMatch(statics, /film-rocks/, "rock placement leaked into the visitor scene payload");
+  assert.match(loaded.get(entry), new RegExp(`import\\(\\s*"\\./${rockName.replaceAll(".", "\\.")}"\\s*\\)`));
 });
 
 test("the UI names exactly the scene entry's static chunks for modulepreload", async () => {
@@ -444,31 +462,40 @@ test("the ?ground=earth comparison's grass color/mask maps are deferred and fit 
   }
 });
 
-test("the default film slate pair is deferred and fits both its own and the complete-scene budgets", async () => {
-  // Default film pages request only the authored ground color/normal pair (the
-  // ?ground=earth comparison keeps the earth and grass maps budgeted above).
+test("the default film slate set and rocks are deferred and fit their own and the complete-scene budgets", async () => {
+  // Default film pages request the slate's color, normal and shared detail map,
+  // and on high and balanced the two rock models (the ?ground=earth comparison
+  // keeps the earth and grass maps budgeted above). Only the scene entry names
+  // their hashed copies.
   const app = await readFile(await findHashedScript("app"), "utf8");
-  assert.doesNotMatch(app, /ground-(?:color|normal)/);
-  for (const [tier, size, limit, totalLimit] of [
-    ["high", 1024, 640 * 1024, 6 * 1024 * 1024],
-    ["balanced", 512, 224 * 1024, 3 * 1024 * 1024],
+  const { entry, loaded } = await sceneScripts();
+  assert.doesNotMatch(app, /slate-|lichen-rock|weathered-stone/);
+  for (const [tier, size, limit, rockLimit, totalLimit] of [
+    ["high", 1024, 640 * 1024, 320 * 1024, 6 * 1024 * 1024],
+    ["balanced", 512, 224 * 1024, 128 * 1024, 3 * 1024 * 1024],
   ]) {
     let bytes = 0;
-    for (const kind of ["color", "normal"]) {
-      const file = `ground-${kind}-${size}.webp`;
+    for (const file of [`slate-color-${size}.webp`, `slate-normal-${size}.webp`, "slate-detail-512.webp"]) {
       const source = await readFile(path.join(projectRoot, "images", "materials", file));
       assert.equal(source.toString("ascii", 8, 12), "WEBP");
-      assert.deepEqual(await readFile(path.join(distDir, "images", "materials", file)), source);
+      const hashed = file.replace(".webp", `.${createHash("sha256").update(source).digest("hex").slice(0, 8)}.webp`);
+      assert.deepEqual(await readFile(path.join(distDir, "images", "materials", hashed)), source);
+      assert.ok(loaded.get(entry).includes(`/images/materials/${hashed}`), `${hashed} is named by the scene entry`);
       bytes += source.length;
     }
     assert.ok(bytes <= limit, `${tier} slate: ${bytes}`);
+    for (const role of ["lichen-rock", "weathered-stone"]) {
+      const source = await readFile(path.join(projectRoot, "images", "architecture", `${role}-${tier}.glb`));
+      assert.equal(source.toString("ascii", 0, 4), "glTF");
+      assert.ok(source.length <= rockLimit, `${role}-${tier}: ${source.length}`);
+      bytes += source.length;
+    }
     for (const role of ["tower", "tree"]) {
       bytes += (await stat(path.join(projectRoot, "images", "architecture", `${role}-${tier}.glb`))).size;
     }
-    assert.ok(bytes <= totalLimit, `${tier} scene incl. slate: ${bytes}`);
+    assert.ok(bytes <= totalLimit, `${tier} scene incl. slate and rocks: ${bytes}`);
   }
 });
-
 test("homepage discovers the deferred scene while its UI excludes the renderer and model loading", async () => {
   const html = await readFile(path.join(distDir, "index.html"), "utf8");
   const app = await readFile(await findHashedScript("app"), "utf8");

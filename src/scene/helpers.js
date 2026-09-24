@@ -46,6 +46,8 @@
     return flat * (1 - eased) + base * eased;
   }
 
+  // The tower and tree terraces restate estate-layout.js ESTATE (x, z, lift,
+  // flat, blend): this file runs without imports, and a test holds them equal.
   scene.groundHeight = function (xx, yy) {
     let height = dune(xx, yy);
     height = terrace(xx, yy, height, 0, 0, 1.0, 9, 20);

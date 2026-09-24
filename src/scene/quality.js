@@ -669,6 +669,7 @@
     // composer resolution every tier rendered at before device-pixel targets.
     let resolutionRelief = false;
     let sampleResumeAt = null;
+    let skippedSamples = 0;
 
     return {
       caps: resolvedCaps,
@@ -696,6 +697,11 @@
       holdSampling() {
         sampleResumeAt = null;
       },
+      // Drops the next count revealed samples: a tour crossfade's capture, cut
+      // and first dissolve frames carry one-off work, not frame pressure.
+      skipSamples(count) {
+        skippedSamples = Math.max(skippedSamples, Math.floor(count) || 0);
+      },
       // Samples the revealed scene. timestamp is the rAF clock the hold runs
       // on; nowMs is the scene clock the governor's delays run on. Returns the
       // profile to apply after a step (the current one for a resolution-only
@@ -703,6 +709,10 @@
       sampleRevealed({ frameMs, nowMs, timestamp, profile }) {
         sampleResumeAt ??= timestamp + SAMPLE_HOLD_MS;
         if (timestamp < sampleResumeAt) return null;
+        if (skippedSamples > 0) {
+          skippedSamples -= 1;
+          return null;
+        }
         const nextTier = governor.sample(frameMs, nowMs, "low");
         if (!nextTier) return null;
         resolutionRelief = nextTier === "low" && profile?.tier !== "low";
