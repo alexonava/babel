@@ -725,7 +725,7 @@ test("scene bootstrap idles before reveal, holds behind dialogs and fails to the
   // screens at or below it; the 60 fps cap holds until a rate is adopted.
   assert.match(
     source,
-    /createSceneFrameScheduler\(\{\s*(\/\/.*\s*)*displayCadence: \{ baseRate: 60, round: qualityState\.touchPrimary \? "ceil" : "floor" \},[^]*?targetFrameRate: 60,\s*\}\);/,
+    /createSceneFrameScheduler\(\{\s*(?:\/\/[^\n]*\n[ \t]*)*displayCadence: \{ baseRate: 60, round: qualityState\.touchPrimary \? "ceil" : "floor" \},[^]*?targetFrameRate: 60,\s*\}\);/,
   );
   const dispose = source.slice(source.indexOf("function disposeHomeSceneRuntime"));
   assert.match(dispose, /panelObserver\?\.disconnect\(\);\s*panelHold\.dispose\(\);/);

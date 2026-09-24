@@ -229,5 +229,5 @@ test("scene bootstrap fits the next tour shot in idle slices and refits it when 
   // A resize, a font load that moves the hero, or a model change refits it.
   assert.match(index, /function applySceneSize\([^]*?frameScheduler\?\.invalidate\(\);\s*cameraTour\?\.prepareNext\(\);\s*\}/);
   assert.match(index, /const onFontsLoaded = \(\) => \{ cinematicArea = measureCinematicArea\([^)]*\); cameraTour\?\.prepareNext\(\);/);
-  assert.match(index, /cinematic\.setStatus\(status\);\s*(\/\/.*\s*)*cameraTour\?\.prepareNext\(\);/);
+  assert.match(index, /cinematic\.setStatus\(status\);\s*(?:\/\/[^\n]*\n[ \t]*)*cameraTour\?\.prepareNext\(\);/);
 });
