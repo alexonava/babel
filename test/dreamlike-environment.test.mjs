@@ -1,8 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BoxGeometry, Color, Group, Mesh, MeshStandardMaterial, Vector3 } from "three";
-import { createEstateSkyMaterial } from "../src/scene/estate-sky.js";
+import {
+  AdditiveBlending,
+  BoxGeometry,
+  Color,
+  CustomBlending,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
+  NoBlending,
+  NormalBlending,
+  OneFactor,
+  OneMinusSrcAlphaFactor,
+  ShaderMaterial,
+  SrcAlphaFactor,
+  Vector3,
+  ZeroFactor,
+} from "three";
+import { DEPTH_LAYER, stampDepthLayer } from "../src/scene/depth-layers.js";
+import { createEstateSkyMaterial, FILM_SKY_GLSL } from "../src/scene/estate-sky.js";
 import { createEstateGroundDetail, estatePathDistance } from "../src/scene/estate-ground-detail.js";
+import { rockKeepouts } from "../src/scene/rock-scatter.js";
 import { createSceneEnvironment } from "../src/scene/environment.js";
 import { createSceneAtmosphere } from "../src/scene/atmosphere.js";
 import { createFilmScene } from "../src/scene/film-scene.js";
@@ -12,6 +31,7 @@ const profile = { tier: "high", isLow: false };
 test("estate growth is seeded, terrain-seated and clear of both footprints and the winding approach", () => {
   const a = createEstateGroundDetail(groundHeight),
     b = createEstateGroundDetail(groundHeight);
+  const keepouts = rockKeepouts();
   const p = a.mesh.geometry.attributes.position,
     q = b.mesh.geometry.attributes.position;
   assert.deepEqual(p.array, q.array);
@@ -24,8 +44,15 @@ test("estate growth is seeded, terrain-seated and clear of both footprints and t
     assert.ok(Math.hypot(x - 55.1, z - 36.1) > 5.8);
     assert.ok(estatePathDistance(x, z) > 2.09);
     assert.ok(p.getY(i + 3) > p.getY(i));
+    // No tuft stands in a scattered rock or the ring its pebble may take.
+    for (const rock of keepouts) assert.ok(Math.hypot(x - rock.x, z - rock.z) >= rock.radius);
   }
   assert.equal(a.mesh.material.transparent, false);
+  // Growth dissolves with the ground it stands on in the tour's staggered cut.
+  assert.match(a.mesh.material.customProgramCacheKey(), /\|depth-layer-0\.6667$/);
+  const shader = { vertexShader: "", fragmentShader: "#include <dithering_fragment>\n}" };
+  a.mesh.material.onBeforeCompile(shader);
+  assert.equal(shader.fragmentShader, "#include <dithering_fragment>\ngl_FragColor.a = 0.6667;\n}");
   a.dispose();
   b.dispose();
 });
@@ -37,7 +64,7 @@ test("ground-detail quality changes trim a shared geometry and restore original 
   detail.setActive(true);
   assert.equal(mesh.geometry.drawRange.count, 360 * 18);
   detail.applyQuality({ tier: "balanced" });
-  assert.equal(mesh.geometry.drawRange.count, 210 * 18);
+  assert.equal(mesh.geometry.drawRange.count, 300 * 18);
   assert.equal(mesh.visible, true);
   detail.applyQuality({ tier: "low" });
   assert.equal(mesh.visible, false);
@@ -143,7 +170,16 @@ test("estate sky uses one world-space shell with preserved baseline uniforms and
   assert.equal(material.uniforms.uTime.value, 0);
   assert.match(material.vertexShader, /modelMatrix \* vec4\(position/);
   assert.match(material.fragmentShader, /if \(uFilm>.5\)/);
+  // The opaque film shell writes the sky's depth layer; the baseline keeps its opacity.
+  assert.match(
+    material.fragmentShader,
+    /gl_FragColor=uFilm>\.5\?vec4\(col\*0\.9,0\.0\):vec4\(col,0\.9\);/,
+  );
   assert.doesNotMatch(material.fragmentShader, /sampler2D|gl_FragCoord/);
+  // The film gradient and horizon band are the shared functions the mountains haze toward.
+  assert.ok(material.fragmentShader.includes(FILM_SKY_GLSL));
+  assert.match(material.fragmentShader, /col=filmSky\(altitude\);/);
+  assert.match(material.fragmentShader, /col\+=filmBand\(altitude\);\s*}\s*gl_FragColor=/);
   material.dispose();
 });
 
@@ -178,4 +214,127 @@ test("sky drift follows the scheduler clock, freezes for reduced motion and stop
   atmosphere.dispose();
   atmosphere.update({ elapsedSeconds: 30 });
   assert.equal(sky.uniforms.uTime.value, 25);
+});
+
+test("depth-layer stamps compose with a material's own shader hook and program key", () => {
+  assert.deepEqual({ ...DEPTH_LAYER }, { sky: "0.0", mountains: "0.3333", ground: "0.6667" });
+  assert.ok(Object.isFrozen(DEPTH_LAYER));
+  const material = new MeshStandardMaterial();
+  const calls = [];
+  material.onBeforeCompile = function (shader, renderer) {
+    calls.push([this, renderer]);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <fog_fragment>",
+      "#include <fog_fragment>\nfogged();",
+    );
+  };
+  material.customProgramCacheKey = () => "own-key";
+  assert.equal(stampDepthLayer(material, DEPTH_LAYER.mountains), material);
+  const shader = { fragmentShader: "#include <fog_fragment>\n#include <dithering_fragment>\n}" };
+  const renderer = {};
+  material.onBeforeCompile(shader, renderer);
+  assert.deepEqual(calls, [[material, renderer]]);
+  assert.equal(
+    shader.fragmentShader,
+    "#include <fog_fragment>\nfogged();\n#include <dithering_fragment>\ngl_FragColor.a = 0.3333;\n}",
+  );
+  assert.equal(material.customProgramCacheKey(), "own-key|depth-layer-0.3333");
+  material.dispose();
+});
+
+function overlayRig() {
+  const atmosphere = createSceneAtmosphere({ parent: new Group(), profile });
+  const stars = new ShaderMaterial({ transparent: true, blending: AdditiveBlending });
+  const sun = new ShaderMaterial({ transparent: true });
+  const shell = new ShaderMaterial({ transparent: true });
+  const opaque = new MeshBasicMaterial();
+  const unblended = new ShaderMaterial({ transparent: true, blending: NoBlending });
+  const geometry = new BoxGeometry();
+  const nested = new Group();
+  nested.add(new Mesh(geometry, [sun, opaque]));
+  atmosphere.root.add(
+    new Mesh(geometry, stars),
+    new Mesh(geometry, shell),
+    new Mesh(geometry, unblended),
+    nested,
+  );
+  return { atmosphere, stars, sun, shell, opaque, unblended, geometry };
+}
+const factors = (m) => [m.blending, m.blendSrc, m.blendDst, m.blendSrcAlpha, m.blendDstAlpha];
+
+test("film stars and sun blend their colour as before but keep the sky's depth layer, and restore on exit", () => {
+  const { atmosphere, stars, sun, shell, opaque, unblended, geometry } = overlayRig();
+  shell.transparent = false;
+  const before = [stars, sun, shell, opaque, unblended].map(factors);
+  atmosphere.setFilmTreatment(true);
+  assert.deepEqual(factors(stars), [
+    CustomBlending,
+    SrcAlphaFactor,
+    OneFactor,
+    ZeroFactor,
+    OneFactor,
+  ]);
+  assert.deepEqual(factors(sun), [
+    CustomBlending,
+    SrcAlphaFactor,
+    OneMinusSrcAlphaFactor,
+    ZeroFactor,
+    OneFactor,
+  ]);
+  assert.deepEqual(
+    [shell, opaque, unblended].map(factors),
+    before.slice(2),
+    "opaque and unblended materials are untouched",
+  );
+  atmosphere.setFilmTreatment(true);
+  assert.deepEqual(
+    factors(stars),
+    [CustomBlending, SrcAlphaFactor, OneFactor, ZeroFactor, OneFactor],
+    "idempotent",
+  );
+  atmosphere.setFilmTreatment(false);
+  assert.deepEqual([stars, sun, shell, opaque, unblended].map(factors), before);
+  assert.equal(stars.blending, AdditiveBlending);
+  assert.equal(sun.blending, NormalBlending);
+  atmosphere.setFilmTreatment(true);
+  atmosphere.setFilmTreatment(false);
+  assert.deepEqual(
+    [stars, sun].map(factors),
+    before.slice(0, 2),
+    "a second round trip restores the originals",
+  );
+  atmosphere.dispose();
+  geometry.dispose();
+});
+
+test("film makes the sky shell opaque before the overlays switch, so the sky is never blended away", () => {
+  const { atmosphere, stars, geometry } = overlayRig();
+  const sky = createEstateSkyMaterial({
+    skyTopColor: 0x112233,
+    skyBottomColor: 0x334455,
+    skyGlowColor: 0x445566,
+    sunColor: 0xffbb77,
+    sunDirection: new Vector3(0, 1, 0),
+    shellOpacity: 0.52,
+  });
+  atmosphere.root.add(new Mesh(geometry, sky));
+  const ground = new Mesh(new BoxGeometry(), new MeshStandardMaterial());
+  const rendering = { setFilmTreatment() {}, focusFilmShadow() {}, postprocessPipeline: {} };
+  const film = createFilmScene({ ground, groundHeight, atmosphere, rendering, skyMaterial: sky });
+  film.setActive(true);
+  // Reversed, the shell (alpha 0 in film) would take the overlays' blending and turn black.
+  assert.equal(sky.transparent, false);
+  assert.equal(sky.blending, NormalBlending);
+  assert.equal(sky.blendDstAlpha, null);
+  assert.equal(stars.blending, CustomBlending);
+  film.setActive(false);
+  assert.equal(sky.transparent, true);
+  assert.equal(sky.blending, NormalBlending);
+  assert.equal(stars.blending, AdditiveBlending);
+  film.dispose();
+  atmosphere.dispose();
+  sky.dispose();
+  geometry.dispose();
+  ground.geometry.dispose();
+  ground.material.dispose();
 });

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { publishBuild } from "./tools/build-output.mjs";
+import { compactShaderSource } from "./tools/shader-compact.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -73,6 +74,20 @@ export const BUILD_INPUT_FILES = [
 // directory is watched as a whole.
 export const BUILD_INPUT_DIRS = ["src", ...STATIC_DIRS, ".well-known", "tools"];
 
+// esbuild keeps template literal text verbatim: the scene's GLSL loses its
+// indentation, comments and spaces beside punctuation here instead
+// (tools/shader-compact.mjs). Three.js's own shaders are left as published.
+const SCENE_SOURCE = /[\\/]src[\\/]scene[\\/][^\\/]+\.js$/;
+const compactShaders = {
+  name: "compact-shaders",
+  setup(bundler) {
+    bundler.onLoad({ filter: SCENE_SOURCE }, async ({ path }) => ({
+      contents: compactShaderSource(await readFile(path, "utf8")),
+      loader: "js",
+    }));
+  },
+};
+
 const scriptBuildOptions = (entry, split = false) => ({
   entryPoints: [join(__dirname, entry)],
   bundle: true,
@@ -81,6 +96,7 @@ const scriptBuildOptions = (entry, split = false) => ({
   format: split ? "esm" : "iife",
   legalComments: "none",
   write: false,
+  plugins: [compactShaders],
   ...(split && {
     splitting: true,
     metafile: true,
@@ -100,13 +116,30 @@ async function architectureAssetManifest() {
   const files = [];
   for (const tier of ["high", "balanced"]) {
     urls[tier] = {};
-    for (const role of ["stairs", "wall", "base", "crown", "tower", "tree"]) {
+    for (const role of ["stairs", "wall", "base", "crown", "tower", "tree", "lichen-rock", "weathered-stone"]) {
       const name = role + "-" + tier + ".glb";
       const bytes = await readFile(join(__dirname, "images", "architecture", name));
       const hashedName = name.replace(".glb", "." + sha8(bytes) + ".glb");
       urls[tier][role] = "/images/architecture/" + hashedName;
       files.push({ hashedName, bytes });
     }
+  }
+  return { urls, files };
+}
+
+// The film slate's maps (images/materials/slate-*.webp) get hashed copies too:
+// { stable name: hashed URL }, which the scene entry reads (stone-detail.js).
+// The other material maps keep their stable, revalidated URLs.
+const SLATE_MAPS = ["color-1024", "normal-1024", "color-512", "normal-512", "detail-512"];
+async function materialAssetManifest() {
+  const urls = {};
+  const files = [];
+  for (const map of SLATE_MAPS) {
+    const name = `slate-${map}.webp`;
+    const bytes = await readFile(join(__dirname, "images", "materials", name));
+    const hashedName = name.replace(".webp", `.${sha8(bytes)}.webp`);
+    urls[name] = `/images/materials/${hashedName}`;
+    files.push({ hashedName, bytes });
   }
   return { urls, files };
 }
@@ -182,17 +215,22 @@ function fingerprintChunks({ basename, entry: source }, { metafile, outputFiles 
 
 // The scene loads every role. The UI requests only the startup tier's tower
 // and tree beside the scene bundle, so it names only those: the other roles'
-// hashes then never change the UI bundle.
+// hashes (the rocks among them) then never change the UI bundle.
 // Returns the published scripts, entry first, as [{ name, text, lazy }].
-async function buildScriptBundle({ basename, entry, split }, architecture, sceneModulePreloads) {
+async function buildScriptBundle({ basename, entry, split }, architecture, materials, sceneModulePreloads) {
   const options = scriptBuildOptions(entry, split);
   const { urls } = architecture ?? (await architectureAssetManifest());
-  // The scene manifest is a string literal that architecture-assets.js parses:
-  // an object-valued define becomes a virtual module that splitting places in
-  // the shared Three.js chunk, so each model revision would change its URL.
+  // The scene manifests are string literals that the scene parses: an
+  // object-valued define becomes a virtual module that splitting places in the
+  // shared Three.js chunk, so each model or map revision would change its URL.
   options.define =
     entry === SCENE_ENTRY
-      ? { __BABEL_ARCHITECTURE_URLS__: JSON.stringify(JSON.stringify(urls)) }
+      ? {
+          __BABEL_ARCHITECTURE_URLS__: JSON.stringify(JSON.stringify(urls)),
+          __BABEL_MATERIAL_URLS__: JSON.stringify(
+            JSON.stringify((materials ?? (await materialAssetManifest())).urls),
+          ),
+        }
       : {
           __BABEL_ARCHITECTURE_PREFETCH_URLS__: JSON.stringify(
             Object.fromEntries(
@@ -213,11 +251,11 @@ async function buildScriptBundle({ basename, entry, split }, architecture, scene
 // the whole entry, one round trip later; the UI bundle therefore names those
 // chunks, and main.js adds a modulepreload for each beside the entry script.
 // The lazily imported developer chunk is not named. Returns [{ script, chunks }].
-async function buildScripts(architecture) {
+async function buildScripts(architecture, materials) {
   const built = [];
   let sceneModulePreloads;
   for (const script of SCRIPT_ENTRIES) {
-    const chunks = await buildScriptBundle(script, architecture, sceneModulePreloads);
+    const chunks = await buildScriptBundle(script, architecture, materials, sceneModulePreloads);
     if (script.entry === SCENE_ENTRY) {
       sceneModulePreloads = chunks
         .slice(1)
@@ -254,13 +292,14 @@ async function writePayload(DIST_DIR) {
   await mkdir(DIST_SCRIPTS_DIR, { recursive: true });
   await mkdir(DIST_CSS_DIR, { recursive: true });
   const architecture = await architectureAssetManifest();
+  const materials = await materialAssetManifest();
   const fingerprintedImages = new Map();
   for (const name of [...FINGERPRINTED_POSTERS, ...FINGERPRINTED_ICONS, ...FINGERPRINTED_PAPER]) {
     fingerprintedImages.set(name, await readFile(join(__dirname, "images", name)));
   }
 
   const scriptPaths = {};
-  for (const { script, chunks } of await buildScripts(architecture)) {
+  for (const { script, chunks } of await buildScripts(architecture, materials)) {
     for (const { name, text } of chunks) await writeFile(join(DIST_SCRIPTS_DIR, name), text);
     scriptPaths[script.basename] = `/scripts/${chunks[0].name}`;
 
@@ -315,6 +354,9 @@ async function writePayload(DIST_DIR) {
   // Model revisions receive a new URL without invalidating the accepted classic assets.
   for (const { hashedName, bytes } of architecture.files) {
     await writeFile(join(DIST_DIR, "images", "architecture", hashedName), bytes);
+  }
+  for (const { hashedName, bytes } of materials.files) {
+    await writeFile(join(DIST_DIR, "images", "materials", hashedName), bytes);
   }
 
   // Keep the stable copies for older HTML while new pages receive a fresh URL
@@ -397,7 +439,7 @@ async function main() {
     });
   } else if (mode === "--check") {
     const architecture = await architectureAssetManifest();
-    await buildScripts(architecture);
+    await buildScripts(architecture, await materialAssetManifest());
     console.log(`verified ${SCRIPT_ENTRIES.map(({ entry }) => entry).join(", ")}`);
   } else {
     await buildDist(outputDirectory, { retainAssets });

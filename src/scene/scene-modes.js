@@ -24,6 +24,8 @@ export function resolveSceneModes(search = "") {
     ground: GROUND_COMPARISONS.includes(groundParam) ? groundParam : "slate",
     propScale: completeTower && query.get("scale") !== "baseline",
     earthFooting: completeTower && query.get("setting") !== "plinth",
+    // Review toggle for the film's scattered rocks; it keeps the authored scene.
+    rocks: query.get("rocks") !== "off",
     // ground=earth swaps only the film terrain maps; it keeps the authored scene.
     legacy: requestedView === "orbit" || [
       "architecture", "setting", "cinematography", "refinement", "scale",

@@ -103,3 +103,9 @@
 /images/architecture/:name.:hash.glb
   ! Cache-Control
   Cache-Control: public, max-age=31536000, immutable
+
+# Only the film slate's maps are fingerprinted; other material maps keep the
+# revalidated /images/* rule.
+/images/materials/slate-:map.:hash.webp
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable

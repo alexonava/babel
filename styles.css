@@ -76,8 +76,12 @@
   box-sizing: border-box;
 }
 
+/* Behind Safari's translucent bars, the notch and any overscroll the page shows
+   the scene's own night, never a lighter band; the fixed scene never bounces. */
 html {
   scroll-behavior: smooth;
+  background: var(--night-900);
+  overscroll-behavior: none;
 }
 
 html,
@@ -113,7 +117,8 @@ body {
     "kern" 1,
     "liga" 1;
   color: var(--text-primary);
-  background: linear-gradient(180deg, var(--night-900) 0%, var(--night-800) 34%, #1d1d21 100%);
+  background: linear-gradient(180deg, var(--night-900) 0%, var(--night-800) 34%, #0d1119 100%);
+  overscroll-behavior: none;
 }
 
 body[data-panel-open="true"] {
@@ -420,10 +425,14 @@ main:focus {
     box-shadow 180ms ease;
 }
 
+/* A small, dim case that defers to the scene: no glow or indicator dot. The
+   padding keeps a 52px target around the 44px image. */
 .bottom-btn--icon {
   position: relative;
-  width: 88px;
-  height: 88px;
+  width: 52px;
+  height: 52px;
+  padding: 4px;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
   border: 0;
@@ -432,47 +441,12 @@ main:focus {
   box-shadow: none;
 }
 
-/* A modest warm pool of ground light behind the satchel. */
-.bottom-btn--icon::before {
-  position: absolute;
-  inset: 10% -16% -12%;
-  z-index: -1;
-  content: "";
-  pointer-events: none;
-  background: radial-gradient(closest-side, rgba(242, 226, 196, 0.16) 35%, rgba(242, 226, 196, 0));
-}
-
-.bottom-btn--icon::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: 12px;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--line-pastel);
-  opacity: 0;
-  transform: translate(-50%, 4px) scale(0.6);
-  box-shadow: 0 0 18px rgba(214, 224, 218, 0.72);
-  transition:
-    opacity 220ms ease,
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
-  pointer-events: none;
-}
-
 .bottom-btn--icon:hover,
 .bottom-btn--icon:focus-visible,
 .bottom-btn--icon[aria-expanded="true"] {
   transform: translateY(-2px);
   border-color: transparent;
   box-shadow: none;
-}
-
-.bottom-btn--icon:hover::after,
-.bottom-btn--icon:focus-visible::after,
-.bottom-btn--icon[aria-expanded="true"]::after {
-  opacity: 1;
-  transform: translate(-50%, 0) scale(1);
 }
 
 .btn-icon {
@@ -487,7 +461,9 @@ main:focus {
 /* Resting icons face forward; only the open panel's icon turns inward. */
 .btn-icon--active {
   position: absolute;
-  inset: 0;
+  inset: 4px;
+  width: calc(100% - 8px);
+  height: calc(100% - 8px);
   opacity: 0;
 }
 
@@ -500,7 +476,7 @@ main:focus {
 }
 
 .btn-icon-label {
-  color: #ccccc7;
+  color: var(--text-accent);
   position: absolute;
   left: 50%;
   bottom: calc(100% + 8px);
@@ -521,11 +497,11 @@ main:focus {
   text-shadow: var(--text-meta-shadow);
 }
 
+/* Like the footer links, the word brightens on hover and while About is open. */
 .bottom-btn--icon:hover .btn-icon-label,
 .bottom-btn--icon:focus-visible .btn-icon-label,
 .bottom-btn--icon[aria-expanded="true"] .btn-icon-label {
-  opacity: 1;
-  transform: translate(-50%, 0);
+  color: var(--text);
 }
 
 /* Copyright and Email hold the left inset; Pause scene mirrors it on the right.
@@ -1003,8 +979,8 @@ body[data-panel-open]::after {
   }
 
   .bottom-btn--icon {
-    width: 76px;
-    height: 76px;
+    width: 48px;
+    height: 48px;
   }
 
   .btn-icon-label {
@@ -1028,8 +1004,7 @@ body[data-panel-open]::after {
 
 @media (prefers-reduced-transparency: reduce) {
   .hero-minimal::before,
-  .bottom-bar::before,
-  .bottom-btn--icon::before {
+  .bottom-bar::before {
     display: none;
   }
 }
@@ -1049,7 +1024,6 @@ body[data-panel-open]::after {
   .panel-overlay.open .panel-surface,
   .panel-close,
   .panel-surface,
-  .bottom-btn--icon::after,
   .site-footer__link,
   body::after {
     transition: none;
@@ -1119,8 +1093,9 @@ body[data-panel-open]::after {
   }
 
   .bottom-btn--icon {
-    width: 64px;
-    height: 64px;
+    width: 44px;
+    height: 44px;
+    padding: 2px;
   }
 
   .btn-icon-label {
@@ -1162,8 +1137,8 @@ body[data-panel-open]::after {
   }
 
   .bottom-btn--icon {
-    width: 84px;
-    height: 84px;
+    width: 52px;
+    height: 52px;
   }
 }
 
@@ -1260,7 +1235,6 @@ body.dev-mode-active::after {
 
   .hero-minimal::before,
   .bottom-bar::before,
-  .bottom-btn--icon::before,
   .scene-pause[data-paused="true"]::before {
     display: none;
   }

@@ -2,7 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
-import { CanvasTexture, MirroredRepeatWrapping, RepeatWrapping, SRGBColorSpace } from "three";
+import {
+  BoxGeometry,
+  CanvasTexture,
+  Mesh,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
+  MirroredRepeatWrapping,
+  RepeatWrapping,
+  ShaderMaterial,
+  SRGBColorSpace,
+  Texture,
+  WebGLRenderTarget,
+} from "three";
 import { markSceneEvaluated, measureScene, sceneNow } from "../src/scene/perf-marks.js";
 import { createSceneRendering } from "../src/scene/rendering.js";
 import { createShaderWarmup } from "../src/scene/runtime.js";
@@ -136,7 +148,11 @@ function createRendering(rendererOverrides = {}) {
   const composer = { readBuffer: "scene-target", addPass() {}, render() {} };
   const rendering = createSceneRendering({
     container: { appendChild() {} },
-    createPipeline: () => ({ composer, setQualityProfile() {} }),
+    createPipeline: () => ({
+      compile: () => calls.push(["post"]),
+      composer,
+      setQualityProfile() {},
+    }),
     createRenderer: (options) => {
       rendererOptions = options;
       return renderer;
@@ -164,6 +180,7 @@ test("shader warm-up compiles against the composer's scene target and always set
   const ready = createRendering();
   assert.equal(ready.rendererOptions.powerPreference, "default");
   assert.equal(await ready.rendering.compileShaders(), true);
+  assert.deepEqual(ready.calls[0], ["post"], "the crossfade's programs link in the same task");
   const compile = ready.calls.find(([kind]) => kind === "compile");
   assert.equal(compile[1], "scene-target", "program keys follow the scene pass's target");
   assert.equal(compile[2], ready.rendering.homeScene);
@@ -187,10 +204,11 @@ test("shader warm-up compiles against the composer's scene target and always set
   const unsupported = createRendering({ compileAsync: undefined });
   assert.equal(await unsupported.rendering.compileShaders(), false);
 
-  // Without parallel compilation the draw links anyway, so there is nothing to wait for.
+  // Without parallel compilation the draw links anyway, so there is nothing to
+  // wait for; the crossfade's programs still link ahead of the first cut.
   const serial = createRendering({ extensions: { has: () => false } });
   assert.equal(await serial.rendering.compileShaders(), false);
-  assert.equal(serial.calls.length, 0);
+  assert.deepEqual(serial.calls, [["post"]]);
 
   const lost = createRendering({ getContext: () => ({ isContextLost: () => true }) });
   assert.equal(await lost.rendering.compileShaders(), false);
@@ -200,6 +218,108 @@ test("shader warm-up compiles against the composer's scene target and always set
   disposed.rendering.dispose();
   assert.equal(await disposed.rendering.compileShaders(), false);
   assert.equal(disposed.calls.length, 0);
+});
+
+test("shader warm-up uploads visible maps; a quality step links its shadow variant", async () => {
+  const uploaded = [];
+  const compiled = [];
+  let rendering = null;
+  const setup = createRendering({
+    initTexture: (texture) => uploaded.push(texture.name),
+    compileAsync(scene) {
+      const { fill, sun } = rendering.lights;
+      compiled.push([rendering.renderer.shadowMap.enabled, sun.castShadow, fill.visible]);
+      return Promise.resolve(scene);
+    },
+  });
+  rendering = setup.rendering;
+  const named = (texture, name) => Object.assign(texture, { name });
+  const geometry = new BoxGeometry();
+  const shared = new MeshStandardMaterial({
+    map: named(new Texture({ complete: true }), "map"),
+    emissiveMap: named(new Texture({ complete: false }), "loading"),
+    alphaMap: named(new Texture(), "empty"),
+    envMap: named(new WebGLRenderTarget(4, 4).texture, "target"),
+  });
+  const hiddenMap = named(new Texture({}), "hidden");
+  const hidden = new Mesh(geometry, new MeshBasicMaterial({ map: hiddenMap }));
+  hidden.visible = false;
+  const uniforms = { uMap: { value: named(new Texture({}), "uniform") } };
+  rendering.homeScene.add(
+    new Mesh(geometry, shared),
+    new Mesh(geometry, shared),
+    new Mesh(geometry, new ShaderMaterial({ uniforms })),
+    hidden,
+  );
+
+  assert.equal(await rendering.compileShaders(), true);
+  assert.deepEqual(uploaded, ["map", "uniform"], "visible, loaded, non-target maps, once each");
+
+  const { fill, sun } = rendering.lights;
+  const balanced = { shadows: { enabled: false }, lighting: { extraDirectional: true } };
+  const high = { shadows: { enabled: true }, lighting: { extraDirectional: true } };
+  assert.equal(await rendering.prepareQuality(balanced), true);
+  assert.equal(compiled.length, 1, "a step that keeps program keys links nothing");
+  assert.equal(await rendering.prepareQuality(high), true);
+  assert.deepEqual(compiled.at(-1), [true, true, true], "the shadowed variant links ahead");
+  assert.deepEqual(
+    [rendering.renderer.shadowMap.enabled, sun.castShadow, fill.visible],
+    [undefined, false, true],
+    "and the drawn state is restored",
+  );
+  rendering.applyQuality({
+    shadows: { enabled: true, mapSize: 1024 },
+    lighting: {
+      ambientIntensity: 0.2, directionalIntensity: 2, extraDirectional: true, fogFar: 150,
+      fogNear: 60, hemisphereIntensity: 0.7,
+    },
+  });
+  const low = { shadows: { enabled: false }, lighting: { extraDirectional: false } };
+  assert.equal(await rendering.prepareQuality(low), true);
+  assert.deepEqual(compiled.at(-1), [false, false, false]);
+  assert.deepEqual(
+    [rendering.renderer.shadowMap.enabled, sun.castShadow, fill.visible],
+    [true, true, true],
+  );
+  rendering.dispose();
+  assert.equal(await rendering.prepareQuality(balanced), true);
+});
+
+test("a quality step returns materials to their drawn programs and waits for its own", async () => {
+  // compile() moves every material to the step's variant, which links in the
+  // background; a draw with it would block until it has.
+  let linking = true;
+  const current = new WeakMap();
+  const { rendering } = createRendering({
+    properties: { get: (material) => ({ currentProgram: current.get(material) }) },
+    compileAsync(scene) {
+      scene.traverse(({ material }) => {
+        if (material) current.set(material, { isReady: () => !linking });
+      });
+      return Promise.resolve(scene);
+    },
+  });
+  const geometry = new BoxGeometry();
+  const lit = new MeshStandardMaterial();
+  const unlit = new ShaderMaterial();
+  rendering.homeScene.add(new Mesh(geometry, lit), new Mesh(geometry, unlit));
+  const versions = [lit.version, unlit.version];
+  const high = { shadows: { enabled: true }, lighting: { extraDirectional: true } };
+  let settled = null;
+  rendering.prepareQuality(high).then((ready) => (settled = ready));
+  assert.ok(unlit.version > versions[1], "an unlit material leaves the linking variant");
+  assert.ok(lit.version > versions[0]);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(settled, null, "the step waits for its own programs, not the restored ones");
+  linking = false;
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(settled, true);
+  rendering.dispose();
+
+  // Without parallel compilation nothing links ahead; the cut frame links it.
+  const serial = createRendering({ extensions: { has: () => false } });
+  assert.equal(await serial.rendering.prepareQuality(high), false);
+  assert.deepEqual(serial.calls, [["post"]]);
 });
 
 test("shader warm-ups compile in their own task, hide waiting subjects and always settle", async () => {
@@ -357,8 +477,12 @@ test("the film ground starts from a flat preview and paints in full in the next 
   await flush();
   assert.deepEqual(
     requested,
-    ["/images/materials/ground-color-1024.webp", "/images/materials/ground-normal-1024.webp"],
-    "the default film slate requests only the authored ground pair: no earth, grass or desert bake",
+    [
+      "/images/materials/slate-color-1024.webp",
+      "/images/materials/slate-normal-1024.webp",
+      "/images/materials/slate-detail-512.webp",
+    ],
+    "the default film slate requests only its own three maps: no earth, grass or desert bake",
   );
   assert.ok(film.statuses.some((status) => status.status === "fallback" && status.material === "Cracked Desert Ground"));
   assert.equal(film.invalidations, 1, "a slate fallback finds the ground already painted");
@@ -432,7 +556,7 @@ test("the mud bake never runs on film pages that load the film ground, even with
   };
 
   for (const [search, tier, groundSize, maps, filmCanvases] of [
-    ["", "high", 1024, ["ground-color-1024", "ground-normal-1024"], 2],
+    ["", "high", 1024, ["slate-color-1024", "slate-normal-1024", "slate-detail-512"], 3],
     ["?ground=earth", "balanced", 512, ["earth-color-512", "earth-normal-512", "earth-roughness-512", "grass-color-512", "grass-mask-512"], 5],
   ]) {
     requested.length = 0;
@@ -490,7 +614,12 @@ test("scene bootstrap warms shaders before drawing and records start-up marks", 
     assert.ok(index.includes(`measureScene("${name}"`), name);
   }
   assert.match(index, /measureScene\(`shaders:\$\{label\}`, start\);/);
-  assert.match(index, /if \(sceneShown && !canvasShown\) markScene\("reveal"\);/);
+  // The rocks fetch and link only after the reveal.
+  assert.match(index, /if \(sceneShown && !canvasShown\) \{\s*markScene\("reveal"\);[^}]*rockScatter\.setRevealed\(\);\s*\}/);
+  // A ground program that changes before the reveal links through compileAsync
+  // (both shading call sites), so the first draw never blocks on it.
+  assert.equal((index.match(/contacts: groundContacts \}\);\s*warmGround\?\.\(\);/g) || []).length, 2);
+  assert.match(index, /warmGround = \(\) => \{\s*if \(!canvasShown\) warmShaders\("ground"\);\s*\};/);
 
   for (const path of ["shared/webgl-probe.js", "scene/quality.js", "scene/rendering.js"]) {
     assert.doesNotMatch(await source(path), /high-performance/, path);

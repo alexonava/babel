@@ -701,3 +701,25 @@ test("revealed sampling waits three seconds after the first frame and after each
   // Sampled from 3000 ms until the hold at 4000 ms; the next 3 s are skipped.
   assert.equal(sampled, 25);
 });
+
+test("skipped samples leave the governor untouched for exactly that many frames", async () => {
+  const scene = await loadQuality(createContext());
+  const state = scene.createSceneQualityState({
+    navigatorInfo: { deviceMemory: 8, hardwareConcurrency: 8 },
+    viewport: { width: 1440, height: 900 },
+    caps: { maxTextureSize: 8192, maxAnisotropy: 8 },
+    touchPrimary: false,
+    saveData: false,
+  });
+  const profile = state.getProfile();
+  const skipped = [];
+  for (let timestamp = 0; timestamp < 4000; timestamp += 40) {
+    // A tour capture drops the intervals its capture, cut and first dissolve frames delay.
+    if (timestamp === 3400) state.skipSamples(3);
+    const before = state.governor.getAverageFrameTime();
+    state.sampleRevealed({ frameMs: 40 + timestamp / 1000, nowMs: timestamp, timestamp, profile });
+    const unchanged = state.governor.getAverageFrameTime() === before;
+    if (timestamp >= 3000 && unchanged) skipped.push(timestamp);
+  }
+  assert.deepEqual(skipped, [3400, 3440, 3480]);
+});

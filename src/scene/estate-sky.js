@@ -1,5 +1,15 @@
 import { BackSide, Color, ShaderMaterial } from "three";
 import { CELESTIAL_FIELD_GLSL } from "./celestial-field.js";
+import { DEPTH_LAYER } from "./depth-layers.js";
+
+// The film gradient and horizon band by shell altitude, shared with the mountains,
+// which haze toward the sky behind them (hill-silhouette.js).
+export const FILM_SKY_GLSL = `
+vec3 filmSky(float a) {
+vec3 c=mix(vec3(.30,.36,.49),vec3(.11,.14,.21),smoothstep(-.02,.28,a));
+return mix(c,vec3(.045,.065,.13),smoothstep(.24,.9,a));
+}
+vec3 filmBand(float a) { return vec3(.03,.036,.048)*exp(-pow((a-.03)*6.0,2.0)); }`;
 
 // Density lives on the existing fixed world-space sky shell, never camera-facing
 // cards. No extra render pass or image request; the baseline branch is retained.
@@ -10,7 +20,8 @@ import { CELESTIAL_FIELD_GLSL } from "./celestial-field.js";
 // weather terms place a bank beside the intro, one beside the sun, a clear lane where the
 // roof meets the sky and an open zenith; a soft-knee cap keeps the intro backdrop at or
 // under 0.093 luminance (>= 5.4:1) even with fully lit cover. Drift is 0.4-1.3 CSS px/s
-// along a bounded circle so lattice coordinates stay small in long sessions.
+// along a bounded circle so lattice coordinates stay small in long sessions. The opaque
+// film shell writes the sky's depth layer (0) into alpha for the tour's staggered dissolve.
 export function createEstateSkyMaterial(config) {
   return new ShaderMaterial({
     side: BackSide,
@@ -45,6 +56,7 @@ return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
 mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
 }
 ${CELESTIAL_FIELD_GLSL}
+${FILM_SKY_GLSL}
 vec3 nebula(vec3 direction) {
 vec2 p=celestialPlane(direction);
 float envelope=celestialEnvelope(direction,p);
@@ -68,8 +80,7 @@ float sunDot=max(0.0,dot(direction,sunDirection));
 col+=sunColor*(pow(sunDot,8.0)*.225+pow(sunDot,32.0)*.152);
 if (uFilm>.5) {
 float altitude=direction.y;
-col=mix(vec3(.30,.36,.49),vec3(.11,.14,.21),smoothstep(-.02,.28,altitude));
-col=mix(col,vec3(.045,.065,.13),smoothstep(.24,.9,altitude));
+col=filmSky(altitude);
 if(uNebulaLayers>0.5) col+=nebula(normalize(vWorldPosition-cameraPosition));
 if(uClouds>0.001){
 float T=uTime;
@@ -143,9 +154,9 @@ cloudCol=min(cloudCol,kn)+(cap-kn)*(1.-exp(-max(cloudCol-kn,0.)/(cap-kn)));
 col+=vec3(.027,.03,.036)*smoothstep(.36,.54,d)*horizonFade*uClouds;
 col=mix(col,cloudCol,cover*.94);
 }
-col+=vec3(.03,.036,.048)*exp(-pow((altitude-.03)*6.0,2.0));
+col+=filmBand(altitude);
 }
-gl_FragColor=uFilm>.5?vec4(col*${config.shellOpacity},1.):vec4(col,${config.shellOpacity});
+gl_FragColor=uFilm>.5?vec4(col*${config.shellOpacity},${DEPTH_LAYER.sky}):vec4(col,${config.shellOpacity});
 }`,
   });
 }

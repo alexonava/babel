@@ -1,13 +1,15 @@
 import "./quality.js";
 import { createSolarBody } from "./solar-body.js";
 import { createStarfield } from "./starfield.js";
-import { readTourInterval, createCameraTour } from "./camera-tour.js";
+import { readTourInterval, createCameraTour, TOUR_IDLE } from "./camera-tour.js";
 import { resolveSceneModes } from "./scene-modes.js";
 import { createLegacyWorld } from "./legacy-world.js";
 import { createDeferredWorld } from "./deferred-world.js";
 import { createFilmScene } from "./film-scene.js";
 import { chooseCinematicView, chooseCinematicAngle, cinematicSafeArea, createCinematicCamera, createQuietScene, layoutRect } from "./cinematic.js";
-import { configureMudShading, filmGroundSurface } from "./mud-ground.js";
+import { configureMudShading, createSlateContacts, filmGroundSurface } from "./mud-ground.js";
+import { ESTATE } from "./estate-layout.js";
+import { createRockScatter, estateContacts } from "./rock-scatter.js";
 import { createHillSilhouette } from "./hill-silhouette.js";
 import { markScene, measureScene, sceneNow } from "./perf-marks.js";
 import { createPropScale } from "./prop-scale.js";
@@ -38,6 +40,7 @@ import { createEstateSkyMaterial } from "./estate-sky.js";
 import { createSceneRendering } from "./rendering.js";
 import { createWatchtowerRefinement } from "./watchtower-refinement.js";
 import {
+  createDeferredQualityStep,
   createPanelHold,
   createSceneFrameScheduler,
   createSceneResizeController,
@@ -252,6 +255,8 @@ function setSrgbTexture(texture) {
       world: WORLD,
     });
     subsystemRegistry.register(rendering);
+    // sceneDebug only: film depth-layer codes, or dissolve weights mid-transition, as grey.
+    if (qualityDebug) qualityDebug.showLayers = (on) => { rendering.postprocessPipeline.showLayers(on); invalidateContent(); };
     return runSceneInitialization(subsystemRegistry, () => {
     const { camera, homeScene, renderer } = rendering;
     scene.cinematicSelection ??= chooseCinematicView(window.location.search);
@@ -266,8 +271,26 @@ function setSrgbTexture(texture) {
       getGroundY: (x, z) => groundHeight(x, z) + groundSurface.getWorldPosition(new Vector3()).y });
     subsystemRegistry.register(cinematic);
     const tourInterval = filmEnabled ? readTourInterval(window.location.search) : 0;
+    // The tour fits its next shot ahead of the cut in idle slices, one measure
+    // or fit each; the latest request wins. Safari has no requestIdleCallback.
+    const whenIdle = typeof window.requestIdleCallback === "function"
+      ? (task) => window.requestIdleCallback(task, { timeout: 1500 })
+      : (task) => window.setTimeout(task, 50);
+    let tourShot = null;
+    function prepareTourShot(subject, angle) {
+      const idle = !tourShot;
+      tourShot = [subject, angle];
+      if (idle) whenIdle(function step() {
+        if (runtimeDisposed) return;
+        // A late slot waits out a capture and its crossfade.
+        const { capture, progress } = cameraTour?.transition ?? TOUR_IDLE;
+        if (capture || progress < 1 ||
+          cinematic.prepare(...tourShot, viewport.width, viewport.height) === "pending") whenIdle(step);
+        else tourShot = null;
+      });
+    }
     const cameraTour = tourInterval ? createCameraTour({ camera: cinematic, interval: tourInterval,
-      invalidate: () => frameScheduler?.invalidate() }) : null;
+      invalidate: () => frameScheduler?.invalidate(), prepare: prepareTourShot }) : null;
     if (cameraTour) subsystemRegistry.register({ dispose: () => cameraTour.dispose() });
     function chooseAnisotropy(minimum, maximum) {
       const profileRange = state.profile.anisotropy || {
@@ -423,6 +446,16 @@ function setSrgbTexture(texture) {
     let groundOverlay = null;
     let currentGroundMuddy = false;
     let currentGrass = null;
+    let currentDetail = null;
+    // Set once the shader warm-up exists: a ground program that changes before
+    // the reveal links through compileAsync instead of blocking the first draw.
+    let warmGround = null;
+    // The slate's contact darkening (tree roots, lantern, rocks) and detail map
+    // slot: uniforms, so rocks arriving or shadows switching never recompile.
+    const groundContacts = createSlateContacts(estateContacts());
+    subsystemRegistry.register({
+      applyQuality(profile) { groundContacts.slateContactGain.value = profile?.shadows?.enabled ? 0.6 : 1; },
+    });
     const groundTextures = createGroundTextures({
         THREE: THREE,
         lowPower: state.lowPower,
@@ -445,18 +478,21 @@ function setSrgbTexture(texture) {
           const material = groundSurface?.material;
           if (!material) return;
           const { slate } = filmGroundSurface({ muddy: currentGroundMuddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL });
-          configureMudShading(material, currentGroundMuddy, quietSetting, filmActive, currentGrass, { slate });
+          configureMudShading(material, currentGroundMuddy, quietSetting, filmActive, currentGrass, { slate, detail: currentDetail, contacts: groundContacts });
+          warmGround?.();
           invalidateContent();
         },
-        onDetailChange({ colorMap, normalMap, normalScale, bumpMap, roughnessMap = null, muddy = false, filmTiled = false }) {
+        onDetailChange({ colorMap, normalMap, normalScale, bumpMap, roughnessMap = null, detailMap = null, muddy = false, filmTiled = false }) {
           const material = groundSurface?.material;
           if (!material) return;
           currentGroundMuddy = muddy;
+          currentDetail = detailMap;
           // The slate tint and shading follow the mode, not the published
           // maps, so the procedural loading and fallback surface is slate too.
           const surface = filmGroundSurface({ muddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL });
           if (qualityDebug) qualityDebug.groundTreatment = muddy ? "mud" : surface.slate ? "slate" : "baseline";
-          configureMudShading(material, muddy, quietSetting, filmActive, currentGrass, { slate: surface.slate });
+          configureMudShading(material, muddy, quietSetting, filmActive, currentGrass, { slate: surface.slate, detail: detailMap, contacts: groundContacts });
+          warmGround?.();
           for (const texture of [colorMap, normalMap, roughnessMap, bumpMap].filter(Boolean)) {
             if (!groundRepeats.has(texture)) groundRepeats.set(texture, texture.repeat.clone());
             texture.repeat.copy(groundRepeats.get(texture)).multiplyScalar(filmActive && !filmTiled ? 384 / 176 : 1);
@@ -492,9 +528,19 @@ function setSrgbTexture(texture) {
       environmentRoot.add(groundMesh));
     groundSurface = groundMesh;
     subsystemRegistry.register(groundTextures);
-    const hillSilhouette = createHillSilhouette({ groundHeight });
+    const hillSilhouette = createHillSilhouette({ groundHeight, skyRadius: WORLD.SKY_DOME_RADIUS,
+      shellOpacity: skyConfig.shellOpacity, sunPosition: WORLD.SUN_POSITION });
     environmentRoot.add(hillSilhouette.mesh);
     subsystemRegistry.register(hillSilhouette);
+    // The film's scattered rocks: loaded once the film is on and the tree has
+    // settled (high and balanced only), committed on a tour cut below.
+    const rockScatter = createRockScatter({
+      parent: environmentRoot, groundHeight, tier: assetTier, anisotropy: chooseAnisotropy(2, 6),
+      enabled: filmEnabled && !modes.legacy && modes.rocks,
+      compile: () => rendering.compileShaders(), contacts: groundContacts.slateContacts.value,
+      onStatus: (status) => { if (qualityDebug) qualityDebug.rocks = status; },
+    });
+    subsystemRegistry.register(rockScatter);
     const towerSystem = createSceneTower({
       parent: environmentRoot,
       profile: state.profile,
@@ -567,7 +613,7 @@ function setSrgbTexture(texture) {
     // anchor in an otherwise cool night, and reads as distance rather than clutter.
     filmScene = createFilmScene({ ground: groundSurface, groundHeight, rendering, atmosphere: atmosphereSystem,
       effects: filmEffects, skyMaterial: skyShell.material,
-      onGroundChange(active) { environmentSystem.setFilmTreatment(active); hillSilhouette.setFilmTreatment(active); filmActive = active; towerSystem.setFilmTreatment(active); completeTower?.setFilmTreatment(active); groundTextures.setFilmActive(active); },
+      onGroundChange(active) { environmentSystem.setFilmTreatment(active); hillSilhouette.setFilmTreatment(active); filmActive = active; towerSystem.setFilmTreatment(active); completeTower?.setFilmTreatment(active); groundTextures.setFilmActive(active); rockScatter.setFilmActive(active); },
     });
     subsystemRegistry.register(filmScene);
     function getReplacedMeshes() {
@@ -618,6 +664,9 @@ function setSrgbTexture(texture) {
     // visible stays hidden until its programs are ready.
     let canvasShown = false;
     const shaderWarmup = createShaderWarmup({ compile: () => rendering.compileShaders() });
+    warmGround = () => {
+      if (!canvasShown) warmShaders("ground");
+    };
     function warmShaders(label, subject = null) {
       const start = sceneNow();
       shaderWarmup.warm(subject, (ready) => {
@@ -681,7 +730,7 @@ function setSrgbTexture(texture) {
       },
       onTreeReady(asset) {
         const assemblyStart = sceneNow();
-        const replacement = createTreeArchitecture({ asset, groundHeight, anisotropy: chooseAnisotropy(2, 6), anchor: earthFooting ? [55.1, 36.1] : [58, 38] });
+        const replacement = createTreeArchitecture({ asset, groundHeight, anisotropy: chooseAnisotropy(2, 6), anchor: earthFooting ? [ESTATE.tree.x, ESTATE.tree.z] : [58, 38] });
         replacement.applyQuality(state.profile);
         environmentRoot.add(replacement.root);
         const replacesVisible = Boolean(classicTree?.visible);
@@ -712,6 +761,11 @@ function setSrgbTexture(texture) {
         // Record the status first: a throwing fallback must not leave the
         // camera waiting on a load that has already ended.
         cinematic.setStatus(status);
+        // A model's arrival or loss clears the camera's fits and can change
+        // the tour's next shot.
+        cameraTour?.prepareNext();
+        // The rocks wait for the tree channel to settle either way.
+        if (status.kind === "tree") rockScatter.setTreeStatus(status.status);
         if (!runtimeDisposed && (status.status === "fallback" ||
           (status.status === "procedural" && sceneReadyMarked))) {
           try {
@@ -808,22 +862,32 @@ function setSrgbTexture(texture) {
       panelHold?.redraw();
       visitorHold?.redraw();
       frameScheduler?.invalidate();
+      cameraTour?.prepareNext();
     }
+    // The scene fills its fixed, full-bleed container. On iPhone Safari that
+    // box can outgrow innerHeight (collapsing or translucent toolbars,
+    // standalone mode), so the drawing buffer follows the container's own
+    // size, and a ResizeObserver catches changes that fire no window resize.
     const resizeController = createSceneResizeController({
       onResize: applySceneSize,
       readSize() {
+        const rect = container?.getBoundingClientRect?.();
+        const measured = rect && rect.width > 0 && rect.height > 0;
         return {
-          height: window.innerHeight,
+          height: measured ? Math.round(rect.height) : window.innerHeight,
           pixelRatio: window.devicePixelRatio || 1,
-          width: window.innerWidth,
+          width: measured ? Math.round(rect.width) : window.innerWidth,
         };
       },
     });
+    const containerResizeObserver =
+      typeof ResizeObserver === "function" && container ? new ResizeObserver(() => resizeController.resize()) : null;
+    containerResizeObserver?.observe(container);
     // viewport.height is refreshed inside applySceneSize (the resize handler)
     // on every resize, so reading it inside the scroll handler avoids a
     // layout-flushing window.innerHeight access per scroll event.
     const onWindowResize = () => resizeController.resize();
-    const onFontsLoaded = () => { cinematicArea = measureCinematicArea(viewport.width, viewport.height); invalidateContent(); };
+    const onFontsLoaded = () => { cinematicArea = measureCinematicArea(viewport.width, viewport.height); cameraTour?.prepareNext(); invalidateContent(); };
     document.fonts?.addEventListener?.("loadingdone", onFontsLoaded);
     const onWindowScroll = () => {
       viewport.scrollTarget = Math.min(window.scrollY / (1.8 * viewport.height), 1.25);
@@ -838,6 +902,8 @@ function setSrgbTexture(texture) {
     let debugRenderFrameCount = 0;
     let debugRenderWindowStart = null;
     let firstFrameDrawn = false;
+    // Governor steps link their programs at once and apply on a tour cut.
+    const adaptiveSteps = createDeferredQualityStep({ prepare: (profile) => rendering.prepareQuality(profile) });
     function updateSceneFrame({
       deltaSeconds,
       elapsedSeconds: elapsedTime,
@@ -846,14 +912,35 @@ function setSrgbTexture(texture) {
     }) {
       const frameStart = firstFrameDrawn ? 0 : sceneNow();
       // Samples are rAF intervals, not render cost; take them only while the
-      // revealed scene animates continuously, outside a post-event hold.
+      // revealed scene animates continuously, outside a post-event hold, and
+      // not while a step waits for its cut.
       const revealed = sceneReadyMarked && cinematic.ready;
-      const adaptiveProfile = revealed && !reducedMotion
+      const nowMs = 1e3 * elapsedTime;
+      const sampledProfile = revealed && !reducedMotion && !adaptiveSteps.pending
         ? qualityState.sampleRevealed?.({ frameMs: 1e3 * sampleDeltaSeconds,
-          nowMs: 1e3 * elapsedTime, timestamp, profile: state.profile })
+          nowMs, timestamp, profile: state.profile })
         : null;
-      // Each step changes the tier or, below balanced, only the pixel ratio.
+      if (sampledProfile) adaptiveSteps.queue(sampledProfile, nowMs);
+      const tourPhase = cameraTour?.update({ elapsedSeconds: elapsedTime, reducedMotion,
+        developer: Boolean(scene.devMode?.active), panelOpen: document.body.hasAttribute("data-panel-open") }) ?? null;
+      const transition = cameraTour?.transition ?? TOUR_IDLE;
+      // Each step changes the tier or, below balanced, only the pixel ratio. A
+      // running tour takes it on a cut, where the crossfade's kept frame hides
+      // its one-off work.
+      const adaptiveProfile = adaptiveSteps.take({ cut: transition.cut, running: cameraTour?.running === true, nowMs });
       if (adaptiveProfile) applyActiveQualityProfile(adaptiveProfile, "adaptive");
+      // The rocks appear on a cut too, with their ground contacts.
+      if (rockScatter.take({ cut: transition.cut, running: cameraTour?.running === true, nowMs })) {
+        groundContacts.slateRockContact.value = 1;
+        rendering.invalidateShadows();
+        qualityState.holdSampling();
+        invalidateContent();
+      }
+      // The capture, cut and first dissolve frames carry one-off work, not load.
+      // A frame samples the interval before it, so this frame's sample (above)
+      // predates the capture; the next three cover capture, cut and dissolve.
+      if (transition.capture) qualityState.skipSamples?.(3);
+      rendering.postprocessPipeline.setTransition?.(transition);
       const activeProfile = state.profile,
         cameraProfile = compositionState.profile.camera || fallbackComposition.camera,
         orbitMotionScale = 1;
@@ -872,9 +959,6 @@ function setSrgbTexture(texture) {
           0.6 * Math.sin(0.13 * elapsedTime) * orbitMotionScale,
         lookAtHeight = cameraProfile.lookAtBase + cameraProfile.lookAtScrollDelta * viewport.scroll,
         orbitDistance = cameraProfile.orbitScale * (scrolledOrbitBase - cameraProfile.orbitTrim);
-      const tourPhase = cameraTour?.update({ elapsedSeconds: elapsedTime, reducedMotion,
-        developer: Boolean(scene.devMode?.active), panelOpen: document.body.hasAttribute("data-panel-open") }) ?? null;
-      rendering.postprocessPipeline.setFade?.(cameraTour?.fade ?? 0);
       const cinematicApplied = cinematic.apply({ width: viewport.width, height: viewport.height,
         elapsedSeconds: elapsedTime, reducedMotion, developer: Boolean(scene.devMode?.active), tourPhase, fallbackFov: cameraProfile.fov || 45 });
       if (scene.devMode?.active && typeof scene.devMode.update === "function") scene.devMode.update(camera, deltaSeconds);
@@ -893,7 +977,7 @@ function setSrgbTexture(texture) {
       quietScene.enforce();
       if (filmActive) filmScene.finishFrame(camera, cloudLookTarget, cinematic.frame,
         viewport.width < 900 && cinematic.shot?.arc === 2, (cinematicArea?.top || 200) / viewport.height);
-      if (qualityDebug) qualityDebug.cinematic = { tour: cameraTour ? { ...cameraTour.state, fade: cameraTour.fade } : null, film: filmActive, shot: cinematic.shot?.name, selected: cinematic.selected, angle: cinematic.angle + 1, current: cinematic.current, quiet: quietScene.active };
+      if (qualityDebug) qualityDebug.cinematic = { tour: cameraTour ? { ...cameraTour.state, transition: { ...transition } } : null, film: filmActive, shot: cinematic.shot?.name, selected: cinematic.selected, angle: cinematic.angle + 1, current: cinematic.current, quiet: quietScene.active };
       // Drawing while a warm-up links would block on it; the hidden canvas waits.
       if (canvasShown || !shaderWarmup.pending) {
         rendering.update();
@@ -905,6 +989,8 @@ function setSrgbTexture(texture) {
       panelHold?.frameRendered();
       visitorHold?.frameRendered();
       if (qualityDebug) {
+        // Linked programs: a first crossfade or quality step should add none.
+        qualityDebug.programs = renderer.info?.programs?.length ?? null;
         debugRenderWindowStart ??= timestamp;
         debugRenderFrameCount += 1;
         const debugRenderWindowMs = timestamp - debugRenderWindowStart;
@@ -921,7 +1007,11 @@ function setSrgbTexture(texture) {
       }
       const sceneShown = !sceneFailed && (cinematic.ready || Boolean(scene.devMode?.active)) &&
         (canvasShown || !shaderWarmup.pending);
-      if (sceneShown && !canvasShown) markScene("reveal");
+      if (sceneShown && !canvasShown) {
+        markScene("reveal");
+        // The rocks fetch and link only after the reveal, off its critical path.
+        rockScatter.setRevealed();
+      }
       canvasShown = sceneShown;
       container?.classList.toggle("is-ready", sceneShown);
       // Until the reveal, the transparent canvas redraws only when invalidated
@@ -931,6 +1021,9 @@ function setSrgbTexture(texture) {
       if (sceneShown) visitorHold?.reveal();
     }
     frameScheduler = createSceneFrameScheduler({
+      // Renders land evenly on every nth vsync near 60 Hz (144 Hz draws 72
+      // fps); touch screens stay at or below 60 to save battery.
+      displayCadence: { baseRate: 60, round: qualityState.touchPrimary ? "ceil" : "floor" },
       isRenderable() {
         return !document.hidden && sceneVisible && webglContextAvailable && !sceneFailed;
       },
@@ -1023,6 +1116,7 @@ function setSrgbTexture(texture) {
       panelObserver?.disconnect();
       panelHold.dispose();
       visitorHold.dispose();
+      containerResizeObserver?.disconnect();
       resizeController.dispose();
       frameScheduler.dispose();
       if (scene.devMode && typeof scene.devMode.dispose === "function") {

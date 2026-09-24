@@ -1,4 +1,7 @@
 import { resolveSceneModes } from "./scene-modes.js";
+import { DEPTH_LAYER } from "./depth-layers.js";
+import { HORIZON_HAZE } from "./hill-silhouette.js";
+import { ESTATE, estateLantern, estatePoint } from "./estate-layout.js";
 // The estate's human scale for props, trees and mud tiles: one doorway height.
 // It was measured on the earlier stone tower's arched door (sill 1.64 to arch
 // ~8.24). The timber lookout keeps the same scale: its cabin rises about 6.5
@@ -113,15 +116,20 @@ const TERRAIN_DUNE_GLSL = TERRAIN_DUNE_TERMS.map(
 ).join(" + ");
 
 // The default film slate's calm wet sheen. Terrain hollows and the map's dark
-// crack texels hold water; the worn footing, roots and path stay dry. Wet
-// ground is smoother and darker, its direct highlight is clamped a little
-// less, and a low Fresnel term reflects a mostly neutral share of the fog
-// color at grazing angles. Both lifts are kept well under the dry ground's
-// own radiance, so distant ground does not wash out pale blue-grey.
+// crack texels hold water, and a halo around the tree stays damp under its
+// drip line; the tower footing, the tree's root plate and the path stay dry,
+// except where the path crosses the lantern clearing. Wet ground is smoother
+// and darker, its direct highlight is clamped a little less, and a low Fresnel
+// term reflects a mostly neutral share of the fog color at grazing angles.
+// Both lifts are kept well under the dry ground's own radiance, so distant
+// ground does not wash out pale blue-grey.
 export const SLATE_WET = Object.freeze({
   hollow: Object.freeze([-3.2, -1.0]), // dune height: fully wet below, dry above
   crack: Object.freeze([0.07, 0.18]), // linear map luminance: dark cracks hold water
   crackWeight: 0.55,
+  halo: Object.freeze([6.0, 16.0]), // distance from the tree: damp within, dry beyond
+  haloWeight: 0.45,
+  rootDry: Object.freeze([ESTATE.tree.root, 5.7]), // the root plate stays dry
   roughness: 0.5,
   roughnessWeight: 0.75,
   darken: 0.14,
@@ -130,31 +138,93 @@ export const SLATE_WET = Object.freeze({
   fresnelNeutral: 0.6, // share of the fog reflection taken at the fog's own luminance
 });
 
-// Close-range detail for the slate. The classic 22-unit tile holds about 46
-// texels per world unit, which reads soft right in front of the lens (the
-// Lantern study). Near the camera only, the same normal map is sampled again,
-// finer and rotated so it never lines up with the base tile's mirror seams.
-export const SLATE_DETAIL = Object.freeze({
-  scale: 3.7, // times the base repeat: about a 6-unit tile
-  rotation: 0.6435, // radians (a 3-4-5 rotation: cos .8, sin .6)
-  strength: 0.7, // added tangent-space slope at full weight (0.25 did not show)
-  near: Object.freeze([6.0, 18.0]), // view distance: full detail within, none beyond
+// The seamless slate v2 tile (Assets/Materials/slate-v2), repeated every 22
+// units. A second lookup of the same tile, 1/0.866 larger and turned 126.87
+// degrees (a 3-4-5 turn), is blended in by a 17-unit noise and by which sample
+// is higher (lighter), with the blend's lost contrast restored about the tile's
+// mean linear colour (delivery-report.json). The detail map, a 5.03-unit high
+// band turned 36.87 degrees, adds close relief and grain within 6-28 units of
+// the lens, and a 53-unit noise varies the tone.
+export const SLATE_TILING = Object.freeze({
+  tile: 22,
+  second: Object.freeze({
+    scale: 0.866,
+    turn: Object.freeze([-0.6, 0.8, -0.8, -0.6]), // column-major mat2
+    offset: Object.freeze([0.37, 0.61]),
+  }),
+  blendCell: 17,
+  blendGain: 2.4,
+  heightGain: 1.6,
+  mean: Object.freeze([0.2293, 0.2258, 0.2366]),
+  macroCell: 53,
+  detail: Object.freeze({
+    ratio: 4.37, // base tiles per detail tile: 22 / 4.37 = 5.03 units
+    turn: Object.freeze([0.8, 0.6, -0.6, 0.8]),
+    strength: 2.4, // tangent slope per grey step of one texel (about the base map's relief)
+    albedo: 0.18,
+    near: Object.freeze([6.0, 28.0]), // view distance: full detail within, none beyond
+  }),
 });
-// Column-major rotation: slateTurn * uv turns the lookup, and xy * slateTurn
-// turns the sampled slope back into the base tile's tangent frame.
-const SLATE_DETAIL_TURN = [
-  Math.cos(SLATE_DETAIL.rotation),
-  Math.sin(SLATE_DETAIL.rotation),
-  -Math.sin(SLATE_DETAIL.rotation),
-  Math.cos(SLATE_DETAIL.rotation),
-]
-  .map((value) => value.toFixed(4))
-  .join(", ");
+
+// Moonlit puddles where the lantern's reflection lands in both lantern shots
+// and along the tree's drip line: zone anchors and angles as estatePoint()
+// takes them, radius in units, stretched along a world angle. Water fills the
+// detail map's low texels first, so edges follow the cracks. Puddles are glassy,
+// darker and calmer, catch the existing moon and lantern lights, and reflect a
+// sky built from the fog and zenith colours (no environment map).
+export const SLATE_PUDDLES = Object.freeze({
+  zones: Object.freeze([
+    Object.freeze({ anchor: "lantern", deg: -115, dist: 3.0, radius: 2.8, stretch: 1.4, along: 33 }),
+    Object.freeze({ anchor: "tree", deg: 185, dist: 8.0, radius: 2.2 }),
+    Object.freeze({ anchor: "tree", deg: 75, dist: 9.0, radius: 2.5 }),
+  ]),
+  roughness: 0.12,
+  darken: 0.5,
+  flatten: 0.85,
+  specular: 4,
+  sky: 2,
+  zenith: Object.freeze([0.07, 0.085, 0.13]),
+  lanternPathRelease: Object.freeze([4.0, 7.0]), // the path is wet only this near the lantern
+});
+
+// Contact darkening on the slate: slateContacts[i] = (x, z, radius, strength),
+// darkest within 0.55 radius and gone by 1.35. The first two (the tree's roots
+// and the lantern) are always on; the rest are the scattered rocks
+// (rock-scatter.js), gated by slateRockContact until they appear. Uniforms, so
+// shadows switching on or off (gain 0.6 with, 1 without) never recompiles.
+export const SLATE_CONTACTS = 16;
+// The set also holds the detail map's slot: a program reused from the cache
+// keeps its first uniform objects, so a new detail map must fill the same one.
+export function createSlateContacts(values = new Float32Array(SLATE_CONTACTS * 4)) {
+  return {
+    slateContacts: { value: values },
+    slateRockContact: { value: 0 },
+    slateContactGain: { value: 1 },
+    slateDetail: { value: null },
+  };
+}
+
+const glslVec = (values) => `vec${values.length}(${values.map(glslNumber).join(",")})`;
+const glslPoint = ({ x, z }) => glslVec([+x.toFixed(2), +z.toFixed(2)]);
+const TREE_GLSL = glslPoint(ESTATE.tree);
+const PATH_LENGTH = glslNumber(+Math.hypot(ESTATE.tree.x - ESTATE.tower.x, ESTATE.tree.z - ESTATE.tower.z).toFixed(2));
+const SECOND = SLATE_TILING.second,
+  DETAIL = SLATE_TILING.detail;
+// Each zone: 1 inside half its radius, 0 at its radius.
+const PUDDLE_GLSL = SLATE_PUDDLES.zones
+  .map(({ anchor, deg, dist, radius, stretch = 1, along = 0 }) => {
+    const offset = `(vMudWorld.xz-${glslPoint(estatePoint(anchor, deg, dist))})`,
+      c = +Math.cos((along * Math.PI) / 180).toFixed(4),
+      s = +Math.sin((along * Math.PI) / 180).toFixed(4);
+    const local = stretch === 1 ? offset : `mat2(${[c, -s, s, c].map(glslNumber)})*${offset}/vec2(${glslNumber(stretch)},1.)`;
+    return `1.-smoothstep(.5,1.,length(${local})/${glslNumber(radius)})`;
+  })
+  .reduce((all, zone) => `max(${all},${zone})`);
 
 // Film ground material, chosen from the mode rather than the published maps,
 // so the procedural surface shown while maps load, or after a fallback,
 // matches the loaded ground. `slate` (the default film ground) takes the
-// slate tint, the wet sheen and the close detail. `surface` is palette.js
+// slate tint, the wet sheen, puddles and contacts. `surface` is palette.js
 // GROUND_SURFACE_MATERIAL.
 export const FILM_EARTH_SURFACE = Object.freeze({ color: 0x615447, roughness: 0.93 });
 export function filmGroundSurface({ muddy = false, film = false, slate = false, surface }) {
@@ -168,17 +238,33 @@ export function filmGroundSurface({ muddy = false, film = false, slate = false, 
 // under `film` — patchy grass blended in away from the worn tower/root rings
 // `earthContact` already tracks, using its own lower-frequency sine field so
 // it doesn't correlate with the earth patchiness pattern. `slate` adds the
-// default slate's wet sheen and close detail under `film`; the earth
-// comparison's grass never takes them.
-export function configureMudShading(material, active, quiet = false, film = false, grass = null, { slate = false } = {}) {
+// default slate's wetness, puddles and contacts under `film`; the earth
+// comparison's grass never takes them. `detail` is the slate's detail map: with
+// it (the authored maps) the slate also blends its two tile lookups and adds
+// the close relief; without it (the procedural surface while maps load, or
+// after a fallback) the `-p` program skips both. `contacts` is the shared
+// createSlateContacts() uniform set.
+export function configureMudShading(
+  material,
+  active,
+  quiet = false,
+  film = false,
+  grass = null,
+  { slate = false, detail = null, contacts = null } = {},
+) {
   const useGrass = Boolean(film && grass);
   const useWet = Boolean(film && slate && !grass);
+  const authored = Boolean(useWet && detail);
+  const uniforms = contacts ?? createSlateContacts();
+  if (authored) uniforms.slateDetail.value = detail;
   material.customProgramCacheKey = () =>
     film
       ? useGrass
         ? "moonlit-earth-grass-v1"
         : useWet
-          ? "moonlit-slate-v1"
+          ? authored
+            ? "moonlit-slate-v2"
+            : "moonlit-slate-v2-p"
           : "moonlit-earth-v2"
       : active
         ? quiet
@@ -191,6 +277,7 @@ export function configureMudShading(material, active, quiet = false, film = fals
       shader.uniforms.grassColor = { value: grass.grassColorMap };
       shader.uniforms.grassMask = { value: grass.grassMaskMap };
     }
+    if (useWet) Object.assign(shader.uniforms, uniforms);
     // The dune field varies over 100+ world units; the film terrain's 3-unit
     // quads carry it per vertex, so fragments only read the interpolated height.
     const wetVarying = useWet ? "varying float vSlateDune;\n" : "";
@@ -200,11 +287,34 @@ export function configureMudShading(material, active, quiet = false, film = fals
       "#include <begin_vertex>\nvMudWorld = (modelMatrix * vec4(position, 1.0)).xyz;" +
         (useWet ? `\nvSlateDune = ${TERRAIN_DUNE_GLSL};` : ""),
     );
+    // Hoskins' sine-free hash, so every GPU draws the same value noise.
     shader.fragmentShader =
       (useGrass ? "uniform sampler2D grassColor;\nuniform sampler2D grassMask;\n" : "") +
       "varying vec3 vMudWorld;\n" +
       wetVarying +
+      (useWet
+        ? `uniform vec4 slateContacts[${SLATE_CONTACTS}];
+uniform float slateRockContact, slateContactGain;
+${authored ? "uniform sampler2D slateDetail;\n" : ""}float slateHash(vec2 p){vec3 q=fract(p.xyx*.1031);q+=dot(q,q.yzx+33.33);return fract((q.x+q.y)*q.z);}
+float slateNoise(vec2 p){vec2 i=floor(p),f=fract(p);f*=f*(3.-2.*f);return mix(mix(slateHash(i),slateHash(i+vec2(1,0)),f.x),mix(slateHash(i+vec2(0,1)),slateHash(i+1.),f.x),f.y);}
+`
+        : "") +
       shader.fragmentShader;
+    if (authored)
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <map_fragment>",
+        `#ifdef USE_MAP
+      mat2 slateTurnB = mat2(${SECOND.turn.map(glslNumber)}), slateTurnD = mat2(${DETAIL.turn.map(glslNumber)});
+      vec2 slateUvB = slateTurnB*vMapUv*${glslNumber(SECOND.scale)}+${glslVec(SECOND.offset)}, slateUvD = slateTurnD*vMapUv*${glslNumber(DETAIL.ratio)};
+      vec4 slateA = texture2D(map, vMapUv), slateB = texture2D(map, slateUvB);
+      float slateW = clamp((slateNoise(vMudWorld.xz/${glslNumber(SLATE_TILING.blendCell)})-.5)*${glslNumber(SLATE_TILING.blendGain)}+dot(slateB.rgb-slateA.rgb,vec3(.2126,.7152,.0722))*${glslNumber(SLATE_TILING.heightGain)}+.5,0.,1.);
+      float slateH = texture2D(slateDetail, slateUvD).r, slateNear = 1.-smoothstep(${DETAIL.near.map(glslNumber)},length(vViewPosition));
+      vec3 slateMean = ${glslVec(SLATE_TILING.mean)};
+      vec4 sampledDiffuseColor = vec4(max(slateMean+(mix(slateA.rgb,slateB.rgb,slateW)-slateMean)/length(vec2(slateW,1.-slateW)),0.)*(1.+(slateH-.5)*${glslNumber(DETAIL.albedo)}*slateNear)*(.93+.14*slateNoise(vMudWorld.xz/${glslNumber(SLATE_TILING.macroCell)})),1.);
+      diffuseColor *= sampledDiffuseColor;
+      #endif`,
+      );
+    const tree = ESTATE.tree;
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <roughnessmap_fragment>",
       `#include <roughnessmap_fragment>
@@ -216,7 +326,7 @@ export function configureMudShading(material, active, quiet = false, film = fals
       ${
         quiet && !film
           ? `
-      float rootContact = 1.0 - smoothstep(1.8, 6.5, length(vMudWorld.xz - vec2(55.1,36.1)));
+      float rootContact = 1.0 - smoothstep(1.8, 6.5, length(vMudWorld.xz - ${TREE_GLSL}));
       float dryContact = max(footingDry, rootContact);
       roughnessFactor = mix(0.94, max(0.72, roughnessFactor), smoothstep(0.84, 0.99, mudPatch) * (1.0 - dryContact));
       diffuseColor.rgb *= 1.0 - 0.08 * rootContact;
@@ -227,10 +337,10 @@ export function configureMudShading(material, active, quiet = false, film = fals
         film
           ? `
       float earthBroad = .5 + .16*sin(vMudWorld.x*.043 + sin(vMudWorld.z*.031)) + .12*sin(vMudWorld.z*.067 + sin(vMudWorld.x*.052)) + .08*sin((vMudWorld.x+vMudWorld.z)*.109);
-      float earthContact = max(1.0-smoothstep(5.0,13.0,length(vMudWorld.xz)), 1.0-smoothstep(2.5,10.0,length(vMudWorld.xz-vec2(55.1,36.1))));
-      vec2 pathAxis = normalize(vec2(55.1,36.1));
-      float along = clamp(dot(vMudWorld.xz,pathAxis),0.0,65.87);
-      vec2 pathCenter = pathAxis*along+vec2(-pathAxis.y,pathAxis.x)*sin(along/65.87*6.283185)*2.4;
+      float earthContact = max(1.0-smoothstep(5.0,13.0,length(vMudWorld.xz)), 1.0-smoothstep(2.5,10.0,length(vMudWorld.xz-${TREE_GLSL})));
+      vec2 pathAxis = normalize(${TREE_GLSL});
+      float along = clamp(dot(vMudWorld.xz,pathAxis),0.0,${PATH_LENGTH});
+      vec2 pathCenter = pathAxis*along+vec2(-pathAxis.y,pathAxis.x)*sin(along/${PATH_LENGTH}*6.283185)*${glslNumber(ESTATE.path.bend)};
       float approach = 1.0-smoothstep(1.2,3.8,length(vMudWorld.xz-pathCenter));
       float worn = max(earthContact,approach);
       float damp = smoothstep(.78,.98,earthBroad)*(1.0-earthContact);
@@ -246,9 +356,17 @@ export function configureMudShading(material, active, quiet = false, film = fals
       #else
       float slateCrack = 0.0;
       #endif
-      float slateWet = clamp(max(slateHollow, slateCrack*${glslNumber(SLATE_WET.crackWeight)}), 0.0, 1.0)*(1.0-worn);
-      roughnessFactor = mix(roughnessFactor, ${glslNumber(SLATE_WET.roughness)}, slateWet*${glslNumber(SLATE_WET.roughnessWeight)});
-      diffuseColor.rgb *= 1.0 - ${glslNumber(SLATE_WET.darken)}*slateWet;
+      ${authored ? "" : "float slateH = .5;"}
+      float slateTree = length(vMudWorld.xz-${TREE_GLSL});
+      float slateDry = max(max(footingDry, 1.0-smoothstep(${SLATE_WET.rootDry.map(glslNumber)}, slateTree)), approach*smoothstep(${SLATE_PUDDLES.lanternPathRelease.map(glslNumber)}, length(vMudWorld.xz-${glslPoint(estateLantern())})));
+      float slateWet = clamp(max(slateHollow, slateCrack*${glslNumber(SLATE_WET.crackWeight)}) + (1.0-smoothstep(${SLATE_WET.halo.map(glslNumber)}, slateTree))*${glslNumber(SLATE_WET.haloWeight)}, 0.0, 1.0)*(1.0-slateDry);
+      float slatePuddle = smoothstep(-.04, .04, ${PUDDLE_GLSL}*(.45+.4*slateNoise(vMudWorld.xz*.9))-slateH)*(1.0-slateDry);
+      slateWet = max(slateWet, slatePuddle);
+      roughnessFactor = mix(mix(roughnessFactor, ${glslNumber(SLATE_WET.roughness)}, slateWet*${glslNumber(SLATE_WET.roughnessWeight)}), ${glslNumber(SLATE_PUDDLES.roughness)}, slatePuddle);
+      diffuseColor.rgb *= (1.0 - ${glslNumber(SLATE_WET.darken)}*slateWet)*(1.0 - ${glslNumber(SLATE_PUDDLES.darken)}*slatePuddle);
+      float slateAo = 0.0;
+      for (int i = 0; i < ${SLATE_CONTACTS}; i++) slateAo = max(slateAo, (1.0-smoothstep(.55, 1.35, length(vMudWorld.xz-slateContacts[i].xy)/max(slateContacts[i].z, .001)))*slateContacts[i].w*(i < 2 ? 1.0 : slateRockContact));
+      diffuseColor.rgb *= 1.0 - slateAo*slateContactGain;
       `
           : ""
       }
@@ -269,18 +387,17 @@ export function configureMudShading(material, active, quiet = false, film = fals
       }
     `,
     );
-    if (useWet)
+    // Both tile lookups' normals, B's turned back into A's tangent frame, then
+    // the detail map's slope from two more taps a texel away; puddles calm both.
+    if (authored)
       shader.fragmentShader = shader.fragmentShader.replace(
         "#include <normal_fragment_maps>",
-        `#include <normal_fragment_maps>
-      #ifdef USE_NORMALMAP_TANGENTSPACE
-      mat2 slateTurn = mat2(${SLATE_DETAIL_TURN});
-      vec3 slateDetailN = texture2D(normalMap, slateTurn*vNormalMapUv*${glslNumber(SLATE_DETAIL.scale)}).xyz*2.0-1.0;
-      float slateNear = 1.0 - smoothstep(${glslNumber(SLATE_DETAIL.near[0])}, ${glslNumber(SLATE_DETAIL.near[1])}, length(vViewPosition));
-      mapN.xy += (slateDetailN.xy*slateTurn)*(${glslNumber(SLATE_DETAIL.strength)}*slateNear);
+        `#ifdef USE_NORMALMAP_TANGENTSPACE
+      vec3 slateNA = texture2D(normalMap, vNormalMapUv).xyz*2.-1., slateNB = texture2D(normalMap, slateUvB).xyz*2.-1.;
+      vec2 slateHx = vec2(texture2D(slateDetail, slateUvD+vec2(1./512.,0.)).r, texture2D(slateDetail, slateUvD+vec2(0.,1./512.)).r);
+      vec3 mapN = vec3((mix(slateNA.xy, slateNB.xy*slateTurnB, slateW)/length(vec2(slateW,1.-slateW))*normalScale+(slateH-slateHx)*slateTurnD*(${glslNumber(DETAIL.strength)}*slateNear))*(1.-${glslNumber(SLATE_PUDDLES.flatten)}*slatePuddle), mix(slateNA.z, slateNB.z, slateW));
       normal = normalize(tbn*mapN);
-      #endif
-    `,
+      #endif`,
       );
     if (film)
       shader.fragmentShader = shader.fragmentShader
@@ -293,11 +410,12 @@ export function configureMudShading(material, active, quiet = false, film = fals
       ${
         useWet
           ? `
-      reflectedLight.directSpecular *= 1.0 + ${glslNumber(SLATE_WET.specular)}*slateWet;
+      reflectedLight.directSpecular *= (1.0 + ${glslNumber(SLATE_WET.specular)}*slateWet)*(1.0 + ${glslNumber(SLATE_PUDDLES.specular)}*slatePuddle);
       #ifdef USE_FOG
       float slateFresnel = pow(1.0 - saturate(dot(geometryNormal, geometryViewDir)), 5.0);
       vec3 slateSheen = mix(fogColor, vec3(dot(fogColor, vec3(.2126,.7152,.0722))), ${glslNumber(SLATE_WET.fresnelNeutral)});
       reflectedLight.indirectSpecular += slateSheen*(slateWet*slateFresnel*${glslNumber(SLATE_WET.fresnel)});
+      reflectedLight.indirectSpecular += mix(fogColor, ${glslVec(SLATE_PUDDLES.zenith)}, smoothstep(0.0, 0.5, (reflect(-geometryViewDir, normal)*mat3(viewMatrix)).y))*((.02+.98*slateFresnel)*${glslNumber(SLATE_PUDDLES.sky)}*slatePuddle);
       #endif
       `
           : ""
@@ -308,9 +426,11 @@ export function configureMudShading(material, active, quiet = false, film = fals
           "#include <fog_fragment>",
           `#include <fog_fragment>
       #ifdef USE_FOG
-      float earthHorizon = smoothstep(116.0, 174.0, max(abs(vMudWorld.x),abs(vMudWorld.z)));
+      float earthHorizon = max(smoothstep(116.0, 174.0, max(abs(vMudWorld.x),abs(vMudWorld.z))),
+        smoothstep(${glslNumber(HORIZON_HAZE.near)}, ${glslNumber(HORIZON_HAZE.far)}, vFogDepth));
       gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, earthHorizon);
       #endif
+      gl_FragColor.a = ${DEPTH_LAYER.ground};
     `,
         );
   };
