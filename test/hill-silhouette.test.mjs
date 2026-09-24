@@ -12,6 +12,8 @@ import {
   HORIZON_HAZE,
   MOUNTAINS,
   mountainCrests,
+  SNOW,
+  snowReach,
 } from "../src/scene/hill-silhouette.js";
 import { FILM_SKY_GLSL } from "../src/scene/estate-sky.js";
 import { createStarfield } from "../src/scene/starfield.js";
@@ -253,22 +255,28 @@ test("snow caps only the high crests of the farther ranges", () => {
     terrain = geometry.attributes.aTerrain,
     n = MOUNTAINS.columns,
     perRange = MOUNTAINS.rows.length * n;
+  // aTerrain.w carries the column's crest (0 on the near range); the shader
+  // sizes the cap from it, as snowReach() does at its widest.
+  const snowy = (v) => snowReach(terrain.getX(v), terrain.getW(v));
   const snowIn = (from, to) =>
-    Math.max(
-      ...columns(from, to).flatMap((j) =>
-        crests.map((_, range) => terrain.getW(range * perRange + j)),
-      ),
-    );
+    columns(from, to).some((j) => crests.some((_, range) => snowy(range * perRange + j)));
   for (let v = 0; v < terrain.count; v++) {
     const range = Math.floor(v / perRange);
-    if (range === 0 || crests[range][v % n] < 3.8) assert.equal(terrain.getW(v), 0);
-    if (terrain.getW(v) > 0.27) assert.ok(elevationOf(p, v) >= 2.5);
+    if (range === 0) assert.equal(terrain.getW(v), 0);
+    else assert.equal(terrain.getW(v), Math.fround(crests[range][v % n]));
+    if (crests[range][v % n] <= SNOW.line) assert.equal(snowy(v), 0, "low crests stay bare");
+    if (snowy(v)) assert.ok(elevationOf(p, v) >= SNOW.line - SNOW.max * 1.35, `${v}`);
   }
-  assert.ok(snowIn(141, 164) > 0.5, "The watch massif carries snow");
-  assert.ok(snowIn(5, 17) > 0.5, "the Close-up horn carries snow");
+  // Caps reach further down taller peaks, and never past the deepest cap.
+  assert.equal(snowReach(0.5, 4), 1);
+  assert.equal(snowReach(1.2, 4), 0);
+  assert.equal(snowReach(2.5, 9), 1);
+  assert.equal(snowReach(4.5, 20), 0);
+  assert.ok(snowIn(141, 164), "The watch massif carries snow");
+  assert.ok(snowIn(5, 17), "the Close-up horn carries snow");
+  assert.ok(snowIn(95, 120), "the Portrait peaks carry snow");
   geometry.dispose();
 });
-
 test("hill treatment swaps and reuses resources while restoring the original baseline", () => {
   const hill = createHillSilhouette({ groundHeight }),
     original = hill.mesh.geometry,

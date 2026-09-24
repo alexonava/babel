@@ -217,6 +217,7 @@ test("mud shading compiles only in mud mode and restores the baseline shader", a
 });
 
 const FILM_CHUNKS = [
+  "#include <map_fragment>",
   "#include <roughnessmap_fragment>",
   "#include <normal_fragment_maps>",
   "#include <lights_fragment_end>",
@@ -224,8 +225,10 @@ const FILM_CHUNKS = [
 ].join("\n");
 
 test("each ground shading has its own program cache key; the slate's shading needs film and no grass", async () => {
-  const { configureMudShading, SLATE_WET, SLATE_DETAIL } = await import("../src/scene/mud-ground.js");
+  const { configureMudShading, createSlateContacts, SLATE_WET, SLATE_TILING, SLATE_PUDDLES, SLATE_CONTACTS } =
+    await import("../src/scene/mud-ground.js");
   const grass = { grassColorMap: {}, grassMaskMap: {}, grassTile: 9 };
+  const detail = { isTexture: true };
   const material = new MeshStandardMaterial();
   const compile = (...args) => {
     configureMudShading(material, ...args);
@@ -235,57 +238,75 @@ test("each ground shading has its own program cache key; the slate's shading nee
       fragmentShader: FILM_CHUNKS,
     };
     material.onBeforeCompile(shader);
-    return { key: material.customProgramCacheKey(), fragment: shader.fragmentShader };
+    return { key: material.customProgramCacheKey(), fragment: shader.fragmentShader, uniforms: shader.uniforms };
   };
-  for (const [args, key, slate] of [
-    [[false], "ground-baseline", false],
-    [[false, false, false, null, { slate: true }], "ground-baseline", false],
-    [[true, false], "mud-world-variation-v1", false],
-    [[true, true], "mud-quiet-earth-v2", false],
-    [[true, true, false, null, { slate: true }], "mud-quiet-earth-v2", false],
-    [[true, true, true], "moonlit-earth-v2", false],
-    [[true, true, true, grass], "moonlit-earth-grass-v1", false],
-    [[false, true, true, grass, { slate: true }], "moonlit-earth-grass-v1", false],
-    [[false, true, true, null, { slate: true }], "moonlit-slate-v1", true],
+  for (const [args, key, slate, authored] of [
+    [[false], "ground-baseline", false, false],
+    [[false, false, false, null, { slate: true, detail }], "ground-baseline", false, false],
+    [[true, false], "mud-world-variation-v1", false, false],
+    [[true, true], "mud-quiet-earth-v2", false, false],
+    [[true, true, false, null, { slate: true }], "mud-quiet-earth-v2", false, false],
+    [[true, true, true], "moonlit-earth-v2", false, false],
+    [[true, true, true, grass], "moonlit-earth-grass-v1", false, false],
+    [[false, true, true, grass, { slate: true, detail }], "moonlit-earth-grass-v1", false, false],
+    // The procedural surface while the maps load, or after a fallback.
+    [[false, true, true, null, { slate: true }], "moonlit-slate-v2-p", true, false],
+    [[false, true, true, null, { slate: true, detail }], "moonlit-slate-v2", true, true],
   ]) {
     const compiled = compile(...args);
     assert.equal(compiled.key, key, JSON.stringify(args));
     assert.equal(compiled.fragment.includes("slateWet"), slate, key);
-    assert.equal(compiled.fragment.includes("slateDetailN"), slate, key);
+    assert.equal(compiled.fragment.includes("slatePuddle"), slate, key);
+    // Only the authored maps blend two tile lookups and add the detail map.
+    assert.equal(compiled.fragment.includes("uniform sampler2D slateDetail;"), authored, key);
+    assert.equal(compiled.fragment.includes("#include <map_fragment>"), !authored, key);
     // Film ground writes the ground depth layer for the tour's staggered dissolve.
     assert.equal(compiled.fragment.includes("gl_FragColor.a = 0.6667;"), Boolean(args[2]), key);
   }
-  const { fragment } = compile(false, true, true, null, { slate: true });
+  const contacts = createSlateContacts();
+  const { fragment, uniforms } = compile(false, true, true, null, { slate: true, detail, contacts });
   assert.match(fragment, /gl_FragColor\.rgb = mix\(gl_FragColor\.rgb, fogColor, earthHorizon\);\s*#endif\s*gl_FragColor\.a = 0\.6667;/);
   // Camera-distance horizon shared with the mountains' feet (hill-silhouette.js HORIZON_HAZE).
   assert.match(fragment, /float earthHorizon = max\([^;]*,\s*smoothstep\(150\.0, 190\.0, vFogDepth\)\);/);
   // The film specular clamp stays; the wet term only relaxes it, within the
-  // brief's 1 + 1.6 bound, and at half of it so distant ground stays dark.
+  // brief's 1 + 1.6 bound; puddles take the existing moon and lantern glints.
   assert.match(fragment, /reflectedLight\.directSpecular \*= mix\(\.12, \.22, damp\);/);
-  assert.match(fragment, /reflectedLight\.directSpecular \*= 1\.0 \+ 0\.8\*slateWet;/);
+  assert.match(fragment, /reflectedLight\.directSpecular \*= \(1\.0 \+ 0\.8\*slateWet\)\*\(1\.0 \+ 4\.0\*slatePuddle\);/);
   assert.ok(SLATE_WET.specular <= 1.6);
-  assert.match(fragment, /float slateWet = clamp\([^;]*\)\*\(1\.0-worn\);/, "the worn footing, roots and path stay dry");
-  assert.match(fragment, /roughnessFactor = mix\(roughnessFactor, 0\.5, slateWet\*0\.75\);/);
-  assert.match(fragment, /diffuseColor\.rgb \*= 1\.0 - 0\.14\*slateWet;/);
-  // A low, mostly neutral grazing reflection: not the fog's full blue.
-  assert.match(
-    fragment,
-    /#ifdef USE_FOG\s*float slateFresnel = pow\(1\.0 - saturate\(dot\(geometryNormal, geometryViewDir\)\), 5\.0\);\s*vec3 slateSheen = mix\(fogColor, vec3\(dot\(fogColor, vec3\(\.2126,\.7152,\.0722\)\)\), 0\.6\);\s*reflectedLight\.indirectSpecular \+= slateSheen\*\(slateWet\*slateFresnel\*0\.15\);/,
-  );
   assert.ok(SLATE_WET.fresnel <= 0.2, "the grazing sheen stays low behind the intro text and in the distance");
   assert.ok(fragment.indexOf("slateWet = ") > fragment.indexOf("float worn ="), "wetness follows the worn mask");
-  // Close detail: the same normal map again, finer and turned, faded out with
-  // view distance, and only where the tangent-space normal map is bound.
-  const detail = fragment.slice(fragment.indexOf("#include <normal_fragment_maps>"), fragment.indexOf("#include <lights_fragment_end>"));
-  assert.match(detail, /#ifdef USE_NORMALMAP_TANGENTSPACE\s*mat2 slateTurn = mat2\(0\.8000, 0\.6000, -0\.6000, 0\.8000\);/);
-  assert.match(detail, /texture2D\(normalMap, slateTurn\*vNormalMapUv\*3\.7\)/);
-  assert.match(detail, /float slateNear = 1\.0 - smoothstep\(6\.0, 18\.0, length\(vViewPosition\)\);/);
-  assert.match(detail, /mapN\.xy \+= \(slateDetailN\.xy\*slateTurn\)\*\(0\.7\*slateNear\);\s*normal = normalize\(tbn\*mapN\);\s*#endif/);
-  assert.equal((fragment.match(/texture2D\(normalMap/g) || []).length, 1, "one extra normal-map fetch");
-  assert.ok(SLATE_DETAIL.scale > 3 && SLATE_DETAIL.scale % 1 !== 0, "a non-integer ratio keeps the detail off the base tile's mirror seams");
+  // The footing and root plate stay dry; the path is dry except in the lantern clearing.
+  assert.match(fragment, /float slateDry = max\(max\(footingDry, 1\.0-smoothstep\(3\.2,5\.7, slateTree\)\), approach\*smoothstep\(4\.0,7\.0, length\(vMudWorld\.xz-vec2\(50\.92,33\.36\)\)\)\);/);
+  assert.match(fragment, /float slateWet = clamp\([^;]*\)\*\(1\.0-slateDry\);/);
+  // Puddles fill the detail map's low texels, glassy and darker, with a sky
+  // reflection built from the fog and zenith colours (no environment map).
+  assert.match(fragment, /float slatePuddle = smoothstep\(-\.04, \.04, [^;]*-slateH\)\*\(1\.0-slateDry\);/);
+  assert.match(fragment, new RegExp(`mix\\(fogColor, vec3\\(${SLATE_PUDDLES.zenith.join(",").replaceAll(".", "\\.")}\\)`));
+  assert.ok(SLATE_PUDDLES.roughness < 0.2 && SLATE_PUDDLES.darken <= 0.5);
+  // Seamless tile: a second, larger lookup turned 126.87 degrees; contrast
+  // restored about the tile's mean; detail and macro variation.
+  assert.match(fragment, /slateUvB = slateTurnB\*vMapUv\*0\.866\+vec2\(0\.37,0\.61\)/);
+  assert.match(fragment, /\/length\(vec2\(slateW,1\.-slateW\)\)/);
+  const turn = (Math.atan2(SLATE_TILING.second.turn[1], SLATE_TILING.second.turn[0]) * 180) / Math.PI;
+  assert.ok(Math.abs(turn - 126.87) < 0.01, `${turn}`);
+  // Two normal fetches (both tile lookups) and three detail fetches.
+  assert.equal((fragment.match(/texture2D\(normalMap/g) || []).length, 2);
+  assert.equal((fragment.match(/texture2D\(slateDetail/g) || []).length, 3);
+  // Contact darkening: the tree and lantern always, rocks behind a uniform gate.
+  assert.match(fragment, new RegExp(`uniform vec4 slateContacts\\[${SLATE_CONTACTS}\\];`));
+  assert.match(fragment, /\(i < 2 \? 1\.0 : slateRockContact\)/);
+  assert.match(fragment, /diffuseColor\.rgb \*= 1\.0 - slateAo\*slateContactGain;/);
+  // The shared uniform objects: rocks arriving or shadows switching change
+  // values, never the program.
+  for (const name of ["slateContacts", "slateRockContact", "slateContactGain", "slateDetail"])
+    assert.equal(uniforms[name], contacts[name], name);
+  assert.equal(contacts.slateDetail.value, detail);
+  const key = material.customProgramCacheKey();
+  contacts.slateContactGain.value = 0.6;
+  contacts.slateRockContact.value = 1;
+  assert.equal(material.customProgramCacheKey(), key);
   material.dispose();
 });
-
 test("the film ground material follows the mode, so loading and fallback surfaces match", async () => {
   const { filmGroundSurface, FILM_EARTH_SURFACE } = await import("../src/scene/mud-ground.js");
   globalThis.window ??= { BabelSite: {} };
@@ -318,12 +339,12 @@ test("both ground shading call sites take the slate flag from the mode-derived s
   // onGrassChange
   assert.match(
     index,
-    /onGrassChange\(grassDetail\) \{[^}]*const \{ slate \} = filmGroundSurface\(\{ muddy: currentGroundMuddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL \}\);\s*configureMudShading\(material, currentGroundMuddy, quietSetting, filmActive, currentGrass, \{ slate \}\);/,
+    /onGrassChange\(grassDetail\) \{[^}]*const \{ slate \} = filmGroundSurface\(\{ muddy: currentGroundMuddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL \}\);\s*configureMudShading\(material, currentGroundMuddy, quietSetting, filmActive, currentGrass, \{ slate, detail: currentDetail, contacts: groundContacts \}\);/,
   );
   // onDetailChange: tint, roughness and metalness all come from the same surface.
   assert.match(
     index,
-    /const surface = filmGroundSurface\(\{ muddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL \}\);[^]*?configureMudShading\(material, muddy, quietSetting, filmActive, currentGrass, \{ slate: surface\.slate \}\);[^]*?material\.roughness = surface\.roughness;\s*material\.metalness = surface\.metalness;\s*material\.color\.setHex\(surface\.color\);/,
+    /const surface = filmGroundSurface\(\{ muddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL \}\);[^]*?configureMudShading\(material, muddy, quietSetting, filmActive, currentGrass, \{ slate: surface\.slate, detail: detailMap, contacts: groundContacts \}\);[^]*?material\.roughness = surface\.roughness;\s*material\.metalness = surface\.metalness;\s*material\.color\.setHex\(surface\.color\);/,
   );
   assert.equal((index.match(/configureMudShading\(/g) || []).length, 2);
 });

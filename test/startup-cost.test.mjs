@@ -477,8 +477,12 @@ test("the film ground starts from a flat preview and paints in full in the next 
   await flush();
   assert.deepEqual(
     requested,
-    ["/images/materials/ground-color-1024.webp", "/images/materials/ground-normal-1024.webp"],
-    "the default film slate requests only the authored ground pair: no earth, grass or desert bake",
+    [
+      "/images/materials/slate-color-1024.webp",
+      "/images/materials/slate-normal-1024.webp",
+      "/images/materials/slate-detail-512.webp",
+    ],
+    "the default film slate requests only its own three maps: no earth, grass or desert bake",
   );
   assert.ok(film.statuses.some((status) => status.status === "fallback" && status.material === "Cracked Desert Ground"));
   assert.equal(film.invalidations, 1, "a slate fallback finds the ground already painted");
@@ -552,7 +556,7 @@ test("the mud bake never runs on film pages that load the film ground, even with
   };
 
   for (const [search, tier, groundSize, maps, filmCanvases] of [
-    ["", "high", 1024, ["ground-color-1024", "ground-normal-1024"], 2],
+    ["", "high", 1024, ["slate-color-1024", "slate-normal-1024", "slate-detail-512"], 3],
     ["?ground=earth", "balanced", 512, ["earth-color-512", "earth-normal-512", "earth-roughness-512", "grass-color-512", "grass-mask-512"], 5],
   ]) {
     requested.length = 0;
@@ -610,7 +614,12 @@ test("scene bootstrap warms shaders before drawing and records start-up marks", 
     assert.ok(index.includes(`measureScene("${name}"`), name);
   }
   assert.match(index, /measureScene\(`shaders:\$\{label\}`, start\);/);
-  assert.match(index, /if \(sceneShown && !canvasShown\) markScene\("reveal"\);/);
+  // The rocks fetch and link only after the reveal.
+  assert.match(index, /if \(sceneShown && !canvasShown\) \{\s*markScene\("reveal"\);[^}]*rockScatter\.setRevealed\(\);\s*\}/);
+  // A ground program that changes before the reveal links through compileAsync
+  // (both shading call sites), so the first draw never blocks on it.
+  assert.equal((index.match(/contacts: groundContacts \}\);\s*warmGround\?\.\(\);/g) || []).length, 2);
+  assert.match(index, /warmGround = \(\) => \{\s*if \(!canvasShown\) warmShaders\("ground"\);\s*\};/);
 
   for (const path of ["shared/webgl-probe.js", "scene/quality.js", "scene/rendering.js"]) {
     assert.doesNotMatch(await source(path), /high-performance/, path);

@@ -23,7 +23,7 @@ test("CSS asset URLs and bytes are portable across checkout line endings", async
   try {
     await cp(path.join(projectRoot, "build.mjs"), path.join(fixture, "build.mjs"));
     await cp(path.join(projectRoot, "tools"), path.join(fixture, "tools"), { recursive: true });
-    for (const dir of ["src", "fonts", "images/architecture", ".well-known"]) {
+    for (const dir of ["src", "fonts", "images/architecture", "images/materials", ".well-known"]) {
       await mkdir(path.join(fixture, dir), { recursive: true });
     }
     for (const file of [
@@ -71,9 +71,12 @@ test("CSS asset URLs and bytes are portable across checkout line endings", async
       await writeFile(path.join(fixture, "images", `${name}.webp`), paper);
     }
     for (const tier of ["high", "balanced"]) {
-      for (const role of ["stairs", "wall", "base", "crown", "tower", "tree"]) {
+      for (const role of ["stairs", "wall", "base", "crown", "tower", "tree", "lichen-rock", "weathered-stone"]) {
         await writeFile(path.join(fixture, "images", "architecture", `${role}-${tier}.glb`), paper);
       }
+    }
+    for (const map of ["color-1024", "normal-1024", "color-512", "normal-512", "detail-512"]) {
+      await writeFile(path.join(fixture, "images", "materials", `slate-${map}.webp`), paper);
     }
 
     async function buildCss(css) {
