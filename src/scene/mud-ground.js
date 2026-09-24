@@ -1,4 +1,6 @@
 import { resolveSceneModes } from "./scene-modes.js";
+import { DEPTH_LAYER } from "./depth-layers.js";
+import { HORIZON_HAZE } from "./hill-silhouette.js";
 // The estate's human scale for props, trees and mud tiles: one doorway height.
 // It was measured on the earlier stone tower's arched door (sill 1.64 to arch
 // ~8.24). The timber lookout keeps the same scale: its cabin rises about 6.5
@@ -308,9 +310,11 @@ export function configureMudShading(material, active, quiet = false, film = fals
           "#include <fog_fragment>",
           `#include <fog_fragment>
       #ifdef USE_FOG
-      float earthHorizon = smoothstep(116.0, 174.0, max(abs(vMudWorld.x),abs(vMudWorld.z)));
+      float earthHorizon = max(smoothstep(116.0, 174.0, max(abs(vMudWorld.x),abs(vMudWorld.z))),
+        smoothstep(${glslNumber(HORIZON_HAZE.near)}, ${glslNumber(HORIZON_HAZE.far)}, vFogDepth));
       gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, earthHorizon);
       #endif
+      gl_FragColor.a = ${DEPTH_LAYER.ground};
     `,
         );
   };

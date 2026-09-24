@@ -5,7 +5,7 @@ import { PUSH_IN } from "./cinematic.js";
 export const TOUR_PER_SHOT = "shot";
 export const DEFAULT_TOUR_INTERVAL = TOUR_PER_SHOT;
 const TOUR_INTERVALS = Object.freeze([3, 5, 20]);
-export const TOUR_HOLD_FALLBACK = 11;
+export const TOUR_HOLD_FALLBACK = 7;
 const directedViews = Object.entries(DIRECTED_SHOTS).flatMap(([subject, shots]) =>
   shots.map((shot, angle) => ({ subject, angle, shot })),
 );
@@ -22,13 +22,14 @@ export function readTourInterval(search = "") {
 
 // Uses scene time rather than a separate timer: hidden/offscreen tabs do not skip
 // shots, and all geometry, materials and decoded images remain loaded.
-// Shots join by a crossfade: the post-process pipeline keeps the outgoing shot's
-// last frame and dissolves it into the live one over 1.2 seconds, or 30% of a
-// shorter hold. The kept frame keeps pushing in by `zoom`, matching the drift it
-// replaces. The upcoming shot is fitted in idle time `prepareAfter` seconds
-// after the dissolve, or by mid-hold.
+// Shots join by a depth-staggered dissolve: the post-process pipeline keeps the
+// outgoing shot's last frame and dissolves it into the live one over 1 second,
+// or 30% of a shorter hold, sky first, then mountains, ground and subject. The
+// kept frame keeps pushing in by `zoom`, matching the drift it replaces. The
+// upcoming shot is fitted in idle time `prepareAfter` seconds after the
+// dissolve, or by mid-hold.
 export const TOUR_TRANSITION = Object.freeze({
-  dissolve: 1.2,
+  dissolve: 1,
   maxShare: 0.3,
   prepareAfter: 1,
   minZoom: 0.004,

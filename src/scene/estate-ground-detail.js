@@ -5,6 +5,7 @@ import {
   Mesh,
   MeshLambertMaterial,
 } from "three";
+import { DEPTH_LAYER, stampDepthLayer } from "./depth-layers.js";
 
 // The same winding approach stays clear in every camera and quality tier.
 // Its centerline joins the tower's entrance side to the tree's lantern clearing.
@@ -72,7 +73,10 @@ export function createEstateGroundDetail(groundHeight) {
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
-  const material = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide });
+  const material = stampDepthLayer(
+    new MeshLambertMaterial({ vertexColors: true, side: DoubleSide }),
+    DEPTH_LAYER.ground,
+  );
   const mesh = new Mesh(geometry, material);
   mesh.name = "estate-ground-growth";
   mesh.castShadow = mesh.receiveShadow = false;

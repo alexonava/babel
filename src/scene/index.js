@@ -253,6 +253,8 @@ function setSrgbTexture(texture) {
       world: WORLD,
     });
     subsystemRegistry.register(rendering);
+    // sceneDebug only: film depth-layer codes, or dissolve weights mid-transition, as grey.
+    if (qualityDebug) qualityDebug.showLayers = (on) => { rendering.postprocessPipeline.showLayers(on); invalidateContent(); };
     return runSceneInitialization(subsystemRegistry, () => {
     const { camera, homeScene, renderer } = rendering;
     scene.cinematicSelection ??= chooseCinematicView(window.location.search);
@@ -511,7 +513,8 @@ function setSrgbTexture(texture) {
       environmentRoot.add(groundMesh));
     groundSurface = groundMesh;
     subsystemRegistry.register(groundTextures);
-    const hillSilhouette = createHillSilhouette({ groundHeight });
+    const hillSilhouette = createHillSilhouette({ groundHeight, skyRadius: WORLD.SKY_DOME_RADIUS,
+      shellOpacity: skyConfig.shellOpacity, sunPosition: WORLD.SUN_POSITION });
     environmentRoot.add(hillSilhouette.mesh);
     subsystemRegistry.register(hillSilhouette);
     const towerSystem = createSceneTower({

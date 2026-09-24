@@ -1,4 +1,14 @@
-import { Group, Vector3 } from "three";
+import {
+  AdditiveBlending,
+  CustomBlending,
+  Group,
+  NormalBlending,
+  OneFactor,
+  OneMinusSrcAlphaFactor,
+  SrcAlphaFactor,
+  Vector3,
+  ZeroFactor,
+} from "three";
 import { celestialTier } from "./solar-body.js";
 
 export function createSceneAtmosphere({
@@ -26,6 +36,34 @@ export function createSceneAtmosphere({
   function applySkyQuality() {
     const layers = skyMaterial?.uniforms.uNebulaLayers;
     if (layers) layers.value = film && skyTier !== "low" ? (skyTier === "balanced" ? 2 : 3) : 0;
+  }
+
+  // In film the stars and sun blend their colour as before but keep the alpha
+  // the opaque sky wrote, its depth layer (depth-layers.js), so they dissolve
+  // with the sky. film-scene.js makes the sky opaque first, so it is skipped.
+  const overlayBlending = new Map();
+  function applyOverlayBlending() {
+    if (!film) {
+      overlayBlending.forEach((original, material) => Object.assign(material, original));
+      overlayBlending.clear();
+      return;
+    }
+    root.traverse((object) => {
+      for (const material of [object.material].flat()) {
+        if (!material?.transparent || overlayBlending.has(material)) continue;
+        const { blending, blendSrc, blendDst, blendSrcAlpha, blendDstAlpha } = material;
+        if (blending !== NormalBlending && blending !== AdditiveBlending) continue;
+        const original = { blending, blendSrc, blendDst, blendSrcAlpha, blendDstAlpha };
+        overlayBlending.set(material, original);
+        Object.assign(material, {
+          blending: CustomBlending,
+          blendSrc: SrcAlphaFactor,
+          blendDst: blending === AdditiveBlending ? OneFactor : OneMinusSrcAlphaFactor,
+          blendSrcAlpha: ZeroFactor,
+          blendDstAlpha: OneFactor,
+        });
+      }
+    });
   }
 
   function setCloudGroupSceneVisibility(group, visible) {
@@ -169,6 +207,7 @@ export function createSceneAtmosphere({
       if (disposed) return false;
       film = Boolean(active);
       applySkyQuality();
+      applyOverlayBlending();
       applyCloudVisibility();
       if (pointField) pointField.material.size = pointSize * (film ? 0.85 : 1);
       return true;

@@ -1,10 +1,15 @@
 import {
+  AdditiveBlending,
+  CustomBlending,
   HalfFloatType,
   NoBlending,
+  OneFactor,
   ShaderMaterial,
+  SrcAlphaFactor,
   UniformsUtils,
   Vector2,
   WebGLRenderTarget,
+  ZeroFactor,
 } from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
@@ -91,6 +96,16 @@ void main() {
 `,
 };
 
+// The tour's depth-staggered dissolve. In film every surface writes its depth
+// layer (depth-layers.js) into the scene target's alpha, which bloom, grading
+// and the kept frame preserve. Each pixel waits for the later of its outgoing
+// and incoming layers, start = 3 * step * code, then dissolves over `window`
+// of the progress: sky, mountains, ground, subject. 3 * step + window = 1, so
+// the subject settles as the transition ends. A layer's code is the maximum over
+// a 5-tap cross, so anti-aliased edges travel with the nearer layer. Every
+// weight stays in 0..1, a mix of two frames, so no frame can go black.
+export const LAYER_STAGGER = Object.freeze({ step: 0.2, window: 0.4 });
+
 const VIGNETTE_GRAIN_SHADER = {
   name: "BabelVignetteGrainShader",
   uniforms: {
@@ -100,9 +115,14 @@ const VIGNETTE_GRAIN_SHADER = {
     uGrainEnabled: { value: 1 },
     uGrainStrength: { value: 0.018 },
     uTextProtection: { value: 0 },
+    uTextProtectionFrom: { value: 0 },
     uTextBottom: { value: 0.25 },
     tPrev: { value: null },
-    uBlend: { value: 1 },
+    uProgress: { value: 1 },
+    uLayered: { value: 0 },
+    uLayerView: { value: 0 },
+    uStagger: { value: new Vector2(LAYER_STAGGER.step, LAYER_STAGGER.window) },
+    uCodeTexel: { value: new Vector2(1, 1) },
     uPrevScale: { value: 1 },
     uPrevOrigin: { value: new Vector2(0.5, 0.5) },
   },
@@ -114,9 +134,14 @@ uniform float uVignetteStrength;
 uniform int uGrainEnabled;
 uniform float uGrainStrength;
 uniform float uTextProtection;
+uniform float uTextProtectionFrom;
 uniform float uTextBottom;
 uniform sampler2D tPrev;
-uniform float uBlend;
+uniform float uProgress;
+uniform float uLayered;
+uniform float uLayerView;
+uniform vec2 uStagger;
+uniform vec2 uCodeTexel;
 uniform float uPrevScale;
 uniform vec2 uPrevOrigin;
 varying vec2 vUv;
@@ -125,12 +150,25 @@ float hash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
 
+float layerCode(sampler2D map, vec2 uv) {
+  vec2 x = vec2(uCodeTexel.x, 0.0), y = vec2(0.0, uCodeTexel.y);
+  return max(max(texture2D(map, uv).a, max(texture2D(map, uv - x).a, texture2D(map, uv + x).a)),
+    max(texture2D(map, uv - y).a, texture2D(map, uv + y).a));
+}
+
 void main() {
   vec4 texel = texture2D(tDiffuse, vUv);
-  // A crossfade mixes in the kept outgoing frame, still pushing in about its
-  // safe-area centre; vignette, grain and the text shade then apply once.
-  if (uBlend < 1.0) {
-    texel = mix(texture2D(tPrev, uPrevOrigin + (vUv - uPrevOrigin) * uPrevScale), texel, uBlend);
+  float protection = uTextProtection, w = 1.0;
+  if (uProgress < 1.0) {
+    vec2 prevUv = uPrevOrigin + (vUv - uPrevOrigin) * uPrevScale;
+    float start = 0.0, span = 1.0;
+    if (uLayered > 0.5) {
+      start = 3.0 * uStagger.x * clamp(max(layerCode(tPrev, prevUv), layerCode(tDiffuse, vUv)), 0.0, 1.0);
+      span = uStagger.y;
+    }
+    w = smoothstep(start, start + span, uProgress);
+    texel = mix(texture2D(tPrev, prevUv), texel, w);
+    protection = mix(uTextProtectionFrom, uTextProtection, w);
   }
   vec3 color = texel.rgb;
 
@@ -146,8 +184,9 @@ void main() {
   }
 
   float textShade = smoothstep(1.0 - uTextBottom - .12, 1.0 - uTextBottom + .10, vUv.y);
-  color *= 1.0 - .28 * uTextProtection * textShade;
-  gl_FragColor = vec4(clamp(color, 0.0, 1.0), texel.a);
+  color *= 1.0 - .28 * protection * textShade;
+  if (uLayerView > 0.5) color = vec3(uProgress < 1.0 ? w : layerCode(tDiffuse, vUv));
+  gl_FragColor = vec4(clamp(color, 0.0, 1.0), uLayered > 0.5 ? 1.0 : texel.a);
 }
 `,
 };
@@ -230,6 +269,13 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
   const bloomPass = new UnrealBloomPass(size, 0.18, 0.45, 0.9);
   const gradingPass = new ShaderPass(GRADING_SHADER);
   const vignetteGrainPass = new ShaderPass(VIGNETTE_GRAIN_SHADER);
+  // Bloom adds light, not depth: in film its composite keeps the layer codes.
+  Object.assign(bloomPass.blendMaterial, {
+    blendSrc: SrcAlphaFactor,
+    blendDst: OneFactor,
+    blendSrcAlpha: ZeroFactor,
+    blendDstAlpha: OneFactor,
+  });
   const matchMedia = options.matchMedia || globalThis.window?.matchMedia?.bind(globalThis.window);
   const onInvalidate = typeof options.onInvalidate === "function" ? options.onInvalidate : () => {};
   const transparencyQuery = matchMedia?.("(prefers-reduced-transparency: reduce)");
@@ -248,8 +294,7 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
   composer.addPass(vignetteGrainPass);
 
   let reducedTransparency = Boolean(transparencyQuery?.matches);
-  let film = false,
-    textProtection = false;
+  let film = false;
 
   // Tour crossfade: IDLE → ARMED (a capture is due) → CAPTURED (grading drew
   // the outgoing frame into prevTarget) → BLENDING (the cut) → IDLE.
@@ -263,7 +308,6 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
     capturing = false,
     compiled = false,
     prevTarget = null,
-    blend = 1,
     protectionFrom = 0,
     protectionTarget = 0,
     cssWidth = 0,
@@ -289,6 +333,7 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
         elements ? toUv(elements[8]) : 0.5,
         elements ? toUv(elements[9]) : 0.5,
       );
+      finalUniforms.uCodeTexel.value.set(1 / width, 1 / height);
       protectionFrom = finalUniforms.uTextProtection.value;
       phase = CAPTURED;
     }
@@ -312,20 +357,18 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
     capturing = false;
   };
 
-  // The phone text band follows the blend instead of switching at the cut.
+  // The phone text band follows each pixel's dissolve instead of switching at
+  // the cut: the final pass mixes from the kept frame's band to the live one.
   function syncProtection() {
-    finalUniforms.uTextProtection.value = !film
-      ? 0
-      : blend < 1
-        ? protectionFrom + (protectionTarget - protectionFrom) * blend
-        : protectionTarget;
+    finalUniforms.uTextProtection.value = film ? protectionTarget : 0;
+    finalUniforms.uTextProtectionFrom.value = film ? protectionFrom : 0;
   }
 
   // A CSS resize or a lost context ends a crossfade on its incoming shot.
   function cancelTransition() {
     if (phase === IDLE) return;
     phase = IDLE;
-    blend = finalUniforms.uBlend.value = 1;
+    finalUniforms.uProgress.value = 1;
     syncProtection();
     applyProfile(currentProfile);
   }
@@ -350,14 +393,17 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
 
     bloomPass.enabled = bloomEnabled;
     bloomPass.strength = settings.bloomStrength ?? 0.18;
+    bloomPass.blendMaterial.blending = film ? CustomBlending : AdditiveBlending;
     gradingPass.enabled = gradingEnabled;
     gradingPass.uniforms.uCelMix.value = settings.celMix ?? 0.24;
     gradingPass.uniforms.uInkMix.value = 0.14;
     gradingPass.uniforms.uContrast.value = settings.contrast ?? 1.06;
     gradingPass.uniforms.uHighlightWarmMix.value = settings.highlightWarmMix ?? 0.14;
     gradingPass.uniforms.uShadowCoolMix.value = settings.shadowCoolMix ?? 0.25;
-    vignetteGrainPass.enabled =
-      vignetteEnabled || grainEnabled || (film && textProtection) || phase !== IDLE;
+    // In film the final pass always draws: it staggers the dissolve and writes
+    // opaque alpha, so layer codes never reach the transparent canvas.
+    vignetteGrainPass.enabled = film || vignetteEnabled || grainEnabled || phase !== IDLE;
+    finalUniforms.uLayered.value = film ? 1 : 0;
     vignetteGrainPass.uniforms.uVignetteEnabled.value = vignetteEnabled ? 1 : 0;
     vignetteGrainPass.uniforms.uVignetteStrength.value = settings.vignetteStrength ?? 0.08;
     vignetteGrainPass.uniforms.uGrainEnabled.value = grainEnabled ? 1 : 0;
@@ -456,17 +502,15 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
     cancelTransition,
     setFilmTreatment(active) {
       film = Boolean(active);
-      if (!film) {
-        textProtection = false;
-        protectionTarget = 0;
-      }
+      if (!film) protectionTarget = 0;
       syncProtection();
       applyProfile(currentProfile);
     },
     // Takes the tour's { capture, cut, progress, zoom } once per frame, before
     // the draw. The capture frame keeps grading's output; from the cut the
-    // final pass mixes it out along a smoothstep. A capture that never drew,
-    // or any settled frame, leaves a hard cut; a capture mid-blend is ignored.
+    // final pass mixes it out along a smoothstep, staggered by depth layer in
+    // film. A capture that never drew, or any settled frame, leaves a hard cut;
+    // a capture mid-blend is ignored.
     setTransition(transition = null) {
       const value = transition?.progress;
       const progress = Math.min(1, Math.max(0, Number.isFinite(value) ? value : 1));
@@ -479,19 +523,13 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
       } else if (phase === CAPTURED) {
         phase = BLENDING;
       }
-      blend = phase === BLENDING ? progress * progress * (3 - 2 * progress) : 1;
-      finalUniforms.uBlend.value = blend;
+      finalUniforms.uProgress.value = phase === BLENDING ? progress : 1;
       finalUniforms.uPrevScale.value = 1 / (1 + zoom * progress);
       syncProtection();
       if (wasIdle !== (phase === IDLE)) applyProfile(currentProfile);
     },
     setTextProtection(active, bottom = 0.25) {
-      const enabled = film && Boolean(active);
-      if (textProtection !== enabled) {
-        textProtection = enabled;
-        applyProfile(currentProfile);
-      }
-      protectionTarget = enabled ? 1 : 0;
+      protectionTarget = film && active ? 1 : 0;
       syncProtection();
       vignetteGrainPass.uniforms.uTextBottom.value = bottom;
     },
@@ -501,5 +539,10 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
       applySamples(currentProfile);
     },
     resize,
+    // sceneDebug only: draws each pixel's layer code as grey, or its dissolve
+    // weight during a transition, for checking the stagger in captures.
+    showLayers(on) {
+      finalUniforms.uLayerView.value = on ? 1 : 0;
+    },
   };
 }

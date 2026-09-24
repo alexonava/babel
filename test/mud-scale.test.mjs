@@ -252,8 +252,13 @@ test("each ground shading has its own program cache key; the slate's shading nee
     assert.equal(compiled.key, key, JSON.stringify(args));
     assert.equal(compiled.fragment.includes("slateWet"), slate, key);
     assert.equal(compiled.fragment.includes("slateDetailN"), slate, key);
+    // Film ground writes the ground depth layer for the tour's staggered dissolve.
+    assert.equal(compiled.fragment.includes("gl_FragColor.a = 0.6667;"), Boolean(args[2]), key);
   }
   const { fragment } = compile(false, true, true, null, { slate: true });
+  assert.match(fragment, /gl_FragColor\.rgb = mix\(gl_FragColor\.rgb, fogColor, earthHorizon\);\s*#endif\s*gl_FragColor\.a = 0\.6667;/);
+  // Camera-distance horizon shared with the mountains' feet (hill-silhouette.js HORIZON_HAZE).
+  assert.match(fragment, /float earthHorizon = max\([^;]*,\s*smoothstep\(150\.0, 190\.0, vFogDepth\)\);/);
   // The film specular clamp stays; the wet term only relaxes it, within the
   // brief's 1 + 1.6 bound, and at half of it so distant ground stays dark.
   assert.match(fragment, /reflectedLight\.directSpecular \*= mix\(\.12, \.22, damp\);/);

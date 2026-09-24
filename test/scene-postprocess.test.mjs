@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { UnsignedByteType } from "three";
-import { createPostprocessPipeline } from "../src/scene/postprocess.js";
+import { AdditiveBlending, CustomBlending, OneFactor, SrcAlphaFactor, UnsignedByteType, ZeroFactor } from "three";
+import { DEPTH_LAYER } from "../src/scene/depth-layers.js";
+import { createPostprocessPipeline, LAYER_STAGGER } from "../src/scene/postprocess.js";
 
 function createRendererMock() {
   return {
@@ -452,7 +453,6 @@ function createRecordedPipeline(profile, camera = {}) {
 }
 
 const LOW = { postprocessGrading: true };
-const smoothstep = (p) => p * p * (3 - 2 * p);
 
 test("a tour capture keeps grading's output with no added draw, and the cut mixes it out", () => {
   const elements = new Array(16).fill(0);
@@ -481,7 +481,8 @@ test("a tour capture keeps grading's output with no added draw, and the cut mixe
   assert.ok(![readBuffer, writeBuffer].includes(kept));
   assert.equal(final.tDiffuse.value, kept.texture, "the final pass reads the kept frame");
   assert.equal(final.tPrev.value, kept.texture);
-  assert.equal(final.uBlend.value, 1, "the capture frame shows the outgoing shot alone");
+  assert.equal(final.uProgress.value, 1, "the capture frame shows the outgoing shot alone");
+  assert.deepEqual(final.uCodeTexel.value.toArray(), [1 / kept.width, 1 / kept.height], "one texel of the frame");
   assert.equal(kept.texture.type, UnsignedByteType);
   assert.equal(kept.depthBuffer, false);
   assert.deepEqual([kept.width, kept.height], [readBuffer.width, readBuffer.height]);
@@ -493,18 +494,18 @@ test("a tour capture keeps grading's output with no added draw, and the cut mixe
   assert.deepEqual(frame(), normal, "the cut draws as an ordinary frame");
   assert.equal(final.tDiffuse.value, writeBuffer.texture);
   assert.equal(final.tPrev.value, kept.texture);
-  assert.equal(final.uBlend.value, 0.5);
+  assert.equal(final.uProgress.value, 0.5);
   assert.equal(final.uPrevScale.value, 1 / 1.005, "the kept frame keeps pushing in");
   pipeline.setTransition({ progress: 0.25, zoom: 0.01 });
-  assert.equal(final.uBlend.value, smoothstep(0.25));
+  assert.equal(final.uProgress.value, 0.25, "linear: the final pass eases it");
 
   pipeline.setQualityProfile(LOW);
   assert.equal(pipeline.passes.vignetteGrain.enabled, true, "a quality step keeps the blend");
   pipeline.composer.setPixelRatio(1.5);
   pipeline.setTransition({ progress: 0.5, zoom: 0.01 });
-  assert.equal(final.uBlend.value, 0.5, "so does a pixel-ratio change");
+  assert.equal(final.uProgress.value, 0.5, "so does a pixel-ratio change");
   pipeline.setTransition({ capture: false, cut: false, progress: 1, zoom: 0 });
-  assert.equal(final.uBlend.value, 1);
+  assert.equal(final.uProgress.value, 1);
   assert.equal(pipeline.passes.vignetteGrain.enabled, false, "low drops the final pass again");
   pipeline.dispose();
 });
@@ -518,10 +519,10 @@ test("the low tier adds the final pass only for a crossfade; a capture that neve
   pipeline.setTransition({ capture: true, cut: false, progress: 1, zoom: 0.01 });
   assert.equal(pass.enabled, true, "grading draws off-screen for the capture");
   pipeline.setTransition({ capture: false, cut: true, progress: 0.1, zoom: 0.01 });
-  assert.equal(pass.uniforms.uBlend.value, 1, "nothing was kept, so the cut is hard");
+  assert.equal(pass.uniforms.uProgress.value, 1, "nothing was kept, so the cut is hard");
   assert.equal(pass.enabled, false);
   pipeline.setTransition({ progress: 0.2, zoom: 0.01 });
-  assert.equal(pass.uniforms.uBlend.value, 1);
+  assert.equal(pass.uniforms.uProgress.value, 1);
 
   const captured = capture();
   assert.deepEqual(captured.map(([name, target]) => [name, target === null]), [
@@ -532,7 +533,7 @@ test("the low tier adds the final pass only for a crossfade; a capture that neve
   const kept = captured[1][1];
   assert.deepEqual(pass.uniforms.uPrevOrigin.value.toArray(), [0.5, 0.5], "no projection: centre");
   pipeline.setTransition({ progress: 0.25, zoom: 0.01 });
-  assert.equal(pass.uniforms.uBlend.value, smoothstep(0.25));
+  assert.equal(pass.uniforms.uProgress.value, 0.25);
   const blending = capture();
   assert.notEqual(blending[1][1], kept, "a capture mid-blend is ignored");
   pipeline.dispose();
@@ -544,27 +545,27 @@ test("a CSS resize or a lost context ends a crossfade; the same size keeps it", 
   const startBlend = () => {
     capture();
     pipeline.setTransition({ capture: false, cut: true, progress: 0.25, zoom: 0.01 });
-    assert.equal(pass.uniforms.uBlend.value, smoothstep(0.25));
+    assert.equal(pass.uniforms.uProgress.value, 0.25);
   };
 
   startBlend();
   pipeline.resize(800, 600);
-  assert.equal(pass.uniforms.uBlend.value, smoothstep(0.25), "the same CSS size keeps the blend");
+  assert.equal(pass.uniforms.uProgress.value, 0.25, "the same CSS size keeps the blend");
   pipeline.resize(800, 520);
-  assert.equal(pass.uniforms.uBlend.value, 1, "the kept frame no longer matches the canvas");
+  assert.equal(pass.uniforms.uProgress.value, 1, "the kept frame no longer matches the canvas");
   assert.equal(pass.enabled, false);
   pipeline.setTransition({ progress: 0.5, zoom: 0.01 });
-  assert.equal(pass.uniforms.uBlend.value, 1, "an ended blend is not resumed");
+  assert.equal(pass.uniforms.uProgress.value, 1, "an ended blend is not resumed");
 
   startBlend();
   pipeline.cancelTransition();
-  assert.equal(pass.uniforms.uBlend.value, 1);
+  assert.equal(pass.uniforms.uProgress.value, 1);
   assert.equal(pass.enabled, false);
   pipeline.cancelTransition();
   pipeline.dispose();
 });
 
-test("the phone text band follows the crossfade instead of switching at the cut", () => {
+test("the phone text band follows each pixel's dissolve instead of switching at the cut", () => {
   const { capture, pipeline } = createRecordedPipeline(LOW);
   const v = pipeline.passes.vignetteGrain.uniforms;
   pipeline.setFilmTreatment(true);
@@ -573,15 +574,20 @@ test("the phone text band follows the crossfade instead of switching at the cut"
   capture();
   pipeline.setTransition({ capture: false, cut: true, progress: 0.25, zoom: 0.01 });
   pipeline.setTextProtection(false, 0.3);
-  assert.equal(v.uTextProtection.value, 0.84375);
+  // The final pass mixes the kept frame's band into the live one by each pixel's weight.
+  assert.equal(v.uTextProtectionFrom.value, 1);
+  assert.equal(v.uTextProtection.value, 0);
   assert.equal(pipeline.passes.vignetteGrain.enabled, true);
   pipeline.setTransition({ progress: 1 });
+  assert.equal(v.uProgress.value, 1);
   assert.equal(v.uTextProtection.value, 0);
-  assert.equal(pipeline.passes.vignetteGrain.enabled, false);
+  assert.equal(pipeline.passes.vignetteGrain.enabled, true, "film keeps the final pass");
   pipeline.setTextProtection(true, 0.3);
   assert.equal(v.uTextProtection.value, 1, "outside a crossfade the band switches at once");
   pipeline.setFilmTreatment(false);
   assert.equal(v.uTextProtection.value, 0);
+  assert.equal(v.uTextProtectionFrom.value, 0);
+  assert.equal(pipeline.passes.vignetteGrain.enabled, false);
   pipeline.dispose();
 });
 
@@ -608,4 +614,108 @@ test("compile links the crossfade programs once for their real targets; dispose 
   const bare = createPipeline(LOW);
   assert.doesNotThrow(() => bare.compile(), "a renderer without compile() skips it");
   bare.dispose();
+});
+
+test("film always draws the final pass, staggered and opaque; outside film it is the plain crossfade", () => {
+  const { capture, frame, pipeline } = createRecordedPipeline(LOW);
+  const pass = pipeline.passes.vignetteGrain;
+  assert.equal(pass.enabled, false);
+  assert.equal(pass.uniforms.uLayered.value, 0);
+  pipeline.setFilmTreatment(true);
+  assert.equal(pass.enabled, true, "layer codes never reach the transparent canvas");
+  assert.equal(pass.uniforms.uLayered.value, 1);
+  assert.deepEqual(frame().at(-1), ["BabelVignetteGrainShader", null]);
+  pipeline.setQualityProfile({ ...LOW });
+  assert.equal(pass.enabled, true);
+  capture();
+  pipeline.setTransition({ capture: false, cut: true, progress: 0.5, zoom: 0.01 });
+  pipeline.setTransition({ progress: 1 });
+  assert.equal(pass.enabled, true, "and after a dissolve");
+  pipeline.setFilmTreatment(false);
+  assert.equal(pass.enabled, false, "the low tier out of film drops it again");
+  assert.equal(pass.uniforms.uLayered.value, 0);
+  assert.deepEqual(pass.uniforms.uStagger.value.toArray(), [LAYER_STAGGER.step, LAYER_STAGGER.window]);
+  assert.ok(Object.isFrozen(LAYER_STAGGER));
+  // The final pass writes opaque alpha only in film; elsewhere it passes alpha through.
+  assert.match(pass.material.fragmentShader, /gl_FragColor = vec4\(clamp\(color, 0\.0, 1\.0\), uLayered > 0\.5 \? 1\.0 : texel\.a\);/);
+  pipeline.showLayers(true);
+  assert.equal(pass.uniforms.uLayerView.value, 1);
+  pipeline.showLayers(false);
+  assert.equal(pass.uniforms.uLayerView.value, 0);
+  pipeline.dispose();
+});
+
+test("bloom adds light but keeps the layer codes in film", () => {
+  const pipeline = createPipeline({ postprocessGrading: true, postprocessBloom: true });
+  const blend = pipeline.passes.bloom.blendMaterial;
+  assert.equal(blend.blending, AdditiveBlending);
+  pipeline.setFilmTreatment(true);
+  assert.equal(blend.blending, CustomBlending);
+  assert.deepEqual(
+    [blend.blendSrc, blend.blendDst, blend.blendSrcAlpha, blend.blendDstAlpha],
+    [SrcAlphaFactor, OneFactor, ZeroFactor, OneFactor],
+    "the same additive colour, and the target's alpha untouched",
+  );
+  pipeline.setQualityProfile({ postprocessGrading: true, postprocessBloom: false });
+  assert.equal(blend.blending, CustomBlending);
+  pipeline.setFilmTreatment(false);
+  assert.equal(blend.blending, AdditiveBlending);
+  pipeline.dispose();
+});
+
+// JS restatement of the final pass's per-pixel weight, checked against its source below.
+const glslSmoothstep = (e0, e1, x) => {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+};
+function layerWeight(progress, prevCode, liveCode, layered = true) {
+  if (!layered) return glslSmoothstep(0, 1, progress);
+  const start = 3 * LAYER_STAGGER.step * Math.min(1, Math.max(0, Math.max(prevCode, liveCode)));
+  return glslSmoothstep(start, start + LAYER_STAGGER.window, progress);
+}
+
+test("the dissolve stages sky, mountains, ground and subject over the transition, never below either frame", () => {
+  const codes = [DEPTH_LAYER.sky, DEPTH_LAYER.mountains, DEPTH_LAYER.ground, "1.0"].map(Number);
+  codes.forEach((code, layer) => assert.ok(Math.abs(3 * code - layer) < 1e-3, "evenly spaced codes"));
+  assert.ok(Math.abs(3 * LAYER_STAGGER.step + LAYER_STAGGER.window - 1) < 1e-12, "the subject settles at the end");
+  // Halfway points at 0.2, 0.4, 0.6 and 0.8 of the dissolve (1 s in the tour).
+  codes.forEach((code, layer) => {
+    const start = 3 * LAYER_STAGGER.step * code;
+    assert.ok(Math.abs(start + LAYER_STAGGER.window / 2 - 0.2 * (layer + 1)) < 1e-3);
+    assert.ok(Math.abs(layerWeight(0.2 * (layer + 1), code, code) - 0.5) < 1e-3);
+    assert.equal(layerWeight(start, code, code), 0);
+    assert.equal(layerWeight(start + LAYER_STAGGER.window, code, code), 1);
+  });
+  for (let progress = 0; progress <= 1.0001; progress += 0.01) {
+    const weights = codes.map((code) => layerWeight(progress, code, code));
+    for (let i = 1; i < weights.length; i++) assert.ok(weights[i - 1] >= weights[i], "farther layers lead");
+    for (const prev of codes)
+      for (const live of codes) {
+        const w = layerWeight(progress, prev, live);
+        assert.ok(w >= 0 && w <= 1, "a mix of the two frames, never black");
+        assert.equal(w, layerWeight(progress, Math.max(prev, live), Math.max(prev, live)), "the later layer wins");
+      }
+    assert.equal(layerWeight(progress, 0, 1, false), glslSmoothstep(0, 1, progress), "outside film: the old crossfade");
+  }
+  assert.equal(layerWeight(1, 1, 1), 1);
+  assert.equal(layerWeight(0, 0, 0), 0);
+});
+
+test("the final pass decodes each frame's layer from a 5-tap cross and mixes by it", () => {
+  const pipeline = createPipeline(LOW);
+  const shader = pipeline.passes.vignetteGrain.material.fragmentShader;
+  const layerCode = shader.slice(shader.indexOf("float layerCode("), shader.indexOf("void main()"));
+  assert.equal((layerCode.match(/texture2D\(map, /g) || []).length, 5);
+  assert.match(layerCode, /texture2D\(map, uv\)\.a/);
+  for (const tap of ["uv - x", "uv + x", "uv - y", "uv + y"]) assert.ok(layerCode.includes(`texture2D(map, ${tap}).a`), tap);
+  assert.match(layerCode, /vec2 x = vec2\(uCodeTexel\.x, 0\.0\), y = vec2\(0\.0, uCodeTexel\.y\);/);
+  assert.match(
+    shader,
+    /start = 3\.0 \* uStagger\.x \* clamp\(max\(layerCode\(tPrev, prevUv\), layerCode\(tDiffuse, vUv\)\), 0\.0, 1\.0\);\s*span = uStagger\.y;/,
+  );
+  assert.match(shader, /w = smoothstep\(start, start \+ span, uProgress\);\s*texel = mix\(texture2D\(tPrev, prevUv\), texel, w\);\s*protection = mix\(uTextProtectionFrom, uTextProtection, w\);/);
+  assert.match(shader, /float start = 0\.0, span = 1\.0;\s*if \(uLayered > 0\.5\)/, "unlayered: smoothstep(0, 1, progress)");
+  assert.match(shader, /if \(uProgress < 1\.0\)/);
+  assert.doesNotMatch(shader, /uBlend|\/\//, "no old uniform, and no comments in the unminified GLSL");
+  pipeline.dispose();
 });

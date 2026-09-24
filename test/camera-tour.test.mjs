@@ -100,7 +100,7 @@ test("tour defaults to per-shot holds even when a link chooses its opening compo
   const f = setup();
   const tour = createCameraTour({ camera: f.controller });
   assert.equal(tour.state.interval, "shot");
-  assert.equal(tour.state.dwell, 14);
+  assert.equal(tour.state.dwell, 9);
   assert.equal(createCameraTour({ camera: f.controller, interval: 7 }).state.interval, "shot");
   assert.ok(Object.isFrozen(TOUR_IDLE) && Object.isFrozen(TOUR_TRANSITION));
   assert.equal(tour.transition, tour.transition, "one reused transition object");
@@ -147,10 +147,11 @@ test("the seven tour views skip Masonry study and wrap with small drift and cach
 });
 
 test("each tour shot holds for its own time, capture to capture, with no wildcard", () => {
-  assert.deepEqual(tourHolds, [14, 11, 11, 14, 9, 9, 9]);
-  assert.equal(tourHolds.reduce((sum, hold) => sum + hold, 0), 77);
+  assert.deepEqual(tourHolds, [9, 7, 7, 9, 6, 6, 6]);
+  assert.equal(tourHolds.reduce((sum, hold) => sum + hold, 0), 50);
   assert.equal(DIRECTED_SHOTS.tower[2].hold, undefined, "Masonry study uses the fallback");
-  assert.equal(TOUR_HOLD_FALLBACK, 11);
+  assert.equal(TOUR_HOLD_FALLBACK, 7);
+  assert.equal(TOUR_TRANSITION.dissolve, 1);
   assert.equal(tourModule.TOUR_DWELL, undefined);
   assert.equal(tourModule.TOUR_FADE, undefined);
   const f = setup(TOUR_PER_SHOT);
@@ -162,7 +163,7 @@ test("each tour shot holds for its own time, capture to capture, with no wildcar
     f.render(0);
     const captures = [],
       dwells = [];
-    f.run(0, 77 * 2 + 1, (time) => {
+    f.run(0, 50 * 2 + 1, (time) => {
       if (f.transition.capture) captures.push([time, f.name]);
       if (f.transition.cut) dwells.push(f.tour.state.dwell);
     });
@@ -186,29 +187,32 @@ test("a capture frame keeps the outgoing shot, then the cut dissolves in from th
   f.render(0);
   idle(f);
   assert.equal(f.tour.running, true);
-  close(f.render(13.9), 13.9 / 14);
+  close(f.render(8.9), 8.9 / 9);
   idle(f);
-  assert.equal(f.render(14), 1, "the outgoing shot sits at its final pose");
+  assert.equal(f.render(9), 1, "the outgoing shot sits at its final pose");
   assert.equal(f.name, "The watch");
-  assert.deepEqual(f.transition, { capture: true, cut: false, progress: 1, zoom: 0.004 });
-  close(f.render(14.016), 0.016 / 11, 1e-6);
+  const { zoom, ...capture } = f.transition;
+  assert.deepEqual(capture, { capture: true, cut: false, progress: 1 });
+  // The kept frame pushes in at the outgoing shot's drift rate: PUSH_IN over its 9 s hold.
+  close(zoom, PUSH_IN / 9);
+  close(f.render(9.016), 0.016 / 7, 1e-6);
   assert.equal(f.name, "Threshold");
   const cut = f.transition;
   assert.equal(cut.cut, true);
   assert.equal(cut.capture, false);
-  close(cut.progress, 0.016 / 1.2, 1e-6);
-  assert.equal(cut.zoom, 0.004);
-  f.render(14.6);
+  close(cut.progress, 0.016, 1e-6);
+  close(cut.zoom, PUSH_IN / 9);
+  f.render(9.5);
   close(f.transition.progress, 0.5, 1e-6);
   assert.equal(f.transition.cut, false);
-  f.render(15.1);
+  f.render(9.95);
   assert.ok(f.transition.progress > 0.9 && f.transition.progress < 1);
-  f.render(15.25);
+  f.render(10.05);
   idle(f);
-  f.render(24.99);
+  f.render(15.99);
   idle(f);
-  f.render(25.01);
-  assert.equal(f.transition.capture, true, "Threshold holds 11 seconds from its capture");
+  f.render(16.01);
+  assert.equal(f.transition.capture, true, "Threshold holds 7 seconds from its capture");
   assert.equal(f.name, "Threshold");
   f.dispose();
 
@@ -255,7 +259,7 @@ test("pause, panels, reduced motion and developer control hold the tour without 
     f.render(5.1);
     assert.equal(f.name, "Threshold");
     assert.equal(f.transition.cut, true);
-    f.render(5.6);
+    f.render(5.5);
     close(f.transition.progress, 0.5, 1e-6);
     f.render(5.7, { [flag]: true });
     idle(f);
@@ -315,7 +319,7 @@ test("setPaused drops an interrupted dissolve, and a pause on the capture frame 
   f.render(91.05);
   assert.equal(f.name, "Threshold", "the cut then completes");
   assert.equal(f.transition.cut, true);
-  f.render(91.6);
+  f.render(91.5);
   close(f.transition.progress, 0.5, 1e-6);
 
   // A pause mid-dissolve shows the incoming shot clear and keeps the rest of
@@ -331,9 +335,9 @@ test("setPaused drops an interrupted dissolve, and a pause on the capture frame 
   f.render(125.3);
   assert.equal(f.name, "Threshold");
   idle(f);
-  f.render(125.5);
-  assert.equal(f.transition.capture, true);
   f.render(125.55);
+  assert.equal(f.transition.capture, true);
+  f.render(125.6);
   assert.equal(f.name, "Gallery detail");
   f.tour.dispose();
   f.tour.setPaused(true);
@@ -352,7 +356,7 @@ test("setInterval switches between fixed cadences and per-shot holds as a hard r
   assert.equal(f.transition.cut, true);
   f.tour.setInterval(TOUR_PER_SHOT);
   assert.equal(f.tour.state.interval, "shot");
-  assert.equal(f.tour.state.dwell, 11, "Threshold's own hold");
+  assert.equal(f.tour.state.dwell, 7, "Threshold's own hold");
   idle(f);
   f.render(5.2);
   idle(f);
@@ -364,9 +368,9 @@ test("setInterval switches between fixed cadences and per-shot holds as a hard r
   assert.equal(f.tour.state.dwell, 5);
   f.tour.next();
   f.tour.setInterval(TOUR_PER_SHOT);
-  assert.equal(f.tour.state.dwell, 11, "Gallery detail's own hold");
+  assert.equal(f.tour.state.dwell, 7, "Gallery detail's own hold");
   f.tour.next();
-  assert.equal(f.tour.state.dwell, 14, "Portrait's own hold");
+  assert.equal(f.tour.state.dwell, 9, "Portrait's own hold");
   f.dispose();
 });
 
@@ -383,37 +387,37 @@ test("the upcoming shot is prepared once per shot, after its dissolve and never 
     first ??= time;
     seen = calls.length;
   };
-  f.run(0, 14.1, watch);
+  f.run(0, 9.1, watch);
   assert.deepEqual(calls, [["tower", 1]]);
-  assert.ok(first >= 2.2 && first <= 2.26, `prepared at ${first}`);
+  assert.ok(first >= 2 && first <= 2.06, `prepared at ${first}`);
   assert.equal(f.name, "Threshold");
-  f.run(14.1, 16.1, watch);
+  f.run(9.1, 10.9, watch);
   assert.equal(calls.length, 1, "nothing is prepared during a dissolve");
-  f.run(16.1, 16.35, watch);
+  f.run(10.9, 11.15, watch);
   assert.deepEqual(calls[1], ["tower", 3], "Masonry study is skipped");
   f.tour.prepareNext();
   assert.deepEqual(calls[2], ["tower", 3], "prepareNext re-issues the upcoming shot");
   seen = calls.length;
 
   // A resize mid-dissolve is re-issued once, after the dissolve.
-  f.run(16.35, 25.15, watch);
+  f.run(11.15, 16.15, watch);
   assert.equal(f.name, "Gallery detail");
   assert.ok(f.transition.progress < 1);
   f.tour.prepareNext();
   assert.equal(calls.length, 3);
-  f.run(25.15, 28, watch);
+  f.run(16.15, 19, watch);
   assert.deepEqual(calls.slice(3), [["tree", 0]]);
 
   // A paused tour prepares nothing; resuming prepares when due.
-  f.run(28, 36.2, watch);
+  f.run(19, 23.2, watch);
   assert.equal(f.name, "Portrait");
-  f.run(36.2, 37, watch);
+  f.run(23.2, 24, watch);
   f.tour.setPaused(true);
   f.tour.prepareNext();
-  f.run(37, 60, watch);
+  f.run(24, 47, watch);
   assert.equal(calls.length, 4);
   f.tour.setPaused(false);
-  f.run(60, 62, watch);
+  f.run(47, 49, watch);
   assert.deepEqual(calls.slice(4), [["tree", 1]]);
   f.dispose();
 
@@ -458,14 +462,16 @@ test("a retained Masonry comparison advances to Gallery detail without renumberi
   assert.equal(f.name, "Masonry study");
   assert.equal(f.tour.state.index, null);
   assert.equal(f.tour.state.dwell, TOUR_HOLD_FALLBACK);
-  f.render(11);
+  f.render(6.9);
+  idle(f);
+  f.render(7);
   assert.equal(f.transition.capture, true);
-  f.render(11.05);
+  f.render(7.05);
   assert.equal(f.name, "Gallery detail");
   assert.equal(f.controller.angle, 3);
   assert.equal(f.tour.state.index, 3);
   f.tour.next();
-  f.render(12);
+  f.render(8);
   assert.equal(f.name, "Portrait");
   assert.equal(f.tour.state.index, 4);
   idle(f);

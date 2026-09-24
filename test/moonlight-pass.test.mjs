@@ -58,7 +58,6 @@ function tourSetup(interval = 5) {
 }
 
 const LOW = { postprocessGrading: true, postprocessVignette: false, postprocessGrain: false };
-const smoothstep = (p) => p * p * (3 - 2 * p);
 const rendererMock = () => ({
   autoClear: true,
   autoClearColor: true,
@@ -92,7 +91,8 @@ test("tour shots open without black and dissolve the kept outgoing frame into ea
   frame(0);
   assert.deepEqual({ ...f.tour.transition }, { ...TOUR_IDLE }, "the opening shot shows at once");
   assert.equal(pass.enabled, false);
-  assert.equal(pass.uniforms.uBlend.value, 1);
+  assert.equal(pass.uniforms.uProgress.value, 1);
+  assert.equal(pass.uniforms.uLayered.value, 0, "outside film the dissolve is not staggered");
   frame(4.95);
   assert.equal(pass.enabled, false);
 
@@ -100,7 +100,7 @@ test("tour shots open without black and dissolve the kept outgoing frame into ea
   assert.equal(f.tour.transition.capture, true);
   assert.equal(f.controller.shot.name, "The watch", "the capture keeps the outgoing shot");
   assert.equal(pass.enabled, true, "the low tier adds the final pass for the crossfade");
-  assert.equal(pass.uniforms.uBlend.value, 1);
+  assert.equal(pass.uniforms.uProgress.value, 1);
   assert.ok(pass.uniforms.tPrev.value, "grading's output is kept");
   // The kept frame pushes in about the safe-area centre, in UV from the bottom.
   close(pass.uniforms.uPrevOrigin.value.x, (450 + 940 / 2) / 1440, 1e-6);
@@ -112,15 +112,16 @@ test("tour shots open without black and dissolve the kept outgoing frame into ea
   const { cut, progress, zoom } = f.tour.transition;
   assert.equal(f.controller.shot.name, "Threshold");
   assert.equal(cut, true);
-  close(progress, 0.05 / 1.2, 1e-6);
-  close(pass.uniforms.uBlend.value, smoothstep(progress), 1e-9);
+  close(progress, 0.05, 1e-6);
+  // Linear here; the final pass eases it, per depth layer in film.
+  close(pass.uniforms.uProgress.value, progress, 1e-9);
   close(pass.uniforms.uPrevScale.value, 1 / (1 + zoom * progress), 1e-9);
-  assert.ok(pass.uniforms.uBlend.value > 0 && pass.uniforms.uBlend.value < 0.01);
-  frame(5.6);
-  close(pass.uniforms.uBlend.value, 0.5, 1e-6);
-  frame(6.3);
+  assert.equal(pass.uniforms.uLayered.value, 0);
+  frame(5.5);
+  close(pass.uniforms.uProgress.value, 0.5, 1e-6);
+  frame(6.1);
   assert.deepEqual({ ...f.tour.transition }, { ...TOUR_IDLE });
-  assert.equal(pass.uniforms.uBlend.value, 1);
+  assert.equal(pass.uniforms.uProgress.value, 1);
   assert.equal(pass.enabled, false, "the low tier drops the final pass after the dissolve");
 
   // A pause mid-dissolve settles on the incoming shot; resuming does not replay it.
@@ -128,14 +129,14 @@ test("tour shots open without black and dissolve the kept outgoing frame into ea
   assert.equal(f.tour.transition.capture, true);
   frame(10.3);
   assert.equal(f.controller.shot.name, "Gallery detail");
-  assert.ok(pass.uniforms.uBlend.value < 1);
+  assert.ok(pass.uniforms.uProgress.value < 1);
   f.tour.toggle();
   frame(10.4);
-  assert.equal(pass.uniforms.uBlend.value, 1);
+  assert.equal(pass.uniforms.uProgress.value, 1);
   assert.equal(pass.enabled, false);
   f.tour.toggle();
   frame(10.5);
-  assert.equal(pass.uniforms.uBlend.value, 1);
+  assert.equal(pass.uniforms.uProgress.value, 1);
   frame(10.6, { reducedMotion: true });
   assert.deepEqual({ ...f.tour.transition }, { ...TOUR_IDLE });
   assert.equal("uFade" in pass.uniforms, false, "no dip to black remains");
