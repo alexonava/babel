@@ -514,18 +514,24 @@ function contrast(foreground, background) {
   return (light + 0.05) / (dark + 0.05);
 }
 
-test("the footer carries copyright, a protected Email link and a hidden Pause scene toggle", async () => {
+test("the footer carries copyright and a protected Email link; About holds the right corner", async () => {
   const html = await readIndexHtml();
   const footer = html.match(/<footer class="site-footer">([\s\S]*?)<\/footer>/)?.[1] || "";
   assert.match(
     footer,
-    /^\s*<p class="site-copyright">&copy; 2026 Alex Nava<\/p>\s*<!--email_off--><a class="site-footer__link site-footer__email" href="mailto:alexonava@gmail\.com">Email<\/a><!--\/email_off-->\s*<button class="site-footer__link scene-pause" id="scene-pause" type="button" hidden>Pause scene<\/button>\s*$/,
+    /^\s*<p class="site-copyright">&copy; 2026 Alex Nava<\/p>\s*<!--email_off--><a class="site-footer__link site-footer__email" href="mailto:alexonava@gmail\.com">Email<\/a><!--\/email_off-->\s*$/,
   );
   // A direct child of body, outside the primary nav, so dev mode hides it and
   // the bottom bar keeps Contact inside the estate.
   assert.match(html, /<\/nav>\s*<footer class="site-footer">/);
   assert.doesNotMatch(html.match(/<main[\s\S]*?<\/main>/)[0], /site-footer/);
-  assert.equal((html.match(/id="scene-pause"/g) || []).length, 1);
+  // The Pause scene control was retired (2026-09-24); About takes its corner.
+  assert.doesNotMatch(html, /scene-pause|Pause scene/);
+  const styles = await readStyles();
+  assert.doesNotMatch(styles, /scene-pause/);
+  const bar = cssRule(styles, ".bottom-bar");
+  assert.match(bar, /justify-content:\s*flex-end;/);
+  assert.match(bar, /padding:\s*0 max\(20px, calc\(env\(safe-area-inset-right\) \+ 8px\)\) max\(30px, calc\(22px \+ env\(safe-area-inset-bottom\)\)\);/);
 });
 
 test("footer controls keep 44px targets on the copyright baseline without blocking the scene", async () => {
@@ -557,27 +563,19 @@ test("footer controls keep 44px targets on the copyright baseline without blocki
   assert.match(hover, /\.site-footer__email:hover\s*\{[^}]*text-decoration:\s*underline;/);
   const footerHover = /\.site-footer__(?:link|email):hover/g;
   assert.equal((styles.match(footerHover) || []).length, (hover.match(footerHover) || []).length);
-  assert.match(cssRule(styles, '.scene-pause[data-paused="true"]'), /color:\s*var\(--text\);/);
 
   // The separator is generated, with empty alternative text for assistive tech.
   assert.match(cssRule(styles, ".site-copyright::after"), /content:\s*"\\00b7";\s*content:\s*"\\00b7" \/ "";/);
   assert.doesNotMatch(await readIndexHtml(), /Alex Nava<\/p>\s*(?:&middot;|·)/);
 
-  // Narrow phones keep the copyright on the bottom line, below the satchel
-  // artwork, and stack Email above it, clear of the centered About.
-  const narrow = mediaBlock(styles, "(max-width: 480px)");
-  assert.match(narrow, /\.site-copyright\s*\{\s*grid-area:\s*2 \/ 1;/);
-  assert.match(narrow, /\.site-copyright::after\s*\{\s*content:\s*none;/);
-  assert.match(narrow, /\.site-footer__email\s*\{[^}]*grid-area:\s*1 \/ 1;/);
-  assert.match(narrow, /\.scene-pause\s*\{[^}]*grid-area:\s*2 \/ 3;/);
+  // With About in the right corner, narrow phones keep one footer line.
+  assert.doesNotMatch(styles, /@media \(max-width: 480px\)/);
 
   const phone = mediaBlock(styles, "(max-width: 640px)");
   assert.match(phone, /\.site-footer\s*\{[^}]*right:\s*max\(16px, calc\(env\(safe-area-inset-right\) \+ 8px\)\);[^}]*left:\s*max\(16px, calc\(env\(safe-area-inset-left\) \+ 8px\)\);/);
 
   const forced = styles.slice(styles.indexOf("/* Windows High Contrast"));
   assert.match(forced, /a,\s*\.site-footer__email\s*\{\s*color:\s*LinkText;/);
-  assert.match(forced, /\.scene-pause\s*\{[^}]*color:\s*ButtonText;/);
-  assert.match(forced, /\.scene-pause\[data-paused="true"\]\s*\{[^}]*background:\s*Highlight;/);
   assert.match(styles, /body\.dev-mode-active > \*:not\(\.scene-shell\):not\(\.dev-mode-hud\),\s*body\.dev-mode-active::after\s*\{/);
 });
 

@@ -397,9 +397,9 @@ main:focus {
   left: 0;
   z-index: 10;
   display: flex;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 24px;
-  padding: 0 24px max(30px, calc(22px + env(safe-area-inset-bottom)));
+  padding: 0 max(20px, calc(env(safe-area-inset-right) + 8px)) max(30px, calc(22px + env(safe-area-inset-bottom)));
   pointer-events: none;
 }
 
@@ -556,10 +556,6 @@ main:focus {
   outline-offset: -12px;
 }
 
-.scene-pause[data-paused="true"] {
-  color: var(--text);
-}
-
 /* Touch browsers keep :hover after a tap; brightening follows real hover only. */
 @media (hover: hover) {
   .site-footer__link:hover {
@@ -570,53 +566,6 @@ main:focus {
     text-decoration: underline;
     text-decoration-color: rgba(229, 228, 223, 0.5);
     text-underline-offset: 3px;
-  }
-}
-
-/* Shown with the live scene; the fade matches the canvas reveal. */
-.scene-pause {
-  grid-column: 4;
-  animation: scene-pause-in 480ms ease-out both;
-}
-
-.scene-pause[data-paused="true"]::before {
-  width: 4px;
-  height: 4px;
-  margin-right: 8px;
-  border-radius: 999px;
-  content: "";
-  background: currentColor;
-}
-
-@keyframes scene-pause-in {
-  from {
-    opacity: 0;
-  }
-}
-
-/* Below 480px the one-line row would reach the centered About control. The
-   copyright keeps the bottom line, beneath the satchel artwork, and Email
-   stacks above it; Pause scene stays on the copyright's baseline. */
-@media (max-width: 480px) {
-  .site-footer {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .site-copyright {
-    grid-area: 2 / 1;
-  }
-
-  .site-copyright::after {
-    content: none;
-  }
-
-  .site-footer__email {
-    grid-area: 1 / 1;
-    justify-self: start;
-  }
-
-  .scene-pause {
-    grid-area: 2 / 3;
   }
 }
 
@@ -975,7 +924,7 @@ body[data-panel-open]::after {
 
   .bottom-bar {
     gap: 18px;
-    padding-inline: 18px;
+    padding-right: max(16px, calc(env(safe-area-inset-right) + 8px));
   }
 
   .bottom-btn--icon {
@@ -1036,8 +985,7 @@ body[data-panel-open]::after {
   .scene-shell,
   .site-shell,
   .bottom-bar .bottom-btn,
-  .site-footer,
-  .scene-pause {
+  .site-footer {
     animation: none;
   }
 
@@ -1089,7 +1037,7 @@ body[data-panel-open]::after {
 
   .bottom-bar {
     gap: 16px;
-    padding-inline: 16px;
+    padding-right: max(16px, calc(env(safe-area-inset-right) + 8px));
   }
 
   .bottom-btn--icon {
@@ -1234,8 +1182,7 @@ body.dev-mode-active::after {
   }
 
   .hero-minimal::before,
-  .bottom-bar::before,
-  .scene-pause[data-paused="true"]::before {
+  .bottom-bar::before {
     display: none;
   }
 
@@ -1247,16 +1194,6 @@ body.dev-mode-active::after {
   a,
   .site-footer__email {
     color: LinkText;
-  }
-
-  .scene-pause {
-    border: 1px solid ButtonText;
-    color: ButtonText;
-  }
-
-  .scene-pause[data-paused="true"] {
-    background: Highlight;
-    color: HighlightText;
   }
 }
 
