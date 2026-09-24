@@ -21,6 +21,7 @@ import {
 import { DEPTH_LAYER, stampDepthLayer } from "../src/scene/depth-layers.js";
 import { createEstateSkyMaterial, FILM_SKY_GLSL } from "../src/scene/estate-sky.js";
 import { createEstateGroundDetail, estatePathDistance } from "../src/scene/estate-ground-detail.js";
+import { rockKeepouts } from "../src/scene/rock-scatter.js";
 import { createSceneEnvironment } from "../src/scene/environment.js";
 import { createSceneAtmosphere } from "../src/scene/atmosphere.js";
 import { createFilmScene } from "../src/scene/film-scene.js";
@@ -30,6 +31,7 @@ const profile = { tier: "high", isLow: false };
 test("estate growth is seeded, terrain-seated and clear of both footprints and the winding approach", () => {
   const a = createEstateGroundDetail(groundHeight),
     b = createEstateGroundDetail(groundHeight);
+  const keepouts = rockKeepouts();
   const p = a.mesh.geometry.attributes.position,
     q = b.mesh.geometry.attributes.position;
   assert.deepEqual(p.array, q.array);
@@ -42,6 +44,8 @@ test("estate growth is seeded, terrain-seated and clear of both footprints and t
     assert.ok(Math.hypot(x - 55.1, z - 36.1) > 5.8);
     assert.ok(estatePathDistance(x, z) > 2.09);
     assert.ok(p.getY(i + 3) > p.getY(i));
+    // No tuft stands in a scattered rock or the ring its pebble may take.
+    for (const rock of keepouts) assert.ok(Math.hypot(x - rock.x, z - rock.z) >= rock.radius);
   }
   assert.equal(a.mesh.material.transparent, false);
   // Growth dissolves with the ground it stands on in the tour's staggered cut.
@@ -60,7 +64,7 @@ test("ground-detail quality changes trim a shared geometry and restore original 
   detail.setActive(true);
   assert.equal(mesh.geometry.drawRange.count, 360 * 18);
   detail.applyQuality({ tier: "balanced" });
-  assert.equal(mesh.geometry.drawRange.count, 210 * 18);
+  assert.equal(mesh.geometry.drawRange.count, 300 * 18);
   assert.equal(mesh.visible, true);
   detail.applyQuality({ tier: "low" });
   assert.equal(mesh.visible, false);

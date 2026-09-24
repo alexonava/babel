@@ -106,13 +106,42 @@ parameters are preserved in the local artwork archive; runtime tiling and
 normal strength are `GROUND_DETAIL_SETTINGS` in src/scene/stone-detail.js. No
 new Meshy generation was commissioned for this integration.
 
-These maps are now the default, visible ground: the live scene's dark cracked
-slate uses them unchanged at 1024 and 512 pixels, with its tint, wet sheen and
-close detail applied in the shader, and the earlier comparison views keep
-using them as before. No new image or map was generated for the slate ground.
+These maps now serve only the comparison views. The default film ground is
+a seamless v2 re-bake of the same supplied slab, published as
+`images/materials/slate-{color,normal}-{1024,512}.webp` and
+`slate-detail-512.webp`: Blender Cycles baked its height, normal and colour
+top-down; the low frequencies were flattened, one-off features (plants and
+stones) replaced from matching patches, the tile made seamless with
+minimum-error cuts, and the colour matched to the earlier maps so the approved
+slate tint holds. The shader blends two lookups of the tile, adds the detail
+map's close relief, and paints puddles, wetness and contact shading without
+new lights. The intake copy is kept in `Assets/Imports`; scripts, reports and
+QA renders are in `Assets/Materials/slate-v2` (see its
+`SOURCE-AND-DELIVERY.md`); none are published. No new Meshy generation was
+commissioned.
 
 Tool: [Meshy](https://www.meshy.ai/).
 
+## Supplied Meshy rocks
+
+The film's scattered stones in `images/architecture/{lichen-rock,weathered-stone}-{high,balanced}.glb`
+come from two Meshy models supplied by Alex Nava on 2026-09-23:
+`Meshy_AI_Lichen_Rock_0923090020_texture.glb` (43,816,604 bytes, SHA-256
+`1c3cf68198b3397c910eb8f51c1c162392d5491ba33de58610ace25d5868cbd0`) and
+`Meshy_AI_Weathered_Stone_0923090028_texture.glb` (42,416,696 bytes, SHA-256
+`c279db21dbd95ba2f4abf08cab1b471627498bf094a6d823df06afdbd4cdf4a2`).
+
+Each was processed locally without recoloring: scaled uniformly to unit
+height, decimated in Blender to 2,990 (high) and 1,194 (balanced) triangles
+with new UVs, and its colour, tangent-space normal and ambient occlusion
+re-baked by Cycles from the full-resolution source. The maps ship as embedded
+WebP (1024 high, 512 balanced) with stored tangents and `KHR_mesh_quantization`
+geometry; the near-uniform roughness and black emissive maps were dropped. The
+intake copies are kept in `Assets/Imports`; scripts, reports and QA renders are
+in `Assets/Architecture/rocks-v1` (see its `SOURCE-AND-DELIVERY.md`); none are
+published. No new Meshy generation was commissioned.
+
+Tool: [Meshy](https://www.meshy.ai/).
 
 ## Poly Haven Dirt
 

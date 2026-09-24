@@ -641,6 +641,7 @@ test("static headers separate immutable fingerprints from revalidated stable ass
   for (const fingerprintedPath of [
     "/images/:name.:hash.webp",
     "/images/architecture/:name.:hash.glb",
+    "/images/materials/slate-:map.:hash.webp",
   ]) {
     assert.match(
       headers,
@@ -706,6 +707,7 @@ test("Pages header rules resolve one cache policy for stable and fingerprinted p
     `/scripts/scene.${hash}.js`,
     `/scripts/scene.shared.${hash}.js`,
     `/scripts/scene.developer-tools.${hash}.js`,
+    `/scripts/scene.rock-build.${hash}.js`,
   ]) {
     assert.equal(cacheControl(pathname), immutable, pathname);
   }
@@ -726,8 +728,9 @@ test("Pages header rules resolve one cache policy for stable and fingerprinted p
   }
 
   // Every source image keeps a revalidated stable URL. The build publishes
-  // name.HASH.ext copies of top-level artwork and of the architecture models;
-  // only those are immutable, while nested material maps are never hashed.
+  // name.HASH.ext copies of top-level artwork, the architecture models and the
+  // film slate's maps; only those are immutable, while the other material maps
+  // are never hashed.
   let fingerprintable = 0;
   const images = path.join(projectRoot, "images");
   for (const entry of await readdir(images, { recursive: true, withFileTypes: true })) {
@@ -738,13 +741,13 @@ test("Pages header rules resolve one cache policy for stable and fingerprinted p
       .join("/");
     const stable = `/images/${relative}`;
     const hashed = stable.replace(/\.(\w+)$/, `.${hash}.$1`);
-    const hashedByBuild = /^(?:[^/]+\.webp|architecture\/[^/]+\.glb)$/.test(relative);
+    const hashedByBuild = /^(?:[^/]+\.webp|architecture\/[^/]+\.glb|materials\/slate-[^/]+\.webp)$/.test(relative);
     fingerprintable += hashedByBuild;
     assert.equal(cacheControl(stable), revalidated, stable);
     assert.equal(cacheControl(hashed), hashedByBuild ? immutable : revalidated, hashed);
     assert.equal(headersFor(hashed).get("x-content-type-options"), "nosniff", hashed);
   }
-  assert.ok(fingerprintable >= 23, "posters, paper, estate maps, nav icons and 12 models");
+  assert.ok(fingerprintable >= 23, "posters, paper, estate maps, nav icons, 16 models and 5 slate maps");
 });
 
 test("hosting files publish security.txt, raster icons and a stable manifest id", async () => {

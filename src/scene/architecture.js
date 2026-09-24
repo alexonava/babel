@@ -17,6 +17,7 @@ import {
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { createTreeFoliage, smoothTreeNormals } from "./tree-foliage.js";
 import { createSpiralSupportGeometry } from "./spiral-support.js";
+import { ESTATE } from "./estate-layout.js";
 
 export const ARCHITECTURE = Object.freeze({
   sectors: 16,
@@ -69,6 +70,11 @@ const MATERIAL_PROFILES = Object.freeze({
     roughnessCeiling: 0.97,
     highlights: 0.12,
   },
+  // The film's scattered Meshy rocks (rock-scatter.js): baked colour with its
+  // ambient occlusion and a tangent-space normal map made for scale 1. Their
+  // geometry is unit height, so materialFor darkens the lowest 0.3 toward the
+  // buried base in local y.
+  rock: { color: 0xa8a49e, normalScale: 1, roughness: 0.9 },
 });
 
 // Moonlight grade for the supplied maps, which carry baked daylight and
@@ -94,6 +100,15 @@ const FILM_GRADES = Object.freeze({
     tint: [0.9, 0.95, 1.0],
     shadowTint: [0.1, 0.14, 0.18],
     lift: 0.1,
+  },
+  // The pale Meshy stones sit darker than the timber, so they settle into the
+  // wet slate instead of glowing through the fog.
+  rock: {
+    saturation: 0.6,
+    highlights: 0.45,
+    tint: [0.9, 0.95, 1.0],
+    shadowTint: [0.08, 0.1, 0.13],
+    lift: 0.05,
   },
 });
 export function applyFilmGrade(material, active) {
@@ -124,7 +139,7 @@ export function towerRadius(y) {
   return ARCHITECTURE.bottomRadius + (ARCHITECTURE.topRadius - ARCHITECTURE.bottomRadius) * ratio;
 }
 
-function sourceMesh(asset) {
+export function sourceMesh(asset) {
   const meshes = [];
   asset?.scene?.updateMatrixWorld(true);
   asset?.scene?.traverse((object) => {
@@ -283,7 +298,7 @@ function masonryTone(tier, sector) {
   );
 }
 
-function materialFor(asset, anisotropy, role) {
+export function materialFor(asset, anisotropy, role) {
   const material = sourceMesh(asset).material.clone();
   const profile = MATERIAL_PROFILES[role] || {};
   try {
@@ -295,12 +310,13 @@ function materialFor(asset, anisotropy, role) {
     material.emissiveMap = null;
     material.vertexColors = false;
     // Retain the tree map's variation within a matte range. The complete tower
-    // has no roughness map: keep its scalar direct rather than lifting .9 to .99.
-    // Other architecture roles retain their existing per-role matte treatment.
-    // Compress bright baked edge detail in linear color without repainting maps.
+    // and the rocks have no roughness map: keep their scalar direct rather than
+    // lifting .9 to .99. Other architecture roles retain their existing per-role
+    // matte treatment. Compress bright baked edge detail in linear color
+    // without repainting maps.
     const roughnessFloor = profile.roughnessFloor ?? 0.86;
     const roughnessCeiling = profile.roughnessCeiling ?? 1;
-    const directRoughness = role === "tower" && !material.roughnessMap;
+    const directRoughness = (role === "tower" || role === "rock") && !material.roughnessMap;
     const roughnessFragment =
       "#include <roughnessmap_fragment>" +
       (directRoughness
@@ -343,6 +359,7 @@ function materialFor(asset, anisotropy, role) {
           diffuseColor.rgb *= 1.0 - babelHighlights * smoothstep(0.30, 0.85, babelLuma);
           diffuseColor.rgb = mix(diffuseColor.rgb, babelShadowTint, babelLift * (1.0 - smoothstep(0.02, 0.22, babelLuma)));
           diffuseColor.rgb *= babelTint;
+          ${role === "rock" ? "diffuseColor.rgb *= mix(.55, 1., smoothstep(0., .3, babelLocal.y));" : ""}
           ${role === "tree" ? `
           float leafMask = smoothstep(0.98, 1.14, diffuseColor.g / max(0.001, diffuseColor.r)) * smoothstep(7.0, 11.0, babelLocal.y);
           diffuseColor.rgb += babelFilm * leafMask * vec3(0.012, 0.022, 0.027);
@@ -660,8 +677,8 @@ export function createTreeArchitecture({ asset, groundHeight, anisotropy = 4, an
     const originalNormals = normalAttribute.array.slice(), softenedNormals = smoothTreeNormals(geometry).array;
     const lantern = new Group();
     lantern.name = "tree-lantern";
-    const direction = new Vector3(-treeX, 0, -treeZ).normalize();
-    lantern.position.copy(direction.multiplyScalar(5.0));
+    const direction = new Vector3(ESTATE.tower.x - treeX, 0, ESTATE.tower.z - treeZ).normalize();
+    lantern.position.copy(direction.multiplyScalar(ESTATE.lantern.offset));
     lantern.position.y =
       groundHeight(treeX + lantern.position.x, treeZ + lantern.position.z) - root.position.y;
     // Iron post lantern, authored 2.48 units tall: foot, post, tray, four

@@ -42,7 +42,7 @@ The camera fits authored focal volumes into the responsive composition area. Por
 | scale=baseline | Earlier prop proportions |
 | stone=procedural / brick=boxes | Legacy material/brick comparisons where applicable |
 
-[scene-modes.js](../src/scene/scene-modes.js) centralizes URL mode policy. The default film ground is the dark cracked slate (the authored ground pair with a subtle wet sheen); `ground=earth` is the only comparison parameter that does not also build the legacy world, because it swaps just the film terrain maps. These combinations are compatibility and review controls, not separate current designs. Some comparisons apply only to their matching architecture mode. Defaults and fallback behavior must remain consistent when refactoring.
+[scene-modes.js](../src/scene/scene-modes.js) centralizes URL mode policy. The default film ground is the dark cracked slate (the seamless slate v2 maps with wetness, puddles and contact shading) with the owner's scattered rocks; `ground=earth` is the only comparison parameter that does not also build the legacy world, because it swaps just the film terrain maps. `rocks=off` hides the scattered rocks for review and never downloads their chunk or models. These combinations are compatibility and review controls, not separate current designs. Some comparisons apply only to their matching architecture mode. Defaults and fallback behavior must remain consistent when refactoring.
 
 ## Accessibility and diagnostics
 
