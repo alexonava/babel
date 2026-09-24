@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { createCameraTour } from "../src/scene/camera-tour.js";
+import { createCameraTour, TOUR_IDLE } from "../src/scene/camera-tour.js";
 import { DIRECTED_SHOTS } from "../src/scene/directed-shots.js";
 import {
   createPanelHold,
@@ -87,7 +87,7 @@ function createSceneHarness({ paused = false, ready = true } = {}) {
       drawn.push({
         deltaSeconds,
         elapsedSeconds,
-        fade: tour.fade,
+        transition: { ...tour.transition },
         shot: DIRECTED_SHOTS[camera.current][camera.angle].name,
       });
       panelHold.frameRendered();
@@ -152,18 +152,40 @@ function createSceneHarness({ paused = false, ready = true } = {}) {
     run(steps) {
       for (let i = 0; i < steps && frames.pending; i += 1) frames.step((time += 100));
     },
+    // Runs until the frame just drawn matches `test`.
+    runUntil(test) {
+      for (let i = 0; i < 200 && frames.pending; i += 1) {
+        frames.step((time += 100));
+        if (test(drawn.at(-1))) return drawn.at(-1);
+      }
+      assert.fail("the expected frame never drew");
+    },
     skip(ms) {
       time += ms;
     },
   };
 }
 
-test("a visitor pause settles a tour dip in one frame, then stops rendering", () => {
+// A frame with no capture and no dissolve in progress.
+const clear = (frame) => assert.deepEqual(frame.transition, { ...TOUR_IDLE });
+// Each cut follows exactly one capture frame of the outgoing shot.
+function assertHandshakes(drawn) {
+  drawn.forEach((frame, i) => {
+    const previous = drawn[i - 1];
+    if (frame.transition.capture) assert.ok(!previous?.transition.capture, "one capture frame");
+    if (!frame.transition.cut) return;
+    assert.ok(previous?.transition.capture, "a capture frame precedes the cut");
+    assert.notEqual(frame.shot, previous.shot);
+    assert.ok(frame.transition.progress > 0 && frame.transition.progress < 1);
+  });
+}
+const dissolving = ({ transition }) => transition.progress > 0.2 && transition.progress < 1;
+
+test("a visitor pause settles a tour dissolve in one frame, then stops rendering", () => {
   const scene = createSceneHarness();
-  scene.run(50);
-  const dip = scene.drawn.at(-1);
-  assert.equal(dip.shot, "The watch");
-  assert.ok(dip.fade > 0.5, "the dip before a cut is under way");
+  const blend = scene.runUntil(dissolving);
+  assert.equal(blend.shot, "Threshold");
+  assertHandshakes(scene.drawn);
 
   assert.equal(scene.setVisitorPaused(true), true);
   assert.equal(scene.visitorHold.paused, true);
@@ -171,8 +193,8 @@ test("a visitor pause settles a tour dip in one frame, then stops rendering", ()
   const count = scene.drawn.length;
   scene.run(100);
   assert.equal(scene.drawn.length, count + 1);
-  assert.equal(scene.drawn.at(-1).fade, 0, "the paused shot is undimmed");
-  assert.equal(scene.drawn.at(-1).shot, "The watch");
+  clear(scene.drawn.at(-1));
+  assert.equal(scene.drawn.at(-1).shot, "Threshold", "the incoming shot shows clear");
   assert.equal(scene.visitorHold.held, true);
   assert.equal(scene.scheduler.getState().held, true);
   assert.equal(scene.frames.pending, 0, "drift, clouds and the tour stop drawing");
@@ -184,8 +206,7 @@ test("a visitor pause settles a tour dip in one frame, then stops rendering", ()
 
 test("unpausing resumes the same shot from the clear paused frame without a time jump", () => {
   const scene = createSceneHarness();
-  scene.run(50);
-  const dip = scene.drawn.at(-1).fade;
+  scene.runUntil(dissolving);
   scene.setVisitorPaused(true);
   scene.run(1);
   const paused = scene.drawn.at(-1);
@@ -198,19 +219,44 @@ test("unpausing resumes the same shot from the clear paused frame without a time
   const resumed = scene.drawn.at(-1);
   assert.equal(resumed.deltaSeconds, 0, "no giant delta after a long pause");
   assert.equal(resumed.elapsedSeconds, paused.elapsedSeconds);
-  assert.equal(resumed.shot, "The watch");
-  assert.equal(resumed.fade, 0, "the first resumed frame matches the clear paused frame");
+  assert.equal(resumed.shot, "Threshold");
+  clear(resumed);
   scene.run(2);
-  const dipping = scene.drawn.slice(-2);
-  assert.deepEqual(dipping.map(({ shot }) => shot), ["The watch", "The watch"]);
-  assert.ok(dipping[0].fade > 0 && dipping[0].fade < dipping[1].fade, "the dip rises from clear");
-  assert.ok(Math.abs(dipping[1].fade - dip) < 1e-9, "the interrupted dip replays in full");
-  scene.run(2);
-  assert.equal(scene.drawn.at(-1).shot, "Threshold", "the cut completes");
+  // The interrupted dissolve does not replay.
+  for (const frame of scene.drawn.slice(-2)) clear(frame);
+  const capture = scene.runUntil(({ transition }) => transition.capture);
+  assert.equal(capture.shot, "Threshold");
+  scene.run(1);
+  assert.equal(scene.drawn.at(-1).shot, "Gallery detail", "the next cut completes");
+  assertHandshakes(scene.drawn);
   assert.equal(scene.frames.pending, 1, "animation continues");
 
   scene.setVisitorPaused(false);
   assert.equal(scene.state.visitorReleases, 1, "an unpaused scene releases nothing");
+  scene.scheduler.dispose();
+});
+
+test("a pause on the capture frame keeps the outgoing shot, then captures again and cuts", () => {
+  const scene = createSceneHarness();
+  const capture = scene.runUntil(({ transition }) => transition.capture);
+  assert.equal(capture.shot, "The watch");
+  scene.setVisitorPaused(true);
+  scene.run(10);
+  const paused = scene.drawn.at(-1);
+  assert.equal(paused.shot, "The watch");
+  clear(paused);
+  assert.equal(scene.frames.pending, 0);
+
+  scene.setVisitorPaused(false);
+  scene.run(1);
+  const resumed = scene.drawn.at(-1);
+  assert.equal(resumed.shot, "The watch");
+  assert.equal(resumed.deltaSeconds, 0);
+  assert.equal(resumed.transition.capture, true, "the resumed frame captures again");
+  scene.run(1);
+  assert.equal(scene.drawn.at(-1).shot, "Threshold");
+  assert.equal(scene.drawn.at(-1).transition.cut, true);
+  assertHandshakes(scene.drawn.slice(scene.drawn.indexOf(resumed)));
   scene.scheduler.dispose();
 });
 
@@ -230,7 +276,7 @@ test("a resize while paused draws exactly one still frame", () => {
   const redrawn = scene.drawn.at(-1);
   assert.equal(redrawn.deltaSeconds, 0);
   assert.equal(redrawn.elapsedSeconds, held.elapsedSeconds, "scene time stays frozen");
-  assert.equal(redrawn.fade, 0);
+  clear(redrawn);
   assert.equal(scene.visitorHold.held, true, "the drawn frame restores the hold");
   assert.equal(scene.frames.pending, 0);
 
@@ -293,23 +339,24 @@ test("a stored pause keeps the first revealed frame, then holds", () => {
   scene.scheduler.invalidate();
   scene.run(10);
   assert.equal(scene.drawn.length, count + 1, "only the revealed frame draws");
-  assert.equal(scene.drawn.at(-1).fade, 0, "the paused tour does not open from black");
+  clear(scene.drawn.at(-1));
   assert.equal(scene.visitorHold.held, true);
   assert.equal(scene.frames.pending, 0);
 
   scene.setVisitorPaused(false);
   scene.run(3);
   assert.equal(scene.drawn.length, count + 4, "unpausing starts the tour");
-  assert.equal(scene.drawn.at(-3).fade, 0, "and it still does not open from black");
+  // And it opens without black.
+  for (const frame of scene.drawn.slice(-3)) clear(frame);
   scene.scheduler.dispose();
 
-  // Without a stored pause the same reveal opens from black and animates.
+  // Without a stored pause the same reveal opens without black and animates.
   const open = createSceneHarness({ ready: false });
   open.run(1);
   open.state.ready = true;
   open.scheduler.invalidate();
   open.run(1);
-  assert.equal(open.drawn.at(-1).fade, 1);
+  clear(open.drawn.at(-1));
   assert.equal(open.visitorHold.held, false);
   assert.equal(open.frames.pending, 1);
   open.scheduler.dispose();
@@ -339,7 +386,7 @@ test("the developer camera renders through a visitor pause and restores the held
   scene.setDeveloper(false);
   scene.run(10);
   assert.equal(scene.drawn.length, count + 9, "one frame restores the paused shot");
-  assert.equal(scene.drawn.at(-1).fade, 0);
+  clear(scene.drawn.at(-1));
   assert.equal(scene.visitorHold.held, true);
   assert.equal(scene.frames.pending, 0);
   scene.scheduler.dispose();

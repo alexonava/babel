@@ -1,6 +1,6 @@
 # Scene modes and camera review
 
-The normal experience opens on **The watch** (tower, angle 1), with the 20-second tour. The seven tour shots comprise three tower views and four tree views. Masonry study is excluded from the tour; its explicit comparison URL remains available. These controls are defined by source, not by the numeric orbit guidance in older notes.
+The normal experience opens on **The watch** (tower, angle 1), with the tour: each shot holds 9 to 14 seconds, about 77 seconds a loop, and dissolves into the next over 1.2 seconds. The seven tour shots comprise three tower views and four tree views. Masonry study is excluded from the tour; its explicit comparison URL remains available. These controls are defined by source, not by the numeric orbit guidance in older notes.
 
 ## Directed views
 
@@ -19,13 +19,13 @@ Append a query to the local preview, for example:
 | view=tree&angle=3 | Close-up |
 | view=tree&angle=4 | Root and lantern |
 
-Explicit view/angle selects the opening composition; add tour=0 to hold it. Tour timing accepts 3, 5, and 20 seconds; without a tour parameter the 20-second mode runs. Twenty-second mode has a 20% chance of a five-second wildcard dwell, sampled at each shot, so tour=20 matches the default and tour=3 or tour=5 are review cadences. The tour has no shot label or control strip. Panels, developer camera control, reduced motion, and a visitor pause suspend automatic cycling; missing subjects are skipped.
+Explicit view/angle selects the opening composition; add tour=0 to hold it. Without a tour parameter each shot keeps its own hold (`hold` in directed-shots.js): The watch and Portrait 14 seconds, Threshold and Gallery detail 11, the other tree shots 9. tour=3, 5 and 20 are fixed review cadences for every shot; the crossfade takes 1.2 seconds, or 0.9 at tour=3. The tour has no shot label or control strip. Panels, developer camera control, reduced motion, and a visitor pause suspend automatic cycling; missing subjects are skipped.
 
 ## Visitor pause
 
-The footer's Pause scene / Play scene text button (its label names the next action) appears only while the live scene is revealed (#home-scene has is-ready). It calls `BabelSite.scene.setVisitorPaused()`; `isVisitorPaused()` reads the state back. A pause holds the tour on its current shot, shows a dip in progress undimmed, stops drift and clouds, and then stops rendering. A resize, context restore, or model, map, shader or font change draws one still frame; scroll does not. Resuming continues the same shot from that clear frame without a time jump; an interrupted dip restarts from clear. The UI stores the choice as `babel:scene-paused` and passes it to the scene as `scene.visitorPausedPreference`, which applies once the scene is revealed, so the first revealed frame stays on screen. Without a quality or sceneDebug override, reduced-motion and reduced-data visitors, like other static poster paths, never load the scene and show no pause control.
+The footer's Pause scene / Play scene text button (its label names the next action) appears only while the live scene is revealed (#home-scene has is-ready). It calls `BabelSite.scene.setVisitorPaused()`; `isVisitorPaused()` reads the state back. A pause holds the tour on its current shot, ends a crossfade in progress on its incoming shot, stops drift and clouds, and then stops rendering. A resize, context restore, or model, map, shader or font change draws one still frame; scroll does not. Resuming continues the same shot from that clear frame without a time jump; an interrupted crossfade is not replayed. The UI stores the choice as `babel:scene-paused` and passes it to the scene as `scene.visitorPausedPreference`, which applies once the scene is revealed, so the first revealed frame stays on screen. Without a quality or sceneDebug override, reduced-motion and reduced-data visitors, like other static poster paths, never load the scene and show no pause control.
 
-The camera fits authored focal volumes into the responsive composition area. Portrait overrides are intentional. Edit [directed-shots.js](../src/scene/directed-shots.js) for shot intent, [cinematic.js](../src/scene/cinematic.js) for fitting, and [camera-tour.js](../src/scene/camera-tour.js) for timing.
+The camera fits authored focal volumes into the responsive composition area. Portrait overrides are intentional. Edit [directed-shots.js](../src/scene/directed-shots.js) for shot intent and holds, [cinematic.js](../src/scene/cinematic.js) for fitting and drift, [camera-tour.js](../src/scene/camera-tour.js) for timing, and [postprocess.js](../src/scene/postprocess.js) for the crossfade.
 
 ## Retained comparisons
 

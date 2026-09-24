@@ -1,7 +1,7 @@
 import "./quality.js";
 import { createSolarBody } from "./solar-body.js";
 import { createStarfield } from "./starfield.js";
-import { readTourInterval, createCameraTour } from "./camera-tour.js";
+import { readTourInterval, createCameraTour, TOUR_IDLE } from "./camera-tour.js";
 import { resolveSceneModes } from "./scene-modes.js";
 import { createLegacyWorld } from "./legacy-world.js";
 import { createDeferredWorld } from "./deferred-world.js";
@@ -38,6 +38,7 @@ import { createEstateSkyMaterial } from "./estate-sky.js";
 import { createSceneRendering } from "./rendering.js";
 import { createWatchtowerRefinement } from "./watchtower-refinement.js";
 import {
+  createDeferredQualityStep,
   createPanelHold,
   createSceneFrameScheduler,
   createSceneResizeController,
@@ -266,8 +267,26 @@ function setSrgbTexture(texture) {
       getGroundY: (x, z) => groundHeight(x, z) + groundSurface.getWorldPosition(new Vector3()).y });
     subsystemRegistry.register(cinematic);
     const tourInterval = filmEnabled ? readTourInterval(window.location.search) : 0;
+    // The tour fits its next shot ahead of the cut in idle slices, one measure
+    // or fit each; the latest request wins. Safari has no requestIdleCallback.
+    const whenIdle = typeof window.requestIdleCallback === "function"
+      ? (task) => window.requestIdleCallback(task, { timeout: 1500 })
+      : (task) => window.setTimeout(task, 50);
+    let tourShot = null;
+    function prepareTourShot(subject, angle) {
+      const idle = !tourShot;
+      tourShot = [subject, angle];
+      if (idle) whenIdle(function step() {
+        if (runtimeDisposed) return;
+        // A late slot waits out a capture and its crossfade.
+        const { capture, progress } = cameraTour?.transition ?? TOUR_IDLE;
+        if (capture || progress < 1 ||
+          cinematic.prepare(...tourShot, viewport.width, viewport.height) === "pending") whenIdle(step);
+        else tourShot = null;
+      });
+    }
     const cameraTour = tourInterval ? createCameraTour({ camera: cinematic, interval: tourInterval,
-      invalidate: () => frameScheduler?.invalidate() }) : null;
+      invalidate: () => frameScheduler?.invalidate(), prepare: prepareTourShot }) : null;
     if (cameraTour) subsystemRegistry.register({ dispose: () => cameraTour.dispose() });
     function chooseAnisotropy(minimum, maximum) {
       const profileRange = state.profile.anisotropy || {
@@ -712,6 +731,9 @@ function setSrgbTexture(texture) {
         // Record the status first: a throwing fallback must not leave the
         // camera waiting on a load that has already ended.
         cinematic.setStatus(status);
+        // A model's arrival or loss clears the camera's fits and can change
+        // the tour's next shot.
+        cameraTour?.prepareNext();
         if (!runtimeDisposed && (status.status === "fallback" ||
           (status.status === "procedural" && sceneReadyMarked))) {
           try {
@@ -808,6 +830,7 @@ function setSrgbTexture(texture) {
       panelHold?.redraw();
       visitorHold?.redraw();
       frameScheduler?.invalidate();
+      cameraTour?.prepareNext();
     }
     const resizeController = createSceneResizeController({
       onResize: applySceneSize,
@@ -823,7 +846,7 @@ function setSrgbTexture(texture) {
     // on every resize, so reading it inside the scroll handler avoids a
     // layout-flushing window.innerHeight access per scroll event.
     const onWindowResize = () => resizeController.resize();
-    const onFontsLoaded = () => { cinematicArea = measureCinematicArea(viewport.width, viewport.height); invalidateContent(); };
+    const onFontsLoaded = () => { cinematicArea = measureCinematicArea(viewport.width, viewport.height); cameraTour?.prepareNext(); invalidateContent(); };
     document.fonts?.addEventListener?.("loadingdone", onFontsLoaded);
     const onWindowScroll = () => {
       viewport.scrollTarget = Math.min(window.scrollY / (1.8 * viewport.height), 1.25);
@@ -838,6 +861,8 @@ function setSrgbTexture(texture) {
     let debugRenderFrameCount = 0;
     let debugRenderWindowStart = null;
     let firstFrameDrawn = false;
+    // Governor steps link their programs at once and apply on a tour cut.
+    const adaptiveSteps = createDeferredQualityStep({ prepare: (profile) => rendering.prepareQuality(profile) });
     function updateSceneFrame({
       deltaSeconds,
       elapsedSeconds: elapsedTime,
@@ -846,14 +871,26 @@ function setSrgbTexture(texture) {
     }) {
       const frameStart = firstFrameDrawn ? 0 : sceneNow();
       // Samples are rAF intervals, not render cost; take them only while the
-      // revealed scene animates continuously, outside a post-event hold.
+      // revealed scene animates continuously, outside a post-event hold, and
+      // not while a step waits for its cut.
       const revealed = sceneReadyMarked && cinematic.ready;
-      const adaptiveProfile = revealed && !reducedMotion
+      const nowMs = 1e3 * elapsedTime;
+      const sampledProfile = revealed && !reducedMotion && !adaptiveSteps.pending
         ? qualityState.sampleRevealed?.({ frameMs: 1e3 * sampleDeltaSeconds,
-          nowMs: 1e3 * elapsedTime, timestamp, profile: state.profile })
+          nowMs, timestamp, profile: state.profile })
         : null;
-      // Each step changes the tier or, below balanced, only the pixel ratio.
+      if (sampledProfile) adaptiveSteps.queue(sampledProfile, nowMs);
+      const tourPhase = cameraTour?.update({ elapsedSeconds: elapsedTime, reducedMotion,
+        developer: Boolean(scene.devMode?.active), panelOpen: document.body.hasAttribute("data-panel-open") }) ?? null;
+      const transition = cameraTour?.transition ?? TOUR_IDLE;
+      // Each step changes the tier or, below balanced, only the pixel ratio. A
+      // running tour takes it on a cut, where the crossfade's kept frame hides
+      // its one-off work.
+      const adaptiveProfile = adaptiveSteps.take({ cut: transition.cut, running: cameraTour?.running === true, nowMs });
       if (adaptiveProfile) applyActiveQualityProfile(adaptiveProfile, "adaptive");
+      // The capture, cut and first dissolve frames carry one-off work, not load.
+      if (transition.capture) qualityState.skipSamples?.(3);
+      rendering.postprocessPipeline.setTransition?.(transition);
       const activeProfile = state.profile,
         cameraProfile = compositionState.profile.camera || fallbackComposition.camera,
         orbitMotionScale = 1;
@@ -872,9 +909,6 @@ function setSrgbTexture(texture) {
           0.6 * Math.sin(0.13 * elapsedTime) * orbitMotionScale,
         lookAtHeight = cameraProfile.lookAtBase + cameraProfile.lookAtScrollDelta * viewport.scroll,
         orbitDistance = cameraProfile.orbitScale * (scrolledOrbitBase - cameraProfile.orbitTrim);
-      const tourPhase = cameraTour?.update({ elapsedSeconds: elapsedTime, reducedMotion,
-        developer: Boolean(scene.devMode?.active), panelOpen: document.body.hasAttribute("data-panel-open") }) ?? null;
-      rendering.postprocessPipeline.setFade?.(cameraTour?.fade ?? 0);
       const cinematicApplied = cinematic.apply({ width: viewport.width, height: viewport.height,
         elapsedSeconds: elapsedTime, reducedMotion, developer: Boolean(scene.devMode?.active), tourPhase, fallbackFov: cameraProfile.fov || 45 });
       if (scene.devMode?.active && typeof scene.devMode.update === "function") scene.devMode.update(camera, deltaSeconds);
@@ -893,7 +927,7 @@ function setSrgbTexture(texture) {
       quietScene.enforce();
       if (filmActive) filmScene.finishFrame(camera, cloudLookTarget, cinematic.frame,
         viewport.width < 900 && cinematic.shot?.arc === 2, (cinematicArea?.top || 200) / viewport.height);
-      if (qualityDebug) qualityDebug.cinematic = { tour: cameraTour ? { ...cameraTour.state, fade: cameraTour.fade } : null, film: filmActive, shot: cinematic.shot?.name, selected: cinematic.selected, angle: cinematic.angle + 1, current: cinematic.current, quiet: quietScene.active };
+      if (qualityDebug) qualityDebug.cinematic = { tour: cameraTour ? { ...cameraTour.state, transition: { ...transition } } : null, film: filmActive, shot: cinematic.shot?.name, selected: cinematic.selected, angle: cinematic.angle + 1, current: cinematic.current, quiet: quietScene.active };
       // Drawing while a warm-up links would block on it; the hidden canvas waits.
       if (canvasShown || !shaderWarmup.pending) {
         rendering.update();
@@ -905,6 +939,8 @@ function setSrgbTexture(texture) {
       panelHold?.frameRendered();
       visitorHold?.frameRendered();
       if (qualityDebug) {
+        // Linked programs: a first crossfade or quality step should add none.
+        qualityDebug.programs = renderer.info?.programs?.length ?? null;
         debugRenderWindowStart ??= timestamp;
         debugRenderFrameCount += 1;
         const debugRenderWindowMs = timestamp - debugRenderWindowStart;
@@ -931,6 +967,9 @@ function setSrgbTexture(texture) {
       if (sceneShown) visitorHold?.reveal();
     }
     frameScheduler = createSceneFrameScheduler({
+      // Renders land evenly on every nth vsync near 60 Hz (144 Hz draws 72
+      // fps); touch screens stay at or below 60 to save battery.
+      displayCadence: { baseRate: 60, round: qualityState.touchPrimary ? "ceil" : "floor" },
       isRenderable() {
         return !document.hidden && sceneVisible && webglContextAvailable && !sceneFailed;
       },

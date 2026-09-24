@@ -130,8 +130,35 @@ test("scene bootstrap pins the asset tier and samples quality only after reveal"
   assert.match(index, /state\.lowPower = assetTier === "low";/);
   assert.doesNotMatch(index, /state\.lowPower = state\.profile\.isLow/);
   assert.match(index, /const revealed = sceneReadyMarked && cinematic\.ready;/);
-  assert.match(index, /revealed && !reducedMotion\s*\?\s*qualityState\.sampleRevealed\?\.\(/);
+  assert.match(index, /revealed && !reducedMotion && !adaptiveSteps\.pending\s*\?\s*qualityState\.sampleRevealed\?\.\(/);
   assert.match(index, /if \(adaptiveProfile\) applyActiveQualityProfile\(adaptiveProfile, "adaptive"\);/);
+  // A step links its programs when sampled and lands on a tour cut, where the
+  // crossfade's kept frame hides it; the one-off transition frames go unsampled.
+  assert.match(
+    index,
+    /const adaptiveSteps = createDeferredQualityStep\(\{ prepare: \(profile\) => rendering\.prepareQuality\(profile\) \}\);/,
+  );
+  assert.match(index, /if \(sampledProfile\) adaptiveSteps\.queue\(sampledProfile, nowMs\);/);
+  assert.match(
+    index,
+    /const adaptiveProfile = adaptiveSteps\.take\(\{ cut: transition\.cut, running: cameraTour\?\.running === true, nowMs \}\);/,
+  );
+  assert.match(index, /if \(transition\.capture\) qualityState\.skipSamples\?\.\(3\);/);
+  const frame = index.slice(index.indexOf("function updateSceneFrame("));
+  const order = [
+    "qualityState.sampleRevealed?.(",
+    "cameraTour?.update(",
+    "const transition = cameraTour?.transition ?? TOUR_IDLE;",
+    "adaptiveSteps.take(",
+    "applyActiveQualityProfile(adaptiveProfile",
+    "qualityState.skipSamples?.(3)",
+    "rendering.postprocessPipeline.setTransition?.(transition);",
+    "cinematic.apply(",
+    "rendering.update();",
+  ].map((anchor) => frame.indexOf(anchor));
+  assert.ok(order.every((at) => at >= 0), "each frame step is wired");
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), "tour, step, capture skip, crossfade, camera, draw");
+  assert.doesNotMatch(index, /setFade|cameraTour\?\.fade/);
   // Each event that brings uploads or compiles restarts the sampling hold.
   for (const [label, anchor] of [
     ["intersection resume", "if (sceneVisible) {"],

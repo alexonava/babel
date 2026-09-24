@@ -3,10 +3,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   createPanelHold,
+  createRefreshEstimator,
   createSceneFrameScheduler,
   createSceneResizeController,
   disposeSceneRuntimeResources,
   hasMeaningfulScalarChange,
+  renderDivisor,
 } from "../src/scene/runtime.js";
 
 function createFrameHarness() {
@@ -120,6 +122,173 @@ test("60 FPS target preserves every frame on a 60 Hz display", () => {
 
   assert.equal(updates, 61);
   scheduler.dispose();
+});
+
+test("render divisors keep desktops at or above 60 fps and touch screens at or below it", () => {
+  const rates = [60, 75, 90, 120, 144, 165, 240];
+  assert.deepEqual(rates.map((hz) => renderDivisor(hz)), [1, 1, 1, 2, 2, 2, 4]);
+  assert.deepEqual(
+    [30, ...rates].map((hz) => renderDivisor(hz, { round: "ceil" })),
+    [1, 1, 2, 2, 2, 3, 3, 4],
+  );
+  assert.equal(renderDivisor(0), 1);
+  assert.equal(renderDivisor(Number.NaN, { round: "ceil" }), 1);
+});
+
+test("the refresh estimator snaps, adopts on two agreeing estimates and keeps its rate", () => {
+  const estimator = createRefreshEstimator();
+  const feed = (ms, count) => {
+    for (let index = 0; index < count; index += 1) estimator.sample(ms);
+    return estimator.hz;
+  };
+  assert.equal(feed(1000 / 144, 16), 0, "one estimate is only a candidate");
+  assert.equal(feed(1000 / 144 + 0.1, 16), 144);
+  assert.equal(feed(1, 40), 144, "intervals under 2.5 ms are ignored");
+  assert.equal(feed(80, 40), 144, "and so are stalls over 40 ms");
+  assert.equal(feed(1000 / 60, 32), 144, "a switch waits for the old intervals to age out");
+  assert.equal(feed(1000 / 60, 16), 60);
+  assert.equal(feed(1000 / 110, 64), 60, "a rate far from any common one is not adopted");
+  estimator.reset();
+  assert.equal(estimator.hz, 60, "a reset keeps the adopted rate");
+  assert.equal(feed(1000 / 90, 16), 60, "and restarts the samples");
+  assert.equal(feed(1000 / 90, 16), 90);
+});
+
+// Steps a scheduler through display frames, each timestamp from at(frame).
+function runCadence({ round, frames: count, at, skip = () => false }) {
+  const frames = createFrameHarness();
+  const updates = [];
+  const scheduler = createSceneFrameScheduler({
+    cancelFrame: frames.cancelFrame,
+    displayCadence: { baseRate: 60, round },
+    onUpdate(frame) {
+      updates.push(frame);
+    },
+    requestFrame: frames.requestFrame,
+  });
+  scheduler.start();
+  for (let frame = 0; frame <= count; frame += 1) {
+    if (!skip(frame)) frames.step(at(frame));
+  }
+  scheduler.dispose();
+  return updates;
+}
+
+function lastSecond(updates, end) {
+  const inWindow = updates.filter(({ timestamp }) => timestamp >= end - 1000 && timestamp < end);
+  const intervals = inWindow
+    .slice(1)
+    .map((update, index) => update.timestamp - inWindow[index].timestamp);
+  return { count: inWindow.length, intervals, updates: inWindow };
+}
+
+test("a display cadence renders every nth vsync, evenly, at common refresh rates", () => {
+  for (const [hz, round, divisor, perSecond] of [
+    [60, "floor", 1, 60],
+    [90, "floor", 1, 90],
+    [144, "floor", 2, 72],
+    [240, "floor", 4, 60],
+    [90, "ceil", 2, 45],
+    [120, "ceil", 2, 60],
+  ]) {
+    const vsync = 1000 / hz;
+    const updates = runCadence({ round, frames: 2 * hz, at: (frame) => frame * vsync });
+    const { count, intervals } = lastSecond(updates, 2000 - vsync / 2);
+    const label = `${hz} Hz ${round}`;
+    assert.ok(Math.abs(count - perSecond) <= 1, `${label}: ${count} frames`);
+    for (const interval of intervals) {
+      assert.ok(Math.abs(interval - divisor * vsync) < 1e-6, `${label}: ${interval} ms`);
+    }
+  }
+
+  // Timestamps a little off the vsync grid keep the cadence.
+  const vsync = 1000 / 144;
+  const jittered = runCadence({
+    round: "floor",
+    frames: 288,
+    at: (frame) => frame * vsync + (((frame * 7) % 5) - 2) * 0.05,
+  });
+  const { intervals } = lastSecond(jittered, 2000);
+  assert.ok(intervals.every((interval) => Math.abs(interval - 2 * vsync) < 0.5), "72 fps, even");
+});
+
+test("a display cadence starts at the base rate, follows a monitor switch and never bursts", () => {
+  const fast = 1000 / 144;
+  const start = runCadence({ round: "floor", frames: 288, at: (frame) => frame * fast });
+  const early = start.filter(({ timestamp }) => timestamp < 200);
+  assert.equal(early.length, 12, "until a rate is adopted it caps at 60 fps");
+
+  const slow = 1000 / 60;
+  const quick = 1000 / 240;
+  const switched = runCadence({
+    round: "floor",
+    frames: 120 + 480,
+    at: (frame) => (frame <= 120 ? frame * slow : 2000 + (frame - 120) * quick),
+  });
+  const settled = lastSecond(switched, 3500);
+  assert.ok(Math.abs(settled.count - 60) <= 1, "240 Hz is adopted within half a second");
+  assert.ok(settled.intervals.every((interval) => Math.abs(interval - 4 * quick) < 1e-6));
+
+  // A late frame re-phases the cadence instead of drawing twice in a row.
+  const missed = runCadence({
+    round: "floor",
+    frames: 288,
+    at: (frame) => frame * fast,
+    skip: (frame) => frame % 37 === 0 && frame > 60,
+  });
+  const { intervals } = lastSecond(missed, 2000);
+  assert.ok(intervals.every((interval) => interval > 2 * fast - 1e-6), "no back-to-back renders");
+  assert.ok(intervals.some((interval) => interval > 2 * fast + 1e-6));
+});
+
+test("on a cadence the governor's sample reads a met cadence as 60 fps and counts late vsyncs", () => {
+  const vsync = 1000 / 90;
+  const updates = runCadence({ round: "ceil", frames: 180, at: (frame) => frame * vsync });
+  const { updates: settled } = lastSecond(updates, 2000);
+  assert.ok(settled.length >= 44);
+  for (const { deltaSeconds, sampleDeltaSeconds } of settled) {
+    assert.ok(Math.abs(deltaSeconds - 2 / 90) < 1e-9, "scene time advances by the render interval");
+    assert.ok(Math.abs(sampleDeltaSeconds - 1 / 60) < 1e-9, "a met 45 fps cadence reads as 60 fps");
+  }
+
+  // A due render that lands a vsync late reports the lost vsync in full.
+  const due = Math.round(settled.at(-10).timestamp / vsync) + 2;
+  const late = runCadence({
+    round: "ceil",
+    frames: 180,
+    at: (frame) => frame * vsync,
+    skip: (frame) => frame === due,
+  });
+  const after = late.find(({ timestamp }) => timestamp > due * vsync);
+  assert.ok(Math.abs(after.timestamp - (due + 1) * vsync) < 1e-6);
+  assert.ok(Math.abs(after.sampleDeltaSeconds - (1 / 60 + 1 / 90)) < 1e-9);
+
+  // A 120 Hz phone that keeps missing its 60 fps cadence by a vsync (40 fps)
+  // reads as pressure, as 25 ms frames would on a 60 Hz screen.
+  const fast = 1000 / 120;
+  const strained = runCadence({
+    round: "ceil",
+    frames: 160,
+    at: (frame) => (frame <= 120 ? frame * fast : 1000 + (frame - 120) * 25),
+  });
+  const slow = strained.filter(({ timestamp }) => timestamp > 1100);
+  assert.ok(slow.length >= 30);
+  assert.ok(slow.every(({ sampleDeltaSeconds }) => Math.abs(sampleDeltaSeconds - 0.025) < 1e-9));
+
+  // Faster than 60 fps (144 Hz renders 72), a met cadence also reads as 60 fps
+  // and a late render reports its real interval, as on a 60 Hz screen.
+  const quick = 1000 / 144;
+  const run144 = (skip) =>
+    runCadence({ round: "floor", frames: 288, at: (frame) => frame * quick, skip });
+  const { updates: met } = lastSecond(run144(() => false), 2000);
+  assert.ok(met.length >= 70);
+  assert.ok(met.every(({ sampleDeltaSeconds }) => Math.abs(sampleDeltaSeconds - 1 / 60) < 1e-9));
+  const missed = Math.round(met.at(-10).timestamp / quick) + 2;
+  const late144 = run144((frame) => frame === missed).find(
+    ({ timestamp }) => timestamp > missed * quick,
+  );
+  assert.ok(Math.abs(late144.timestamp - (missed + 1) * quick) < 1e-6);
+  assert.ok(Math.abs(late144.sampleDeltaSeconds - 3 / 144) < 1e-9, "one late vsync, not 1/60 more");
 });
 
 test("reduced motion freezes scene time and renders only dirty frames", () => {
@@ -552,6 +721,12 @@ test("scene bootstrap idles before reveal, holds behind dialogs and fails to the
   assert.match(source, /attributeFilter: \["data-panel-open"\]/);
   assert.match(source, /function applySceneSize\([^]*?panelHold\?\.redraw\(\);/);
   assert.match(source, /rendering\.update\(\);[^]*?panelHold\?\.frameRendered\(\);/);
+  // Renders keep an even vsync cadence: desktops at or above 60 fps, touch
+  // screens at or below it; the 60 fps cap holds until a rate is adopted.
+  assert.match(
+    source,
+    /createSceneFrameScheduler\(\{\s*(\/\/.*\s*)*displayCadence: \{ baseRate: 60, round: qualityState\.touchPrimary \? "ceil" : "floor" \},[^]*?targetFrameRate: 60,\s*\}\);/,
+  );
   const dispose = source.slice(source.indexOf("function disposeHomeSceneRuntime"));
   assert.match(dispose, /panelObserver\?\.disconnect\(\);\s*panelHold\.dispose\(\);/);
 

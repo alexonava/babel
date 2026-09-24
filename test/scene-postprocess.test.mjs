@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { UnsignedByteType } from "three";
 import { createPostprocessPipeline } from "../src/scene/postprocess.js";
 
 function createRendererMock() {
@@ -411,4 +412,200 @@ test("film grading survives quality changes and restores the current profile wit
   assert.equal(g.uInkMix.value, 0.14);
   assert.equal(v.uTextProtection.value, 0);
   pipeline.dispose();
+});
+
+// Records each draw as [scene or material name, render target].
+function createRecordingRenderer(draws) {
+  let target = null;
+  return {
+    ...createRendererMock(),
+    autoClear: true,
+    getRenderTarget: () => target,
+    setRenderTarget(next) {
+      target = next;
+    },
+    render(object) {
+      draws.push([object.isMesh ? object.material.name : "scene", target]);
+    },
+    compile(object) {
+      draws.push(["compile", object.material.name, target]);
+    },
+  };
+}
+
+function createRecordedPipeline(profile, camera = {}) {
+  const draws = [];
+  const renderer = createRecordingRenderer(draws);
+  const pipeline = createPostprocessPipeline(renderer, { isScene: true }, camera, profile, {
+    matchMedia: createMatchMedia(),
+  });
+  const frame = () => {
+    draws.length = 0;
+    pipeline.composer.render(0);
+    return draws.slice();
+  };
+  const capture = () => {
+    pipeline.setTransition({ capture: true, cut: false, progress: 1, zoom: 0.01 });
+    return frame();
+  };
+  return { capture, draws, frame, pipeline };
+}
+
+const LOW = { postprocessGrading: true };
+const smoothstep = (p) => p * p * (3 - 2 * p);
+
+test("a tour capture keeps grading's output with no added draw, and the cut mixes it out", () => {
+  const elements = new Array(16).fill(0);
+  elements[8] = -0.2;
+  elements[9] = 0.1;
+  const { capture, frame, pipeline } = createRecordedPipeline(
+    { postprocessGrading: true, postprocessVignette: true },
+    { projectionMatrix: { elements } },
+  );
+  const final = pipeline.passes.vignetteGrain.uniforms;
+  const { readBuffer, writeBuffer } = pipeline.composer;
+  const normal = frame();
+  assert.deepEqual(normal, [
+    ["scene", readBuffer],
+    ["BabelGradingShader", writeBuffer],
+    ["BabelVignetteGrainShader", null],
+  ]);
+
+  const captured = capture();
+  const kept = captured[1][1];
+  assert.deepEqual(
+    captured,
+    [["scene", readBuffer], ["BabelGradingShader", kept], ["BabelVignetteGrainShader", null]],
+    "grading draws straight into the kept target: the draw count is unchanged",
+  );
+  assert.ok(![readBuffer, writeBuffer].includes(kept));
+  assert.equal(final.tDiffuse.value, kept.texture, "the final pass reads the kept frame");
+  assert.equal(final.tPrev.value, kept.texture);
+  assert.equal(final.uBlend.value, 1, "the capture frame shows the outgoing shot alone");
+  assert.equal(kept.texture.type, UnsignedByteType);
+  assert.equal(kept.depthBuffer, false);
+  assert.deepEqual([kept.width, kept.height], [readBuffer.width, readBuffer.height]);
+  assert.deepEqual(final.uPrevOrigin.value.toArray(), [0.6, 0.45], "the off-axis centre, in UV");
+  assert.equal(pipeline.composer.readBuffer, readBuffer, "the ping-pong is untouched");
+  assert.equal(pipeline.composer.writeBuffer, writeBuffer);
+
+  pipeline.setTransition({ capture: false, cut: true, progress: 0.5, zoom: 0.01 });
+  assert.deepEqual(frame(), normal, "the cut draws as an ordinary frame");
+  assert.equal(final.tDiffuse.value, writeBuffer.texture);
+  assert.equal(final.tPrev.value, kept.texture);
+  assert.equal(final.uBlend.value, 0.5);
+  assert.equal(final.uPrevScale.value, 1 / 1.005, "the kept frame keeps pushing in");
+  pipeline.setTransition({ progress: 0.25, zoom: 0.01 });
+  assert.equal(final.uBlend.value, smoothstep(0.25));
+
+  pipeline.setQualityProfile(LOW);
+  assert.equal(pipeline.passes.vignetteGrain.enabled, true, "a quality step keeps the blend");
+  pipeline.composer.setPixelRatio(1.5);
+  pipeline.setTransition({ progress: 0.5, zoom: 0.01 });
+  assert.equal(final.uBlend.value, 0.5, "so does a pixel-ratio change");
+  pipeline.setTransition({ capture: false, cut: false, progress: 1, zoom: 0 });
+  assert.equal(final.uBlend.value, 1);
+  assert.equal(pipeline.passes.vignetteGrain.enabled, false, "low drops the final pass again");
+  pipeline.dispose();
+});
+
+test("the low tier adds the final pass only for a crossfade; a capture that never drew cuts hard", () => {
+  const { capture, frame, pipeline } = createRecordedPipeline(LOW);
+  const pass = pipeline.passes.vignetteGrain;
+  assert.equal(pass.enabled, false);
+  assert.deepEqual(frame().at(-1), ["BabelGradingShader", null], "grading draws to the canvas");
+
+  pipeline.setTransition({ capture: true, cut: false, progress: 1, zoom: 0.01 });
+  assert.equal(pass.enabled, true, "grading draws off-screen for the capture");
+  pipeline.setTransition({ capture: false, cut: true, progress: 0.1, zoom: 0.01 });
+  assert.equal(pass.uniforms.uBlend.value, 1, "nothing was kept, so the cut is hard");
+  assert.equal(pass.enabled, false);
+  pipeline.setTransition({ progress: 0.2, zoom: 0.01 });
+  assert.equal(pass.uniforms.uBlend.value, 1);
+
+  const captured = capture();
+  assert.deepEqual(captured.map(([name, target]) => [name, target === null]), [
+    ["scene", false],
+    ["BabelGradingShader", false],
+    ["BabelVignetteGrainShader", true],
+  ]);
+  const kept = captured[1][1];
+  assert.deepEqual(pass.uniforms.uPrevOrigin.value.toArray(), [0.5, 0.5], "no projection: centre");
+  pipeline.setTransition({ progress: 0.25, zoom: 0.01 });
+  assert.equal(pass.uniforms.uBlend.value, smoothstep(0.25));
+  const blending = capture();
+  assert.notEqual(blending[1][1], kept, "a capture mid-blend is ignored");
+  pipeline.dispose();
+});
+
+test("a CSS resize or a lost context ends a crossfade; the same size keeps it", () => {
+  const { capture, pipeline } = createRecordedPipeline(LOW);
+  const pass = pipeline.passes.vignetteGrain;
+  const startBlend = () => {
+    capture();
+    pipeline.setTransition({ capture: false, cut: true, progress: 0.25, zoom: 0.01 });
+    assert.equal(pass.uniforms.uBlend.value, smoothstep(0.25));
+  };
+
+  startBlend();
+  pipeline.resize(800, 600);
+  assert.equal(pass.uniforms.uBlend.value, smoothstep(0.25), "the same CSS size keeps the blend");
+  pipeline.resize(800, 520);
+  assert.equal(pass.uniforms.uBlend.value, 1, "the kept frame no longer matches the canvas");
+  assert.equal(pass.enabled, false);
+  pipeline.setTransition({ progress: 0.5, zoom: 0.01 });
+  assert.equal(pass.uniforms.uBlend.value, 1, "an ended blend is not resumed");
+
+  startBlend();
+  pipeline.cancelTransition();
+  assert.equal(pass.uniforms.uBlend.value, 1);
+  assert.equal(pass.enabled, false);
+  pipeline.cancelTransition();
+  pipeline.dispose();
+});
+
+test("the phone text band follows the crossfade instead of switching at the cut", () => {
+  const { capture, pipeline } = createRecordedPipeline(LOW);
+  const v = pipeline.passes.vignetteGrain.uniforms;
+  pipeline.setFilmTreatment(true);
+  pipeline.setTextProtection(true, 0.3);
+  assert.equal(v.uTextProtection.value, 1);
+  capture();
+  pipeline.setTransition({ capture: false, cut: true, progress: 0.25, zoom: 0.01 });
+  pipeline.setTextProtection(false, 0.3);
+  assert.equal(v.uTextProtection.value, 0.84375);
+  assert.equal(pipeline.passes.vignetteGrain.enabled, true);
+  pipeline.setTransition({ progress: 1 });
+  assert.equal(v.uTextProtection.value, 0);
+  assert.equal(pipeline.passes.vignetteGrain.enabled, false);
+  pipeline.setTextProtection(true, 0.3);
+  assert.equal(v.uTextProtection.value, 1, "outside a crossfade the band switches at once");
+  pipeline.setFilmTreatment(false);
+  assert.equal(v.uTextProtection.value, 0);
+  pipeline.dispose();
+});
+
+test("compile links the crossfade programs once for their real targets; dispose frees the frame", () => {
+  const { capture, draws, pipeline } = createRecordedPipeline(LOW);
+  const renderer = pipeline.composer.renderer;
+  const previous = { isWebGLRenderTarget: true };
+  renderer.setRenderTarget(previous);
+  pipeline.compile();
+  pipeline.compile();
+  assert.deepEqual(draws, [
+    ["compile", "BabelGradingShader", pipeline.composer.readBuffer],
+    ["compile", "BabelVignetteGrainShader", null],
+  ]);
+  assert.equal(renderer.getRenderTarget(), previous, "the previous target is restored");
+  renderer.setRenderTarget(null);
+
+  const kept = capture()[1][1];
+  let disposals = 0;
+  kept.addEventListener("dispose", () => (disposals += 1));
+  pipeline.dispose();
+  assert.equal(disposals, 1);
+
+  const bare = createPipeline(LOW);
+  assert.doesNotThrow(() => bare.compile(), "a renderer without compile() skips it");
+  bare.dispose();
 });

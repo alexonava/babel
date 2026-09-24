@@ -1,8 +1,11 @@
 import { DIRECTED_SHOTS } from "./directed-shots.js";
+import { PUSH_IN } from "./cinematic.js";
 
+// Visitors get each shot's own hold; 3, 5 and 20 remain fixed review cadences.
+export const TOUR_PER_SHOT = "shot";
+export const DEFAULT_TOUR_INTERVAL = TOUR_PER_SHOT;
 const TOUR_INTERVALS = Object.freeze([3, 5, 20]);
-// Visitors get the long 20-second dwell; 3 and 5 remain review cadences.
-export const DEFAULT_TOUR_INTERVAL = 20;
+export const TOUR_HOLD_FALLBACK = 11;
 const directedViews = Object.entries(DIRECTED_SHOTS).flatMap(([subject, shots]) =>
   shots.map((shot, angle) => ({ subject, angle, shot })),
 );
@@ -19,73 +22,108 @@ export function readTourInterval(search = "") {
 
 // Uses scene time rather than a separate timer: hidden/offscreen tabs do not skip
 // shots, and all geometry, materials and decoded images remain loaded.
-// A brief dip masks a hard camera cut without obscuring the composition long
-// enough to feel stalled at a five-second dwell.
-export const TOUR_FADE = Object.freeze({ out: 0.3, in: 0.45 });
-
-// The default 20-second mode's pacing: mostly a long, intimate dwell, with an
-// occasional short wildcard shot for variety. Sampled fresh each time a shot
-// starts, so wildcards land unpredictably rather than on a fixed cadence.
-export const TOUR_DWELL = Object.freeze({ base: 20, wildcard: 5, wildcardChance: 0.2 });
+// Shots join by a crossfade: the post-process pipeline keeps the outgoing shot's
+// last frame and dissolves it into the live one over 1.2 seconds, or 30% of a
+// shorter hold. The kept frame keeps pushing in by `zoom`, matching the drift it
+// replaces. The upcoming shot is fitted in idle time `prepareAfter` seconds
+// after the dissolve, or by mid-hold.
+export const TOUR_TRANSITION = Object.freeze({
+  dissolve: 1.2,
+  maxShare: 0.3,
+  prepareAfter: 1,
+  minZoom: 0.004,
+});
+export const TOUR_IDLE = Object.freeze({ capture: false, cut: false, progress: 1, zoom: 0 });
 
 export function createCameraTour({
   camera,
   interval = DEFAULT_TOUR_INTERVAL,
   invalidate = () => {},
-  random = Math.random,
+  prepare = null,
 }) {
-  let baseInterval = TOUR_INTERVALS.includes(interval) ? interval : DEFAULT_TOUR_INTERVAL;
-  function sampleDuration() {
-    return baseInterval === 20 && random() < TOUR_DWELL.wildcardChance
-      ? TOUR_DWELL.wildcard
-      : baseInterval;
-  }
-  let duration = sampleDuration(),
-    elapsed = 0,
+  const validCadence = (value) => value === TOUR_PER_SHOT || TOUR_INTERVALS.includes(value);
+  let cadence = validCadence(interval) ? interval : TOUR_PER_SHOT;
+  // Looked up on every update, so an unresolved opening shot or a subject
+  // fallback still gets the hold of the shot actually on screen.
+  const hold = () =>
+    cadence === TOUR_PER_SHOT
+      ? (DIRECTED_SHOTS[camera.current]?.[camera.angle]?.hold ?? TOUR_HOLD_FALLBACK)
+      : cadence;
+  const dissolve = () => Math.min(TOUR_TRANSITION.dissolve, TOUR_TRANSITION.maxShare * hold());
+  const transition = { ...TOUR_IDLE };
+  let elapsed = 0,
     lastTime = null,
     wasActive = false,
     paused = false,
     reduced = false,
     held = false,
     ready = false,
-    disposed = false;
-  function next() {
+    disposed = false,
+    // One capture frame shows the outgoing shot at phase 1; the next update
+    // cuts, and the dissolve runs on the new shot's elapsed time, which counts
+    // from the capture frame.
+    capturing = false,
+    cut = false,
+    dissolving = false,
+    dissolveSeconds = 0,
+    zoom = 0,
+    prepared = false;
+  const running = () => !disposed && ready && !paused && !reduced && !held;
+  function findNext(accept) {
     const start = directedViews.findIndex(
       ({ subject, angle }) => subject === camera.current && angle === camera.angle,
     );
     for (let offset = 1; offset <= directedViews.length; offset++) {
-      const { subject, angle, shot } = directedViews[(start + offset) % directedViews.length];
-      if (shot.tour !== false && camera.setPreviewShot(subject, angle)) break;
+      const view = directedViews[(start + offset) % directedViews.length];
+      if (view.shot.tour !== false && accept(view)) return view;
     }
-    duration = sampleDuration();
+    return null;
+  }
+  function advance() {
+    findNext(({ subject, angle }) => camera.setPreviewShot(subject, angle));
     elapsed = 0;
-    lastTime = null;
-    wasActive = false;
+    prepared = false;
     invalidate();
   }
-  // Pausing keeps the current shot and its elapsed dwell; resuming continues
-  // from there without counting the paused time. A pause shows the shot clear,
-  // so resuming steps out of a dip window: an interrupted fade-in stays clear
-  // and an interrupted fade-out restarts from clear before its cut.
+  // Fits the upcoming shot ahead of its cut, once per shot and never between a
+  // cut and the end of its dissolve.
+  function prepareUpcoming() {
+    prepared = true;
+    const view = prepare && findNext(({ subject }) => camera.isAvailable(subject));
+    if (view) prepare(view.subject, view.angle);
+  }
+  const prepareDue = () =>
+    !prepared &&
+    !capturing &&
+    !dissolving &&
+    elapsed >= Math.min(hold() * 0.5, dissolve() + TOUR_TRANSITION.prepareAfter);
+  // Anything that stops the tour drops a pending capture or dissolve, so the
+  // held frame is the clear shot and nothing replays on release.
+  function settle() {
+    capturing = cut = dissolving = false;
+    lastTime = null;
+    wasActive = false;
+  }
+  // Pausing keeps the current shot and its elapsed hold; resuming continues
+  // from there without counting the paused time. A pause on the capture frame
+  // keeps the outgoing shot, which captures again on resume and then cuts.
   function setPaused(value) {
     if (disposed || paused === Boolean(value)) return;
     paused = Boolean(value);
-    if (!paused) elapsed = Math.min(Math.max(elapsed, TOUR_FADE.in), duration - TOUR_FADE.out);
-    lastTime = null;
-    wasActive = false;
+    settle();
     invalidate();
   }
   return {
-    // A dialog, a visitor pause or the developer camera can hold the tour
-    // mid-dip; show the held shot undimmed rather than a near-black backdrop.
-    get fade() {
-      if (disposed || !ready || paused || reduced || held) return 0;
-      let f = 0;
-      if (elapsed < TOUR_FADE.in) f = 1 - elapsed / TOUR_FADE.in;
-      else if (elapsed > duration - TOUR_FADE.out)
-        f = (elapsed - (duration - TOUR_FADE.out)) / TOUR_FADE.out;
-      f = Math.max(0, Math.min(1, f));
-      return f * f * (3 - 2 * f);
+    // One reused object for the post-process pipeline; `progress` is linear.
+    get transition() {
+      transition.capture = capturing;
+      transition.cut = cut;
+      transition.progress = dissolving ? elapsed / dissolveSeconds : 1;
+      transition.zoom = capturing || dissolving ? zoom : 0;
+      return transition;
+    },
+    get running() {
+      return running();
     },
     get state() {
       const subject = camera.current,
@@ -93,8 +131,8 @@ export function createCameraTour({
           (view) => view.subject === subject && view.angle === camera.angle,
         );
       return {
-        interval: baseInterval,
-        dwell: duration,
+        interval: cadence,
+        dwell: hold(),
         paused,
         reduced,
         ready,
@@ -109,33 +147,53 @@ export function createCameraTour({
       held = developer || panelOpen;
       ready = camera.ready && camera.isAvailable(camera.current);
       const active = ready && !paused && !reduced && !held;
-      if (active && wasActive && lastTime !== null)
-        elapsed += Math.max(0, elapsedSeconds - lastTime);
-      if (elapsed >= duration) next();
+      cut = false;
+      if (!active) capturing = dissolving = false;
+      else {
+        if (capturing) {
+          advance();
+          capturing = false;
+          cut = dissolving = true;
+        }
+        if (wasActive && lastTime !== null) elapsed += Math.max(0, elapsedSeconds - lastTime);
+        if (dissolving && elapsed >= dissolveSeconds) dissolving = false;
+        const seconds = hold();
+        if (!cut && !dissolving && elapsed >= seconds) {
+          elapsed = seconds;
+          capturing = true;
+          dissolveSeconds = dissolve();
+          zoom = Math.max(TOUR_TRANSITION.minZoom, (PUSH_IN * dissolveSeconds) / seconds);
+        } else if (!cut && prepareDue()) prepareUpcoming();
+      }
       lastTime = elapsedSeconds;
       wasActive = active;
-      return reduced ? 0.5 : elapsed / duration;
+      return reduced ? 0.5 : Math.min(1, elapsed / hold());
     },
     setPaused,
     toggle() {
       setPaused(!paused);
     },
     next() {
-      if (!disposed) next();
+      if (disposed) return;
+      advance();
+      settle();
     },
-    setInterval(seconds) {
-      if (disposed || !TOUR_INTERVALS.includes(seconds)) return;
-      baseInterval = seconds;
-      duration = sampleDuration();
+    setInterval(value) {
+      if (disposed || !validCadence(value)) return;
+      cadence = value;
       elapsed = 0;
-      lastTime = null;
-      wasActive = false;
+      settle();
       invalidate();
+    },
+    // After a resize or font load: refit the upcoming shot now, or once due.
+    prepareNext() {
+      if (disposed) return;
+      prepared = false;
+      if (running() && prepareDue()) prepareUpcoming();
     },
     dispose() {
       disposed = true;
-      lastTime = null;
-      wasActive = false;
+      settle();
     },
   };
 }

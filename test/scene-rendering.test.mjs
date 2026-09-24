@@ -361,3 +361,57 @@ test("the outline pass exists only when the developer tools supply its factory",
   rendering.dispose();
   assert.equal(rendering.ensureOutlinePass(factory), null, "a disposed rendering adds no pass");
 });
+
+test("a lost context ends a tour crossfade before the scene hears of it", () => {
+  const listeners = {};
+  const calls = [];
+  const rendering = createSceneRendering({
+    container: { appendChild() {} },
+    createPipeline: () => ({
+      cancelTransition: () => calls.push("cancel"),
+      composer: { addPass() {}, render() {}, setPixelRatio() {}, setSize() {} },
+      setQualityProfile() {},
+    }),
+    createRenderer: () => ({
+      domElement: {
+        addEventListener: (name, handler) => (listeners[name] = handler),
+        removeEventListener: (name) => delete listeners[name],
+      },
+      shadowMap: {},
+      setClearColor() {},
+    }),
+    disposeResources: () => ({}),
+    height: 600,
+    lighting: {
+      ambientColor: 0xffffff,
+      ambientIntensity: 0.22,
+      directionalColor: 0xffffff,
+      directionalIntensity: 2.9,
+      directionalPosition: { x: 21, y: 29, z: 23 },
+      fogColor: 0x222222,
+      fogFar: 150,
+      fogNear: 62,
+      hemisphereGroundColor: 0x111111,
+      hemisphereIntensity: 0.71,
+      hemisphereSkyColor: 0x888888,
+    },
+    onContextLost: () => calls.push("lost"),
+    profile: createProfile(),
+    threeExports: {},
+    width: 800,
+    world: {
+      CAMERA_FAR: 210,
+      CAMERA_FOV: 48,
+      CAMERA_NEAR: 0.5,
+      FILL_LIGHT_POSITION: [-20, 14, -18],
+      SHADOW_CAMERA_FAR: 120,
+      SHADOW_CAMERA_HALF_EXTENT: 34,
+      SHADOW_CAMERA_NEAR: 0.5,
+    },
+  });
+
+  listeners.webglcontextlost({ preventDefault: () => calls.push("prevented") });
+  assert.deepEqual(calls, ["prevented", "cancel", "lost"]);
+  rendering.dispose();
+  assert.equal(listeners.webglcontextlost, undefined);
+});

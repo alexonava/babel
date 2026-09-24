@@ -101,7 +101,10 @@ const VIGNETTE_GRAIN_SHADER = {
     uGrainStrength: { value: 0.018 },
     uTextProtection: { value: 0 },
     uTextBottom: { value: 0.25 },
-    uFade: { value: 0 },
+    tPrev: { value: null },
+    uBlend: { value: 1 },
+    uPrevScale: { value: 1 },
+    uPrevOrigin: { value: new Vector2(0.5, 0.5) },
   },
   vertexShader: PASS_VERTEX_SHADER,
   fragmentShader: `
@@ -112,7 +115,10 @@ uniform int uGrainEnabled;
 uniform float uGrainStrength;
 uniform float uTextProtection;
 uniform float uTextBottom;
-uniform float uFade;
+uniform sampler2D tPrev;
+uniform float uBlend;
+uniform float uPrevScale;
+uniform vec2 uPrevOrigin;
 varying vec2 vUv;
 
 float hash(vec2 p) {
@@ -121,6 +127,11 @@ float hash(vec2 p) {
 
 void main() {
   vec4 texel = texture2D(tDiffuse, vUv);
+  // A crossfade mixes in the kept outgoing frame, still pushing in about its
+  // safe-area centre; vignette, grain and the text shade then apply once.
+  if (uBlend < 1.0) {
+    texel = mix(texture2D(tPrev, uPrevOrigin + (vUv - uPrevOrigin) * uPrevScale), texel, uBlend);
+  }
   vec3 color = texel.rgb;
 
   if (uVignetteEnabled == 1) {
@@ -136,7 +147,6 @@ void main() {
 
   float textShade = smoothstep(1.0 - uTextBottom - .12, 1.0 - uTextBottom + .10, vUv.y);
   color *= 1.0 - .28 * uTextProtection * textShade;
-  color *= 1.0 - uFade;
   gl_FragColor = vec4(clamp(color, 0.0, 1.0), texel.a);
 }
 `,
@@ -239,8 +249,86 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
 
   let reducedTransparency = Boolean(transparencyQuery?.matches);
   let film = false,
-    textProtection = false,
-    fade = 0;
+    textProtection = false;
+
+  // Tour crossfade: IDLE → ARMED (a capture is due) → CAPTURED (grading drew
+  // the outgoing frame into prevTarget) → BLENDING (the cut) → IDLE.
+  const IDLE = 0,
+    ARMED = 1,
+    CAPTURED = 2,
+    BLENDING = 3;
+  const finalUniforms = vignetteGrainPass.uniforms;
+  const toUv = (offset) => Math.min(1, Math.max(0, (1 - offset) / 2));
+  let phase = IDLE,
+    capturing = false,
+    compiled = false,
+    prevTarget = null,
+    blend = 1,
+    protectionFrom = 0,
+    protectionTarget = 0,
+    cssWidth = 0,
+    cssHeight = 0;
+
+  // The capture adds no draw: on the capture frame grading writes straight
+  // into the kept target and the final pass reads it from there, so the
+  // composer's ping-pong is untouched. The kept frame pushes in about the
+  // outgoing camera's off-axis principal point, the safe-area centre.
+  const renderGrading = gradingPass.render.bind(gradingPass);
+  gradingPass.render = (passRenderer, writeBuffer, readBuffer, deltaTime, maskActive) => {
+    capturing = phase === ARMED && !gradingPass.renderToScreen;
+    if (capturing) {
+      const { width, height } = writeBuffer;
+      if (!prevTarget) {
+        prevTarget = new WebGLRenderTarget(width, height, { depthBuffer: false });
+        finalUniforms.tPrev.value = prevTarget.texture;
+      } else if (prevTarget.width !== width || prevTarget.height !== height) {
+        prevTarget.setSize(width, height);
+      }
+      const elements = camera?.projectionMatrix?.elements;
+      finalUniforms.uPrevOrigin.value.set(
+        elements ? toUv(elements[8]) : 0.5,
+        elements ? toUv(elements[9]) : 0.5,
+      );
+      protectionFrom = finalUniforms.uTextProtection.value;
+      phase = CAPTURED;
+    }
+    renderGrading(
+      passRenderer,
+      capturing ? prevTarget : writeBuffer,
+      readBuffer,
+      deltaTime,
+      maskActive,
+    );
+  };
+  const renderFinal = vignetteGrainPass.render.bind(vignetteGrainPass);
+  vignetteGrainPass.render = (passRenderer, writeBuffer, readBuffer, deltaTime, maskActive) => {
+    renderFinal(
+      passRenderer,
+      writeBuffer,
+      capturing ? prevTarget : readBuffer,
+      deltaTime,
+      maskActive,
+    );
+    capturing = false;
+  };
+
+  // The phone text band follows the blend instead of switching at the cut.
+  function syncProtection() {
+    finalUniforms.uTextProtection.value = !film
+      ? 0
+      : blend < 1
+        ? protectionFrom + (protectionTarget - protectionFrom) * blend
+        : protectionTarget;
+  }
+
+  // A CSS resize or a lost context ends a crossfade on its incoming shot.
+  function cancelTransition() {
+    if (phase === IDLE) return;
+    phase = IDLE;
+    blend = finalUniforms.uBlend.value = 1;
+    syncProtection();
+    applyProfile(currentProfile);
+  }
 
   function applyProfile(profile = {}) {
     const baseline = profile.postprocessSettings || {};
@@ -269,7 +357,7 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
     gradingPass.uniforms.uHighlightWarmMix.value = settings.highlightWarmMix ?? 0.14;
     gradingPass.uniforms.uShadowCoolMix.value = settings.shadowCoolMix ?? 0.25;
     vignetteGrainPass.enabled =
-      vignetteEnabled || grainEnabled || (film && textProtection) || fade > 0;
+      vignetteEnabled || grainEnabled || (film && textProtection) || phase !== IDLE;
     vignetteGrainPass.uniforms.uVignetteEnabled.value = vignetteEnabled ? 1 : 0;
     vignetteGrainPass.uniforms.uVignetteStrength.value = settings.vignetteStrength ?? 0.08;
     vignetteGrainPass.uniforms.uGrainEnabled.value = grainEnabled ? 1 : 0;
@@ -309,8 +397,12 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
 
   // width and height are CSS pixels. The composer's targets follow device
   // pixels, but the ink contour keeps sampling one CSS pixel apart, the offset
-  // it was reviewed at.
+  // it was reviewed at. The kept frame is sampled by UV, so only a CSS size
+  // change, not a pixel ratio or quality step, ends a crossfade.
   function resize(width, height) {
+    if (width !== cssWidth || height !== cssHeight) cancelTransition();
+    cssWidth = width;
+    cssHeight = height;
     gradingPass.uniforms.uTexelSize.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
   }
 
@@ -340,23 +432,58 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
         if (typeof pass.dispose === "function") pass.dispose();
       }
       if (typeof composer.dispose === "function") composer.dispose();
+      prevTarget?.dispose();
+      prevTarget = null;
     },
+    // Links the crossfade's programs once, from the shader warm-up. Keys
+    // differ by output colour space, so grading compiles against an off-screen
+    // target and the final pass against the canvas, as a low-tier cut draws them.
+    compile() {
+      if (compiled || typeof renderer.compile !== "function") return;
+      compiled = true;
+      const previous = renderer.getRenderTarget?.() ?? null;
+      try {
+        renderer.setRenderTarget(composer.readBuffer);
+        renderer.compile(gradingPass.fsQuad._mesh, camera);
+        renderer.setRenderTarget(null);
+        renderer.compile(vignetteGrainPass.fsQuad._mesh, camera);
+      } catch {
+        compiled = false;
+      } finally {
+        renderer.setRenderTarget(previous);
+      }
+    },
+    cancelTransition,
     setFilmTreatment(active) {
       film = Boolean(active);
       if (!film) {
         textProtection = false;
-        vignetteGrainPass.uniforms.uTextProtection.value = 0;
+        protectionTarget = 0;
       }
+      syncProtection();
       applyProfile(currentProfile);
     },
-    // Tour cuts dip to black through the existing final pass; no added pass.
-    setFade(value = 0) {
-      const next = Math.max(0, Math.min(1, Number(value) || 0));
-      if (next === fade) return;
-      const toggled = next > 0 !== fade > 0;
-      fade = next;
-      vignetteGrainPass.uniforms.uFade.value = fade;
-      if (toggled) applyProfile(currentProfile);
+    // Takes the tour's { capture, cut, progress, zoom } once per frame, before
+    // the draw. The capture frame keeps grading's output; from the cut the
+    // final pass mixes it out along a smoothstep. A capture that never drew,
+    // or any settled frame, leaves a hard cut; a capture mid-blend is ignored.
+    setTransition(transition = null) {
+      const value = transition?.progress;
+      const progress = Math.min(1, Math.max(0, Number.isFinite(value) ? value : 1));
+      const zoom = Math.min(0.02, Math.max(0, Number(transition?.zoom) || 0));
+      const wasIdle = phase === IDLE;
+      if (transition?.capture === true) {
+        if (phase !== BLENDING) phase = ARMED;
+      } else if (progress >= 1 || phase === ARMED) {
+        phase = IDLE;
+      } else if (phase === CAPTURED) {
+        phase = BLENDING;
+      }
+      blend = phase === BLENDING ? progress * progress * (3 - 2 * progress) : 1;
+      finalUniforms.uBlend.value = blend;
+      finalUniforms.uPrevScale.value = 1 / (1 + zoom * progress);
+      syncProtection();
+      if (wasIdle !== (phase === IDLE)) applyProfile(currentProfile);
     },
     setTextProtection(active, bottom = 0.25) {
       const enabled = film && Boolean(active);
@@ -364,7 +491,8 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
         textProtection = enabled;
         applyProfile(currentProfile);
       }
-      vignetteGrainPass.uniforms.uTextProtection.value = enabled ? 1 : 0;
+      protectionTarget = enabled ? 1 : 0;
+      syncProtection();
       vignetteGrainPass.uniforms.uTextBottom.value = bottom;
     },
     setQualityProfile(profile = {}) {

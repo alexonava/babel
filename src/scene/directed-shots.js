@@ -8,6 +8,7 @@ export function wantsFilmTreatment(search = "") {
 // Heights and focal widths are proportions of the selected authored subject.
 // Detail shots intentionally crop incidental roof/canopy geometry; fitting the
 // entire horizontal slice would turn every portrait detail into a wide shot.
+// hold: seconds the tour stays on a shot, cut to cut; tour=3|5|20 overrides it.
 export const DIRECTED_SHOTS = {
   tower: [
     {
@@ -21,6 +22,7 @@ export const DIRECTED_SHOTS = {
       azimuth: -7,
       height: 0.68,
       arc: 2,
+      hold: 14,
       portrait: { region: [0.62, 1], targetHeight: 1.11, azimuth: -4, height: 0.66 },
     },
     {
@@ -33,6 +35,7 @@ export const DIRECTED_SHOTS = {
       azimuth: 82,
       height: 0.5,
       arc: 2,
+      hold: 11,
       focus: { width: 0.3, depth: [0.06, 0.34] },
       margin: 0.91,
       portrait: { focus: { width: 0.22, depth: [0.06, 0.34] } },
@@ -65,13 +68,23 @@ export const DIRECTED_SHOTS = {
       azimuth: -90,
       height: 0.62,
       arc: 1,
+      hold: 11,
       focus: { width: 0.27, depth: [0.13, 0.41] },
       margin: 0.91,
       portrait: { focus: { width: 0.2, depth: [0.13, 0.41] } },
     },
   ],
   tree: [
-    { name: "Portrait", region: [0, 1], fov: 36, azimuth: -77, height: 0.24, arc: 4, margin: 0.93 },
+    {
+      name: "Portrait",
+      region: [0, 1],
+      fov: 36,
+      azimuth: -77,
+      height: 0.24,
+      arc: 4,
+      hold: 14,
+      margin: 0.93,
+    },
     {
       name: "Lantern study",
       subject: "tree-lantern",
@@ -80,6 +93,7 @@ export const DIRECTED_SHOTS = {
       azimuth: -115,
       height: 0.62,
       arc: 2,
+      hold: 9,
       margin: 0.7,
     },
     {
@@ -89,6 +103,7 @@ export const DIRECTED_SHOTS = {
       azimuth: -155,
       height: 0.32,
       arc: 2,
+      hold: 9,
       focus: { width: 0.23, depth: [-0.09, 0.14] },
       margin: 0.91,
       portrait: { focus: { width: 0.16, depth: [-0.09, 0.14] } },
@@ -100,6 +115,7 @@ export const DIRECTED_SHOTS = {
       azimuth: -115,
       height: 0.16,
       arc: 1,
+      hold: 9,
       focus: { width: 0.3, depth: [-0.1, 0.32] },
       margin: 0.91,
       portrait: { focus: { width: 0.25, depth: [-0.1, 0.32] } },
@@ -107,8 +123,14 @@ export const DIRECTED_SHOTS = {
   ],
 };
 
+// Each portrait variant is built once, so a shot and orientation always resolve
+// to the same object: the cinematic camera keys its measurements and fits on it.
+const portraitShots = new WeakMap();
 export function resolveDirectedShot(shot, width, height) {
-  return shot.portrait && (width < 600 || height > width) ? { ...shot, ...shot.portrait } : shot;
+  if (!shot.portrait || (width >= 600 && height <= width)) return shot;
+  let portrait = portraitShots.get(shot);
+  if (!portrait) portraitShots.set(shot, (portrait = { ...shot, ...shot.portrait }));
+  return portrait;
 }
 
 // Clip each triangle against the directed volume, retaining intersections rather

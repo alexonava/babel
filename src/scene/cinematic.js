@@ -46,6 +46,39 @@ export function layoutRect(element) {
 }
 // Largest dolly-in fraction of the fitted distance within one shot.
 export const PUSH_IN = 0.045;
+// A tour shot keeps its fit through height-only resizes up to this share (a
+// phone's address bar) until the next cut.
+const DEFER_HEIGHT_SHARE = 0.2;
+function sameMatrix(a, b) {
+  for (let i = 0; i < 16; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+// The fit in use is kept while the view is unchanged or, during a tour, while
+// only the height changes a little and the subject stays on the canvas.
+function keepsFit(lock, shot, measured, area, width, height, defer) {
+  if (lock?.shot !== shot || lock.measured !== measured) return false;
+  const a = lock.area;
+  if (
+    width === lock.width &&
+    height === lock.height &&
+    area.left === a.left &&
+    area.top === a.top &&
+    area.width === a.width &&
+    area.height === a.height
+  )
+    return true;
+  if (
+    !defer ||
+    Math.abs(width - lock.width) >= 1 ||
+    Math.abs(height - lock.height) > DEFER_HEIGHT_SHARE * lock.height ||
+    Math.abs(area.left - a.left) >= 1 ||
+    Math.abs(area.top - a.top) >= 1 ||
+    Math.abs(area.width - a.width) >= 1
+  )
+    return false;
+  const extent = (Math.min(1, (shot.margin ?? 0.85) / (1 - PUSH_IN)) * a.height) / 2;
+  return a.top + a.height / 2 + extent <= height - 16;
+}
 export function createCinematicCamera({
   camera,
   fog,
@@ -62,14 +95,100 @@ export function createCinematicCamera({
     applied = false;
   let status = { tower: "pending", tree: "pending" };
   const target = new Vector3();
-  let measured = null,
-    fitted = null,
-    measurementKey = "",
-    fitKey = "";
+  // The fit in use: { shot, measured, fitted, width, height, area, areaKey }.
+  let lock = null;
   let currentShot = null;
+  // Resolved shot -> { root, matrix, measured }; area key -> Map<shot, { measured, fitted }>.
   const measurements = new Map(),
     fits = new Map();
+  const areaMemo = [];
+  let areaKey = "";
   const originalFog = fog ? { near: fog.near, far: fog.far } : null;
+  function cachedMeasurement(root, shot) {
+    const entry = measurements.get(shot);
+    return entry?.root === root && sameMatrix(entry.matrix, root.matrixWorld.elements)
+      ? entry.measured
+      : null;
+  }
+  function measurementFor(root, shot) {
+    let measured = cachedMeasurement(root, shot);
+    if (!measured) {
+      measured = measureShot(root, shot);
+      measurements.set(shot, {
+        root,
+        matrix: Float64Array.from(root.matrixWorld.elements),
+        measured,
+      });
+    }
+    return measured;
+  }
+  function areaKeyFor(area, width, height) {
+    const m = areaMemo;
+    if (
+      m[0] !== width ||
+      m[1] !== height ||
+      m[2] !== area.left ||
+      m[3] !== area.top ||
+      m[4] !== area.width ||
+      m[5] !== area.height
+    ) {
+      m.splice(0, 6, width, height, area.left, area.top, area.width, area.height);
+      areaKey = m.join(",");
+    }
+    return areaKey;
+  }
+  function fitWithClearance(shot, measured, area, width, height) {
+    let cameraY = measured.cameraY,
+      fitted;
+    const targetFoot = measured.groundAnchor;
+    for (let pass = 0; pass < 6; pass++) {
+      fitted = fitShot({ ...measured, cameraY }, shot, area, width, height);
+      fitted.cameraY = cameraY;
+      if (!getGroundY) break;
+      let clearanceY = cameraY;
+      // Sample the whole sweep and the dolly-in range (up to PUSH_IN).
+      for (let step = -4; step <= 4; step++) {
+        const yaw = ((shot.azimuth + (step * shot.arc) / 4) * Math.PI) / 180;
+        for (const reach of [1, 1 - PUSH_IN]) {
+          const x = measured.target.x + Math.cos(yaw) * fitted.distance * reach,
+            z = measured.target.z + Math.sin(yaw) * fitted.distance * reach;
+          clearanceY = Math.max(clearanceY, getGroundY(x, z) + 0.8);
+          // A low camera can be above the earth yet look through a hill.
+          // Keep footing views clear without moving or resizing the subject.
+          if (shot.region[0] === 0) {
+            const footY = Math.max(measured.footing, getGroundY(targetFoot.x, targetFoot.z)) + 0.18;
+            for (let sample = 1; sample < 24; sample++) {
+              const t = sample / 24;
+              const groundY = getGroundY(
+                x * (1 - t) + targetFoot.x * t,
+                z * (1 - t) + targetFoot.z * t,
+              );
+              clearanceY = Math.max(clearanceY, (groundY + 0.08 - footY * t) / (1 - t));
+            }
+          }
+        }
+      }
+      if (clearanceY - cameraY < 0.005) break;
+      cameraY = clearanceY;
+    }
+    return fitted;
+  }
+  // Fits are kept for the last three viewport/safe-area generations; the
+  // generation of the fit in use is never evicted.
+  function fitFor(shot, measured, area, width, height) {
+    const key = areaKeyFor(area, width, height);
+    let generation = fits.get(key);
+    if (!generation) {
+      fits.set(key, (generation = new Map()));
+      for (const old of fits.keys())
+        if (fits.size > 3 && old !== key && old !== lock?.areaKey) fits.delete(old);
+    }
+    const entry = generation.get(shot);
+    if (entry?.measured === measured) return entry.fitted;
+    const fitted = fitWithClearance(shot, measured, area, width, height);
+    generation.set(shot, { measured, fitted });
+    return fitted;
+  }
   function resolved() {
     if (selected === "orbit") return "orbit";
     if (status.tower === "fallback" || status.tower === "procedural") return "orbit";
@@ -105,14 +224,30 @@ export function createCinematicCamera({
       selected = kind;
       angle = nextAngle;
       started = null;
-      measured = fitted = null;
+      lock = null;
       return true;
+    },
+    // Measures, then fits, a shot ahead of its cut: one heavy step per call.
+    // Never touches the camera, fog or the fit in use.
+    prepare(kind, nextAngle, width, height) {
+      const base = DIRECTED_SHOTS[kind]?.[nextAngle];
+      if (!film || !base || !this.isAvailable(kind)) return "unavailable";
+      const root = kind === "tree" ? tree : tower,
+        shot = resolveDirectedShot(base, width, height);
+      root.updateWorldMatrix(true, false);
+      const measured = cachedMeasurement(root, shot);
+      if (!measured) {
+        measurementFor(root, shot);
+        return "pending";
+      }
+      fitFor(shot, measured, getSafeArea(width, height), width, height);
+      return "ready";
     },
     get shot() {
       return currentShot;
     },
     get frame() {
-      return fitted;
+      return lock?.fitted ?? null;
     },
     get ready() {
       return resolved() !== null;
@@ -130,7 +265,7 @@ export function createCinematicCamera({
     },
     setSubject(kind, root) {
       if (disposed) return;
-      measured = fitted = null;
+      lock = null;
       measurements.clear();
       fits.clear();
       if (kind === "tower") tower = root;
@@ -168,70 +303,34 @@ export function createCinematicCamera({
           width,
           height,
         );
-        const key = root.uuid + root.matrixWorld.elements.join(",") + JSON.stringify(shot);
-        if (!measured || measurementKey !== key) {
-          measured = measurements.get(key) || measureShot(root, shot);
-          measurements.set(key, measured);
-          measurementKey = key;
-          fitted = null;
-        }
-        const area = getSafeArea(width, height);
-        const nextFitKey = [width, height, area.left, area.top, area.width, area.height].join(",");
-        if (fitKey !== nextFitKey) {
-          fits.clear();
-          fitted = null;
-          fitKey = nextFitKey;
-        }
-        fitted ||= fits.get(measurementKey);
-        if (!fitted) {
-          let cameraY = measured.cameraY;
-          const targetFoot = measured.groundAnchor;
-          for (let pass = 0; pass < 6; pass++) {
-            fitted = fitShot({ ...measured, cameraY }, shot, area, width, height);
-            fitted.cameraY = cameraY;
-            if (!getGroundY) break;
-            let clearanceY = cameraY;
-            // Sample the whole sweep and the dolly-in range (up to PUSH_IN).
-            for (let step = -4; step <= 4; step++) {
-              const yaw = ((shot.azimuth + (step * shot.arc) / 4) * Math.PI) / 180;
-              for (const reach of [1, 1 - PUSH_IN]) {
-                const x = measured.target.x + Math.cos(yaw) * fitted.distance * reach,
-                  z = measured.target.z + Math.sin(yaw) * fitted.distance * reach;
-                clearanceY = Math.max(clearanceY, getGroundY(x, z) + 0.8);
-                // A low camera can be above the earth yet look through a hill.
-                // Keep footing views clear without moving or resizing the subject.
-                if (shot.region[0] === 0) {
-                  const footY =
-                    Math.max(measured.footing, getGroundY(targetFoot.x, targetFoot.z)) + 0.18;
-                  for (let sample = 1; sample < 24; sample++) {
-                    const t = sample / 24;
-                    const groundY = getGroundY(
-                      x * (1 - t) + targetFoot.x * t,
-                      z * (1 - t) + targetFoot.z * t,
-                    );
-                    clearanceY = Math.max(clearanceY, (groundY + 0.08 - footY * t) / (1 - t));
-                  }
-                }
-              }
-            }
-            if (clearanceY - cameraY < 0.005) break;
-            cameraY = clearanceY;
-          }
-          fits.set(measurementKey, fitted);
-        }
+        const measured = measurementFor(root, shot),
+          area = getSafeArea(width, height);
+        if (!keepsFit(lock, shot, measured, area, width, height, tourPhase !== null))
+          lock = {
+            shot,
+            measured,
+            fitted: fitFor(shot, measured, area, width, height),
+            width,
+            height,
+            area,
+            areaKey: areaKeyFor(area, width, height),
+          };
+        const { fitted } = lock;
         currentShot = shot;
         target.copy(measured.target);
+        // Tour shots drift at a constant rate so the camera never settles before
+        // a cut; a 2.5% breath follows the 48-second arc without a tour. A tour
+        // shot's dolly-in reaches 4.5% at its cut; the fit keeps a 15% margin.
+        const phase = Math.min(1, Math.max(0, tourPhase ?? 0));
         const arc = reducedMotion
           ? 0
           : tourPhase !== null
-            ? Math.sin((tourPhase - 0.5) * Math.PI) * shot.arc * 0.5
+            ? (phase - 0.5) * shot.arc
             : Math.sin(((elapsedSeconds - started) * Math.PI * 2) / 48) * shot.arc;
-        // A slow dolly-in gives each dwell a direction: 4.5% over a tour shot,
-        // a 2.5% breath over the 48-second arc. The fit keeps a 15% margin.
         const push = reducedMotion
           ? 0
           : tourPhase !== null
-            ? PUSH_IN * tourPhase * tourPhase * (3 - 2 * tourPhase)
+            ? PUSH_IN * phase
             : 0.025 * (0.5 - 0.5 * Math.cos(((elapsedSeconds - started) * Math.PI * 2) / 48));
         const distance = fitted.distance * (1 - push);
         const yaw = ((shot.azimuth + arc) * Math.PI) / 180;
@@ -241,11 +340,19 @@ export function createCinematicCamera({
           target.z + Math.sin(yaw) * distance,
         );
         camera.lookAt(target);
-        camera.fov = shot.fov;
+        // A kept fit becomes a crop anchored to the top of the canvas: the pixel
+        // scale and the subject's distance from the top edge stay constant.
+        const centerX = lock.area.left + lock.area.width / 2,
+          centerY = lock.area.top + lock.area.height / 2;
+        camera.fov =
+          height === lock.height
+            ? shot.fov
+            : (360 / Math.PI) *
+              Math.atan((Math.tan((shot.fov * Math.PI) / 360) * height) / lock.height);
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
-        camera.projectionMatrix.elements[8] = -((2 * (area.left + area.width / 2)) / width - 1);
-        camera.projectionMatrix.elements[9] = -(1 - (2 * (area.top + area.height / 2)) / height);
+        camera.projectionMatrix.elements[8] = -((2 * centerX) / width - 1);
+        camera.projectionMatrix.elements[9] = -(1 - (2 * centerY) / height);
         camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
         if (fog) {
           fog.near = Math.max(originalFog.near, fitted.distance * 0.88);
@@ -313,7 +420,7 @@ export function createCinematicCamera({
       if (disposed) return false;
       disposed = true;
       tower = tree = null;
-      measured = fitted = currentShot = null;
+      lock = currentShot = null;
       measurements.clear();
       fits.clear();
       if (fog) Object.assign(fog, originalFog);
