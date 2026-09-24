@@ -6,7 +6,8 @@ const TOWER_ROLES = Object.freeze({
   assembled: ["stairs", "wall", "base", "crown"],
   complete: ["tower"],
 });
-const ROLES = [...TOWER_ROLES.assembled, "tower", "tree"];
+// The film's scattered rocks (rock-scatter.js) load through the same manifest.
+const ROLES = [...TOWER_ROLES.assembled, "tower", "tree", "lichen-rock", "weathered-stone"];
 export const ARCHITECTURE_ASSET_BUDGETS = Object.freeze({
   high: 6 * 1024 * 1024,
   balanced: 3 * 1024 * 1024,
@@ -147,7 +148,7 @@ export async function loadArchitectureAsset(url, { signal, tier, role = "asset" 
   }
 }
 
-function collectResources(asset, extraTextures = []) {
+export function collectResources(asset, extraTextures = []) {
   const resources = {
     geometries: new Set(),
     materials: new Set(),

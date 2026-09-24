@@ -1,27 +1,27 @@
 import {
   CanvasTexture,
-  MirroredRepeatWrapping,
   PlaneGeometry,
   RepeatWrapping,
   SRGBColorSpace,
   Vector3,
 } from "three";
-import { createStoneDetailController, groundMaterialUrl, GROUND_DETAIL_SETTINGS } from "./stone-detail.js";
+import { createStoneDetailController, GROUND_DETAIL_SETTINGS, slateMaterialUrl } from "./stone-detail.js";
+import { SLATE_TILING } from "./mud-ground.js";
 
 export const EARTH = Object.freeze({ width: 384, subdivisions: 128, tile: 6.3, normalScale: 0.7 });
-// The procedural and comparison ground disc (WORLD.GROUND_RADIUS 88) is 176 units across.
-const GROUND_DISC_WIDTH = 176;
 
-// The film terrain's map sets. "slate" is the default: the authored cracked
-// ground pair at the classic ground's mirrored 22-unit tile (repeat 8 across
-// its disc) and normal strength, with no roughness map. "earth" is the Poly
-// Haven dirt comparison (?ground=earth), which also carries grass.
+// The film terrain's map sets. "slate" is the default: the seamless slate v2
+// tile, repeated every 22 units at the classic ground's normal strength, with
+// no roughness map, plus a 512 detail map shared by both tiers (mud-ground.js
+// samples it at its own scale). "earth" is the Poly Haven dirt comparison
+// (?ground=earth), which also carries grass.
 export const FILM_GROUND_PRESETS = Object.freeze({
   slate: Object.freeze({
-    kinds: Object.freeze(["color", "normal"]),
-    urlFor: groundMaterialUrl,
-    tile: GROUND_DISC_WIDTH / GROUND_DETAIL_SETTINGS.repeat,
-    wrap: MirroredRepeatWrapping,
+    kinds: Object.freeze(["color", "normal", "detail"]),
+    urlFor: slateMaterialUrl,
+    sizeFor: (kind, size) => (kind === "detail" ? 512 : size),
+    tile: SLATE_TILING.tile,
+    wrap: RepeatWrapping,
     normalScale: GROUND_DETAIL_SETTINGS.normalScale,
     muddy: false,
     material: "Cracked Desert Ground",
@@ -99,6 +99,7 @@ export function createEarthDetail({
     report,
     kinds: preset.kinds,
     urlFor: preset.urlFor,
+    sizeFor: preset.sizeFor,
     apply(sources) {
       const next = {};
       try {
@@ -124,6 +125,7 @@ export function createEarthDetail({
           colorMap: maps.color,
           normalMap: maps.normal,
           roughnessMap: maps.roughness ?? null,
+          detailMap: maps.detail ?? null,
           bumpMap: null,
           normalScale: preset.normalScale,
           muddy: preset.muddy,

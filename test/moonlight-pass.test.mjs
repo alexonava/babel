@@ -11,7 +11,7 @@ import {
   Vector3,
 } from "three";
 import { createCinematicCamera, PUSH_IN } from "../src/scene/cinematic.js";
-import { createCameraTour, TOUR_FADE } from "../src/scene/camera-tour.js";
+import { createCameraTour, TOUR_IDLE } from "../src/scene/camera-tour.js";
 import { createPostprocessPipeline } from "../src/scene/postprocess.js";
 import {
   applyFilmGrade,
@@ -57,28 +57,93 @@ function tourSetup(interval = 5) {
   return { camera, controller, tour, render };
 }
 
-test("tour shots open from black, dip to black before each cut, and hold clear while paused or reduced", () => {
+const LOW = { postprocessGrading: true, postprocessVignette: false, postprocessGrain: false };
+const rendererMock = () => ({
+  autoClear: true,
+  autoClearColor: true,
+  autoClearDepth: true,
+  autoClearStencil: true,
+  clear() {},
+  getPixelRatio: () => 1,
+  getRenderTarget: () => null,
+  getSize(target) {
+    target.width = 800;
+    target.height = 600;
+    return target;
+  },
+  render() {},
+  setRenderTarget() {},
+});
+
+test("tour shots open without black and dissolve the kept outgoing frame into each cut", () => {
   const f = tourSetup(5);
-  f.render(0);
-  assert.equal(f.tour.fade, 1);
-  f.render(TOUR_FADE.in / 2);
-  close(f.tour.fade, 0.5);
-  f.render(TOUR_FADE.in + 0.2);
-  assert.equal(f.tour.fade, 0);
-  f.render(5 - TOUR_FADE.out / 2);
-  close(f.tour.fade, 0.5);
-  f.render(5.01);
+  const pipeline = createPostprocessPipeline(rendererMock(), { isScene: true }, f.camera, LOW, {
+    matchMedia: () => ({ matches: false }),
+  });
+  const pass = pipeline.passes.vignetteGrain;
+  // Mirrors index.js: the tour, then the pipeline, then the camera and the draw.
+  const frame = (time, flags = {}) => {
+    const phase = f.tour.update({ elapsedSeconds: time, ...flags });
+    pipeline.setTransition(f.tour.transition);
+    f.controller.apply({ width: 1440, height: 900, elapsedSeconds: time, tourPhase: phase, ...flags });
+    pipeline.composer.render(0);
+  };
+  frame(0);
+  assert.deepEqual({ ...f.tour.transition }, { ...TOUR_IDLE }, "the opening shot shows at once");
+  assert.equal(pass.enabled, false);
+  assert.equal(pass.uniforms.uProgress.value, 1);
+  assert.equal(pass.uniforms.uLayered.value, 0, "outside film the dissolve is not staggered");
+  frame(4.95);
+  assert.equal(pass.enabled, false);
+
+  frame(5);
+  assert.equal(f.tour.transition.capture, true);
+  assert.equal(f.controller.shot.name, "The watch", "the capture keeps the outgoing shot");
+  assert.equal(pass.enabled, true, "the low tier adds the final pass for the crossfade");
+  assert.equal(pass.uniforms.uProgress.value, 1);
+  assert.ok(pass.uniforms.tPrev.value, "grading's output is kept");
+  // The kept frame pushes in about the safe-area centre, in UV from the bottom.
+  close(pass.uniforms.uPrevOrigin.value.x, (450 + 940 / 2) / 1440, 1e-6);
+  close(pass.uniforms.uPrevOrigin.value.y, 1 - (32 + 720 / 2) / 900, 1e-6);
+  pipeline.setQualityProfile(LOW);
+  assert.equal(pass.enabled, true, "a quality step keeps the crossfade");
+
+  frame(5.05);
+  const { cut, progress, zoom } = f.tour.transition;
   assert.equal(f.controller.shot.name, "Threshold");
-  assert.ok(f.tour.fade > 0.9);
-  f.render(6);
+  assert.equal(cut, true);
+  close(progress, 0.05, 1e-6);
+  // Linear here; the final pass eases it, per depth layer in film.
+  close(pass.uniforms.uProgress.value, progress, 1e-9);
+  close(pass.uniforms.uPrevScale.value, 1 / (1 + zoom * progress), 1e-9);
+  assert.equal(pass.uniforms.uLayered.value, 0);
+  frame(5.5);
+  close(pass.uniforms.uProgress.value, 0.5, 1e-6);
+  frame(6.1);
+  assert.deepEqual({ ...f.tour.transition }, { ...TOUR_IDLE });
+  assert.equal(pass.uniforms.uProgress.value, 1);
+  assert.equal(pass.enabled, false, "the low tier drops the final pass after the dissolve");
+
+  // A pause mid-dissolve settles on the incoming shot; resuming does not replay it.
+  frame(10);
+  assert.equal(f.tour.transition.capture, true);
+  frame(10.3);
+  assert.equal(f.controller.shot.name, "Gallery detail");
+  assert.ok(pass.uniforms.uProgress.value < 1);
   f.tour.toggle();
-  f.render(6.1);
-  assert.equal(f.tour.fade, 0);
+  frame(10.4);
+  assert.equal(pass.uniforms.uProgress.value, 1);
+  assert.equal(pass.enabled, false);
   f.tour.toggle();
-  f.render(6.2, { reducedMotion: true });
-  assert.equal(f.tour.fade, 0);
+  frame(10.5);
+  assert.equal(pass.uniforms.uProgress.value, 1);
+  frame(10.6, { reducedMotion: true });
+  assert.deepEqual({ ...f.tour.transition }, { ...TOUR_IDLE });
+  assert.equal("uFade" in pass.uniforms, false, "no dip to black remains");
   f.tour.dispose();
-  assert.equal(f.tour.fade, 0);
+  assert.deepEqual({ ...f.tour.transition }, { ...TOUR_IDLE });
+  pipeline.dispose();
+  f.controller.dispose();
 });
 
 test("each shot dollies in slowly within its fitted margin and holds still with reduced motion", () => {
@@ -95,43 +160,43 @@ test("each shot dollies in slowly within its fitted margin and holds still with 
   f.controller.dispose();
 });
 
-test("post-process fade drives the final pass only while active and survives profile changes", () => {
-  const renderer = {
-    autoClearColor: true,
-    autoClearDepth: true,
-    autoClearStencil: true,
-    clear() {},
-    getPixelRatio: () => 1,
-    getRenderTarget: () => null,
-    getSize(target) {
-      target.width = 800;
-      target.height = 600;
-      return target;
-    },
-    setRenderTarget() {},
+test("tour shots drift at a constant rate between unchanged start, middle and end poses", () => {
+  const f = tourSetup(5);
+  const pose = (tourPhase) => {
+    f.controller.apply({ width: 1440, height: 900, elapsedSeconds: 0, tourPhase });
+    const x = f.camera.position.x - f.controller.target.x,
+      z = f.camera.position.z - f.controller.target.z;
+    return { yaw: (Math.atan2(z, x) * 180) / Math.PI, distance: Math.hypot(x, z) };
   };
-  const pipeline = createPostprocessPipeline(
-    renderer,
-    {},
-    {},
-    { postprocessGrading: true, postprocessVignette: false, postprocessGrain: false },
-    { matchMedia: () => ({ matches: false }) },
-  );
-  const pass = pipeline.passes.vignetteGrain;
-  assert.equal(pass.enabled, false);
-  pipeline.setFade(0.6);
-  assert.equal(pass.enabled, true);
-  assert.equal(pass.uniforms.uFade.value, 0.6);
-  pipeline.setQualityProfile({ postprocessGrading: true });
-  assert.equal(pass.enabled, true);
-  pipeline.setFade(2);
-  assert.equal(pass.uniforms.uFade.value, 1);
-  pipeline.setFade(0);
-  assert.equal(pass.enabled, false);
-  assert.equal(pass.uniforms.uFade.value, 0);
-  pipeline.setFade(Number.NaN);
-  assert.equal(pass.uniforms.uFade.value, 0);
-  pipeline.dispose();
+  const start = pose(0);
+  const { shot, frame } = f.controller;
+  const middle = pose(0.5),
+    end = pose(1);
+  close(start.yaw, shot.azimuth - shot.arc / 2, 1e-6);
+  close(middle.yaw, shot.azimuth, 1e-6);
+  close(end.yaw, shot.azimuth + shot.arc / 2, 1e-6);
+  close(start.distance, frame.distance, 1e-6);
+  close(middle.distance, frame.distance * (1 - PUSH_IN / 2), 1e-6);
+  close(end.distance, frame.distance * (1 - PUSH_IN), 1e-6);
+  // The pan and the dolly-in move as fast by the cuts as mid-shot.
+  const rate = (from, to) => {
+    const a = pose(from),
+      b = pose(to);
+    return [(b.yaw - a.yaw) / (to - from), (b.distance - a.distance) / (to - from)];
+  };
+  const [midYaw, midPush] = rate(0.495, 0.505);
+  close(midYaw, shot.arc, 1e-6);
+  close(midPush, -PUSH_IN * frame.distance, 1e-6);
+  for (const [from, to] of [
+    [0, 0.01],
+    [0.99, 1],
+  ]) {
+    const [yaw, push] = rate(from, to);
+    close(yaw, midYaw, 1e-6);
+    close(push, midPush, 1e-6);
+  }
+  f.tour.dispose();
+  f.controller.dispose();
 });
 
 const asset = () => {

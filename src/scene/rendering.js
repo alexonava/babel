@@ -19,6 +19,19 @@ import { disposeSceneRuntimeResources } from "./runtime.js";
 // never settles); past it the next draw links whatever remains, as before.
 const SHADER_WARMUP_TIMEOUT_MS = 2000;
 
+// Polls KHR_parallel_shader_compile without blocking: true once every program
+// has linked, false after timeoutMs.
+function whenLinked(programs, timeoutMs = SHADER_WARMUP_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    let waited = 0;
+    (function poll() {
+      if (programs.every((program) => program.isReady())) resolve(true);
+      else if ((waited += 10) > timeoutMs) resolve(false);
+      else setTimeout(poll, 10);
+    })();
+  });
+}
+
 function setRendererOutputColorSpace(renderer, threeExports = {}) {
   const srgbColorSpace = threeExports.SRGBColorSpace || SRGBColorSpace;
   const srgbEncoding = threeExports.sRGBEncoding;
@@ -85,6 +98,9 @@ export function createSceneRendering({
 
   const handleContextLost = (event) => {
     event?.preventDefault?.();
+    // The kept crossfade frame and the linked programs go with the context.
+    postprocessPipeline.cancelTransition?.();
+    postprocessPipeline.invalidatePrograms?.();
     onContextLost?.(event);
   };
   const handleContextRestored = (event) => {
@@ -169,6 +185,27 @@ export function createSceneRendering({
   const renderTargets = new Set();
   let disposed = false;
   let disposeResult = null;
+
+  // Uploads every visible map before a shot first shows its subject, so a
+  // cut never uploads mid-crossfade; uploaded maps only rebind.
+  function uploadTextures() {
+    if (typeof renderer.initTexture !== "function") return;
+    const materials = new Set();
+    const upload = (value) => {
+      const image = value?.isTexture && !value.isRenderTargetTexture ? value.image : null;
+      if (image && image.complete !== false) {
+        renderer.initTexture(value);
+      }
+    };
+    homeScene.traverseVisible((object) => {
+      for (const material of [object.material].flat()) {
+        if (!material || materials.has(material)) continue;
+        materials.add(material);
+        Object.values(material).forEach(upload);
+        Object.values(material.uniforms ?? {}).forEach((uniform) => upload(uniform?.value));
+      }
+    });
+  }
 
   const rendering = {
     camera,
@@ -267,12 +304,15 @@ export function createSceneRendering({
     // pass draws, so compile() runs against a composer target;
     // compileAsync then polls KHR_parallel_shader_compile instead of blocking a
     // frame. Without that extension the draw would link anyway (and Three warns
-    // per call), so it is skipped. Always settles: true once linked, false if
+    // per call), so it is skipped; the crossfade's own programs and the visible
+    // maps are prepared either way. Always settles: true once linked, false if
     // skipped, rejected or still pending after timeoutMs.
     compileShaders(timeoutMs = SHADER_WARMUP_TIMEOUT_MS) {
-      if (disposed || typeof renderer.compileAsync !== "function") return Promise.resolve(false);
+      if (disposed || renderer.getContext?.()?.isContextLost?.()) return Promise.resolve(false);
+      postprocessPipeline.compile?.();
+      uploadTextures();
+      if (typeof renderer.compileAsync !== "function") return Promise.resolve(false);
       if (renderer.extensions?.has?.("KHR_parallel_shader_compile") !== true) return Promise.resolve(false);
-      if (renderer.getContext?.()?.isContextLost?.()) return Promise.resolve(false);
       const previousTarget = renderer.getRenderTarget?.() ?? null;
       let pending;
       try {
@@ -292,6 +332,45 @@ export function createSceneRendering({
             resolve(ready);
           });
       });
+    },
+    // Where shaders compile in parallel, links the programs a quality step
+    // will draw with before it applies, so the step lands without a compile;
+    // otherwise they link on the cut frame. Of what applyQuality() changes,
+    // only the shadow flags and the fill light enter program keys; they are
+    // set for the synchronous compile and restored before any draw. Resolves
+    // true at once when the step keeps them, else as compileShaders() does.
+    prepareQuality(nextProfile) {
+      const shadows = Boolean(nextProfile?.shadows?.enabled);
+      const fill = Boolean(nextProfile?.lighting?.extraDirectional);
+      const { shadowMap } = renderer;
+      const previous = [shadowMap.enabled, sunLight.castShadow, fillLight.visible];
+      const unchanged =
+        Boolean(shadowMap.enabled) === shadows &&
+        sunLight.castShadow === shadows &&
+        fillLight.visible === fill;
+      if (disposed || unchanged) return Promise.resolve(true);
+      shadowMap.enabled = sunLight.castShadow = shadows;
+      fillLight.visible = fill;
+      const programs = new Set();
+      let compiled;
+      try {
+        compiled = rendering.compileShaders();
+      } finally {
+        [shadowMap.enabled, sunLight.castShadow, fillLight.visible] = previous;
+        // compile() left every material on the step's program. Lit ones return
+        // on their next draw; a version bump returns the rest from the program
+        // cache, so none draws mid-shot with a program that is still linking.
+        homeScene.traverse((object) => {
+          for (const material of [object.material].flat()) {
+            if (!material) continue;
+            const program = renderer.properties?.get(material)?.currentProgram;
+            if (program?.isReady) programs.add(program);
+            material.needsUpdate = true;
+          }
+        });
+      }
+      // compileAsync polls the programs the next draw restores; poll the step's.
+      return compiled.then((ready) => ready && whenLinked([...programs]));
     },
     applyQuality(nextProfile, { pixelRatio } = {}) {
       if (disposed) return false;
@@ -347,7 +426,9 @@ export function createSceneRendering({
       if (Number.isFinite(cameraFov)) camera.fov = cameraFov;
       camera.aspect = nextWidth / nextHeight;
       camera.updateProjectionMatrix();
-      renderer.setSize(nextWidth, nextHeight);
+      // The canvas keeps its CSS size (100% of the full-bleed scene container);
+      // only the drawing buffer follows the measured size.
+      renderer.setSize(nextWidth, nextHeight, false);
       // The composer also sizes the outline pass, in device pixels.
       composer.setSize(nextWidth, nextHeight);
       // Grading samples its ink contour in CSS pixels.

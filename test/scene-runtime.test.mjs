@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import * as THREE from "three";
+import { createDeferredQualityStep } from "../src/scene/runtime.js";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(testDir, "..");
@@ -146,6 +147,80 @@ test("composition profiles reframe portrait phones toward the tower", async () =
   assert.ok(portrait.camera.orbitBase > desktop.camera.orbitBase);
   assert.ok(portrait.camera.lookAtBase > desktop.camera.lookAtBase);
   assert.ok(portrait.sceneOffsetY > compact.sceneOffsetY);
+});
+
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("a deferred quality step lands on the first tour cut after its programs are prepared", async () => {
+  const prepares = [];
+  const steps = createDeferredQualityStep({
+    prepare: (profile) =>
+      new Promise((resolve, reject) => prepares.push({ profile, resolve, reject })),
+  });
+  const balanced = { tier: "balanced" };
+  const high = { tier: "high" };
+  assert.equal(steps.pending, false);
+  assert.equal(steps.take({ cut: true, running: true, nowMs: 0 }), null);
+
+  steps.queue(balanced, 1000);
+  assert.equal(steps.pending, true);
+  assert.deepEqual(
+    prepares.map(({ profile }) => profile),
+    [balanced],
+    "linking starts at once",
+  );
+  assert.equal(
+    steps.take({ cut: false, running: true, nowMs: 1100 }),
+    null,
+    "a running tour waits",
+  );
+  assert.equal(
+    steps.take({ cut: true, running: true, nowMs: 1200 }),
+    null,
+    "a cut waits for the programs",
+  );
+  prepares[0].resolve(true);
+  await flush();
+  assert.equal(steps.take({ cut: false, running: true, nowMs: 1300 }), null);
+  assert.equal(steps.take({ cut: true, running: true, nowMs: 1400 }), balanced);
+  assert.equal(steps.pending, false);
+  assert.equal(steps.take({ cut: true, running: true, nowMs: 1500 }), null, "a step applies once");
+
+  steps.queue(balanced, 2000);
+  steps.queue(high, 2100);
+  prepares[1].resolve(true);
+  await flush();
+  assert.equal(
+    steps.take({ cut: true, running: true, nowMs: 2200 }),
+    null,
+    "a newer step replaces it",
+  );
+  prepares[2].reject(new Error("context lost"));
+  await flush();
+  assert.equal(
+    steps.take({ cut: true, running: true, nowMs: 2300 }),
+    high,
+    "a failed link still lands",
+  );
+
+  steps.queue(balanced, 3000);
+  assert.equal(
+    steps.take({ cut: false, running: false, nowMs: 3001 }),
+    balanced,
+    "no tour, no wait",
+  );
+
+  steps.queue(high, 4000);
+  assert.equal(steps.take({ cut: false, running: true, nowMs: 33999 }), null);
+  assert.equal(steps.take({ cut: false, running: true, nowMs: 34000 }), high, "30 s at most");
+
+  const throwing = createDeferredQualityStep({
+    prepare() {
+      throw new Error("compile failed");
+    },
+  });
+  throwing.queue(balanced, 0);
+  assert.equal(throwing.take({ cut: true, running: true, nowMs: 1 }), balanced);
 });
 
 test("visibility classification prefers front-facing systems and culls backside decor", async () => {
