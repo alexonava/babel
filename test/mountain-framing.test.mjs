@@ -18,7 +18,7 @@ import {
 import { createPropScale } from "../src/scene/prop-scale.js";
 import { DIRECTED_SHOTS } from "../src/scene/directed-shots.js";
 import { createCinematicCamera, cinematicSafeArea } from "../src/scene/cinematic.js";
-import { createMountainGeometry, MOUNTAINS } from "../src/scene/hill-silhouette.js";
+import { createMountainGeometry, MOUNTAINS, snowReach } from "../src/scene/hill-silhouette.js";
 
 // The film mountains follow the camera, so their framing depends only on where each
 // directed shot puts it: fit the real tower and tree, then project the crest line.
@@ -210,7 +210,7 @@ test("the camera-centred ranges frame every tour shot: sun, roof lane, tree shot
           assert.ok(crest.length > 0, label + " shows no mountains");
           if (desktop)
             for (let v = 0; v < terrain.count; v++) {
-              if (terrain.getW(v) <= 0.27) continue;
+              if (!snowReach(terrain.getX(v), terrain.getW(v))) continue;
               const p = screen(vertex(v));
               assert.ok(
                 p.depth <= 0 ||

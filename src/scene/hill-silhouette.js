@@ -40,6 +40,16 @@ export const HILL = Object.freeze({
 // the tallest a range's noise may rise, capped low under the sun and roof saddle
 // (171-183), across the tree shots (22-86, so sky stays open above the lantern on every
 // width) and at 234-280.
+// Moonlit snow caps: a crest above `line` degrees keeps snow within
+// `depth` x (crest - line) degrees below it, at most `max`, with noisy edges.
+// Tinted by the baked moonlight, so shadowed faces stay blue-grey.
+export const SNOW = Object.freeze({ line: 2.9, depth: 0.42, max: 2.6, noise: 0.6, color: Object.freeze([0.74, 0.79, 0.92]) });
+// The widest snow reach at a point `below` degrees under a crest at `crest`
+// degrees (noise at its most generous): 1 inside the cap, 0 beyond it.
+export function snowReach(below, crest) {
+  const cap = Math.min(SNOW.max, Math.max(0, (crest - SNOW.line) * SNOW.depth));
+  return cap > 0.001 && below - (cap * SNOW.noise) / 2 < 1.05 * cap ? 1 : 0;
+}
 export const MOUNTAINS = Object.freeze({
   radii: Object.freeze([225, 275, 330, 385]),
   share: Object.freeze([0.4, 0.6, 0.8, 1]),
@@ -236,7 +246,7 @@ export function createMountainGeometry(crests = mountainCrests()) {
     perRange = rows.length * columns;
   const positions = new Float32Array(radii.length * perRange * 3),
     terrain = new Float32Array(radii.length * perRange * 4),
-    elevations = new Float32Array(radii.length * perRange),
+    crestOf = new Float32Array(radii.length * perRange),
     index = new Uint16Array(radii.length * (rows.length - 1) * columns * 6);
   const rad = Math.PI / 180;
   let cursor = 0;
@@ -256,7 +266,7 @@ export function createMountainGeometry(crests = mountainCrests()) {
         );
         terrain[v * 4] = e - elevation;
         terrain[v * 4 + 1] = range;
-        elevations[v] = elevation;
+        crestOf[v] = e;
       });
     }
     for (let row = 0; row < rows.length - 1; row++)
@@ -277,13 +287,9 @@ export function createMountainGeometry(crests = mountainCrests()) {
       lit = normal.getX(v) * KEY.x + ny * KEY.y + normal.getZ(v) * KEY.z,
       row = Math.floor((v % perRange) / columns);
     terrain[v * 4 + 2] = 0.24 + 0.62 * Math.max(lit, 0) + 0.14 * ny;
-    // Snow settles on high crests and gentle shoulders; steep rock and the near range stay bare.
-    terrain[v * 4 + 3] =
-      terrain[v * 4 + 1] > 0 && row < 2
-        ? Math.min(1, Math.max(0, (elevations[v] - 3.8) / 2.5)) *
-          (row ? 0.6 : 1) *
-          Math.min(1, Math.max(0, (ny - 0.2) / 0.35))
-        : 0;
+    // Snow: the column's crest elevation, from which the fragment sizes a cap
+    // that reaches further down taller peaks. The near range stays bare.
+    terrain[v * 4 + 3] = terrain[v * 4 + 1] > 0 ? crestOf[v] : 0;
   }
   geometry.deleteAttribute("normal");
   geometry.setAttribute("aTerrain", new BufferAttribute(terrain, 4));
@@ -351,8 +357,9 @@ vec3 c=mix(vec3(.11,.12,.155),vec3(.19,.2,.245),k)*mix(.8,vT.z,k);
 c=mix(c,s*.9,.08+.37*k);
 c=mix(c,s,.3*k*(1.-smoothstep(.005,.04,vL.y/r)));
 if(k>0.) c*=min(1.,.92*dot(s,W)/max(dot(c,W),1e-4));
-float snow=smoothstep(.42,.58,vT.w+.3*(n-.5));
-c=mix(c,mix(vec3(.6,.64,.76)*vT.z,s,.35*k),snow);
+float cap=clamp((vT.w-${SNOW.line.toFixed(2)})*${SNOW.depth.toFixed(2)},0.,${SNOW.max.toFixed(2)});
+float snow=(1.-smoothstep(.7*cap,1.05*cap,vT.x+cap*${SNOW.noise.toFixed(2)}*(n-.5)))*step(.001,cap);
+c=mix(c,mix(vec3(${SNOW.color.map((value) => value.toFixed(2))})*mix(.62,1.,vT.z),s,.25*k),snow);
 vec2 v=d.xz/max(length(d.xz),1e-4), toSun=normalize(uSun.xz-o.xz);
 float cr=1.-smoothstep(.8,3.5,px);
 c+=cr*(vec3(.55,.62,.8)*.35*max(dot(v,normalize(vec2(32,14))),0.)
