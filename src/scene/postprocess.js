@@ -481,6 +481,11 @@ export function createPostprocessPipeline(renderer, scene, camera, qualityProfil
       prevTarget?.dispose();
       prevTarget = null;
     },
+    // A lost context takes its programs with it: the next warm-up links the
+    // crossfade's programs again instead of the first dissolve after recovery.
+    invalidatePrograms() {
+      compiled = false;
+    },
     // Links the crossfade's programs once, from the shader warm-up. Keys
     // differ by output colour space, so grading compiles against an off-screen
     // target and the final pass against the canvas, as a low-tier cut draws them.

@@ -892,6 +892,8 @@ function setSrgbTexture(texture) {
       const adaptiveProfile = adaptiveSteps.take({ cut: transition.cut, running: cameraTour?.running === true, nowMs });
       if (adaptiveProfile) applyActiveQualityProfile(adaptiveProfile, "adaptive");
       // The capture, cut and first dissolve frames carry one-off work, not load.
+      // A frame samples the interval before it, so this frame's sample (above)
+      // predates the capture; the next three cover capture, cut and dissolve.
       if (transition.capture) qualityState.skipSamples?.(3);
       rendering.postprocessPipeline.setTransition?.(transition);
       const activeProfile = state.profile,
