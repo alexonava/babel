@@ -403,6 +403,29 @@ test("phones do not gain a phantom scroll below the small-viewport hero", async 
   assert.doesNotMatch(styles, /100dvh/);
 });
 
+test("modern iPhones open full-bleed: night to every edge, no bounce, matching bars", async () => {
+  const styles = await readStyles();
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  const manifest = JSON.parse(await readFile(new URL("../manifest.webmanifest", import.meta.url), "utf8"));
+  assert.match(html, /<meta name="viewport" content="[^"]*viewport-fit=cover[^"]*"/);
+  assert.match(html, /<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/);
+  // Safari's bars, the notch area and any overscroll show the page's own night.
+  assert.match(styles, /\nhtml\s*\{[^}]*background:\s*var\(--night-900\);[^}]*overscroll-behavior:\s*none;/);
+  assert.match(styles, /\nbody\s*\{[^}]*background:\s*linear-gradient\([^;]*#0d1119 100%\);[^}]*overscroll-behavior:\s*none;/);
+  assert.match(styles, /--night-900:\s*#0c1016;/);
+  assert.match(html, /<meta name="theme-color" content="#0c1016"/);
+  assert.equal(manifest.theme_color, "#0c1016");
+  assert.equal(manifest.background_color, "#0c1016");
+  // The canvas keeps its CSS size; its buffer follows the full-bleed container.
+  const rendering = await readFile(new URL("../src/scene/rendering.js", import.meta.url), "utf8");
+  const scene = await readFile(new URL("../src/scene/index.js", import.meta.url), "utf8");
+  assert.match(rendering, /renderer\.setSize\(nextWidth, nextHeight, false\);/);
+  assert.doesNotMatch(rendering, /renderer\.setSize\([^)]*\b(?:height|Height)\)/);
+  assert.match(scene, /readSize\(\) \{\s*const rect = container\?\.getBoundingClientRect\?\.\(\);/);
+  assert.match(scene, /new ResizeObserver\(\(\) => resizeController\.resize\(\)\)/);
+  assert.match(scene, /containerResizeObserver\?\.observe\(container\);/);
+  assert.match(scene, /containerResizeObserver\?\.disconnect\(\);\s*resizeController\.dispose\(\);/);
+});
 test("fixed chrome and dialogs clear left and right safe-area insets", async () => {
   const styles = await readStyles();
   assert.match(styles, /\.hero\s*\{[^}]*padding-left:\s*max\(0px, calc\(env\(safe-area-inset-left\) - 16px\)\);/);
@@ -437,7 +460,7 @@ test("landmarks and heading levels describe the page structure", async () => {
   const notFound = await readNotFoundHtml();
   assert.match(notFound, /<h1>That page isn't here\.<\/h1>/);
   assert.doesNotMatch(notFound, /<h2>/);
-  assert.match(notFound, /<meta name="theme-color" content="#0b1020" \/>/);
+  assert.match(notFound, /<meta name="theme-color" content="#0c1016" \/>/);
   assert.match(notFound, /<picture class="scene-poster" aria-hidden="true">/);
   const classTokens = [...notFound.matchAll(/class="([^"]+)"/g)].flatMap((match) => match[1].split(/\s+/));
   for (const token of classTokens) {
@@ -661,11 +684,15 @@ test("dialog polish keeps readable ink, touch cues and paper-safe controls", asy
   // 30px clears the 24px deckled edge, so Back sits wholly on the paper.
   assert.match(cssRule(styles, ".panel-parchment .panel-back"), /margin:\s*30px;/);
   assert.doesNotMatch(styles, /\.panel-parchment \.panel-close\s*\{/, "no second margin rule for Back");
-  const glow = cssRule(styles, ".bottom-btn--icon::before");
-  assert.match(glow, /z-index:\s*-1;/);
-  assert.match(glow, /pointer-events:\s*none;/);
-  assert.match(glow, /rgba\(242, 226, 196, 0\.16\)/);
-  assert.match(cssRule(styles, ".btn-icon-label"), /font-size:\s*13px;[^}]*letter-spacing:\s*0\.14em;/);
+  // The About case defers to the scene: small, with no glow or indicator dot,
+  // a target of at least 44px, and the footer's pale-stone type.
+  assert.doesNotMatch(styles, /\.bottom-btn--icon::(?:before|after)/);
+  for (const [, size] of styles.matchAll(/\.bottom-btn--icon\s*\{[^}]*?width:\s*(\d+)px;/g)) {
+    assert.ok(Number(size) >= 44 && Number(size) <= 52, `About target ${size}px`);
+  }
+  const label = cssRule(styles, ".btn-icon-label");
+  assert.match(label, /color:\s*var\(--text-accent\);/);
+  assert.match(label, /font-size:\s*13px;[^}]*letter-spacing:\s*0\.14em;/);
 });
 
 test("the 404 is a centered cotton-paper sheet with dark ink", async () => {

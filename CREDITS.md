@@ -194,7 +194,7 @@ below) are retired and no longer published.
 - Meshy_AI_Leather_Envelope_Case_0911015506_texture.glb — SHA-256 `a819c2ef4b466d5544e70ecbffdf806c1eb75b9ba3dfa2bc2ffcd88239989b60`.
 - Meshy_AI_Stylized_3D_game_prop_0911015500_texture.glb (retired Contact renders; historical) — SHA-256 `65d412aa8ac6786551ff41b3c3386b126b9d9d37ab3d707b85809a2255447aed`.
 
-The published About pair (nav-about.webp and nav-about-active.webp, 16,310 bytes) was generated with the built-in OpenAI image tool, using Blender renders of the case as references. Sources and export details are in `docs/history/NAV-ICONS-QA.md` (2.5D inventory refinement).
+The About pair (nav-about.webp and nav-about-active.webp, originally 16,310 bytes) was generated with the built-in OpenAI image tool, using Blender renders of the case as references. Sources and export details are in `docs/history/NAV-ICONS-QA.md` (2.5D inventory refinement). On 2026-09-24 the pair was toned down to sit quietly in the night scene (half saturation, about 74% brightness, a faint cool shift; alpha kept) and is now 8,632 bytes; the untouched originals and the derivation script are in `Assets/UI/nav-about`.
 
 
 ## Cotton paper panel material

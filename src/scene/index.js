@@ -864,16 +864,25 @@ function setSrgbTexture(texture) {
       frameScheduler?.invalidate();
       cameraTour?.prepareNext();
     }
+    // The scene fills its fixed, full-bleed container. On iPhone Safari that
+    // box can outgrow innerHeight (collapsing or translucent toolbars,
+    // standalone mode), so the drawing buffer follows the container's own
+    // size, and a ResizeObserver catches changes that fire no window resize.
     const resizeController = createSceneResizeController({
       onResize: applySceneSize,
       readSize() {
+        const rect = container?.getBoundingClientRect?.();
+        const measured = rect && rect.width > 0 && rect.height > 0;
         return {
-          height: window.innerHeight,
+          height: measured ? Math.round(rect.height) : window.innerHeight,
           pixelRatio: window.devicePixelRatio || 1,
-          width: window.innerWidth,
+          width: measured ? Math.round(rect.width) : window.innerWidth,
         };
       },
     });
+    const containerResizeObserver =
+      typeof ResizeObserver === "function" && container ? new ResizeObserver(() => resizeController.resize()) : null;
+    containerResizeObserver?.observe(container);
     // viewport.height is refreshed inside applySceneSize (the resize handler)
     // on every resize, so reading it inside the scroll handler avoids a
     // layout-flushing window.innerHeight access per scroll event.
@@ -1107,6 +1116,7 @@ function setSrgbTexture(texture) {
       panelObserver?.disconnect();
       panelHold.dispose();
       visitorHold.dispose();
+      containerResizeObserver?.disconnect();
       resizeController.dispose();
       frameScheduler.dispose();
       if (scene.devMode && typeof scene.devMode.dispose === "function") {

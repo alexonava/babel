@@ -426,7 +426,9 @@ export function createSceneRendering({
       if (Number.isFinite(cameraFov)) camera.fov = cameraFov;
       camera.aspect = nextWidth / nextHeight;
       camera.updateProjectionMatrix();
-      renderer.setSize(nextWidth, nextHeight);
+      // The canvas keeps its CSS size (100% of the full-bleed scene container);
+      // only the drawing buffer follows the measured size.
+      renderer.setSize(nextWidth, nextHeight, false);
       // The composer also sizes the outline pass, in device pixels.
       composer.setSize(nextWidth, nextHeight);
       // Grading samples its ink contour in CSS pixels.
