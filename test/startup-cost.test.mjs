@@ -614,7 +614,12 @@ test("scene bootstrap warms shaders before drawing and records start-up marks", 
     assert.ok(index.includes(`measureScene("${name}"`), name);
   }
   assert.match(index, /measureScene\(`shaders:\$\{label\}`, start\);/);
-  assert.match(index, /if \(sceneShown && !canvasShown\) markScene\("reveal"\);/);
+  // The rocks fetch and link only after the reveal.
+  assert.match(index, /if \(sceneShown && !canvasShown\) \{\s*markScene\("reveal"\);[^}]*rockScatter\.setRevealed\(\);\s*\}/);
+  // A ground program that changes before the reveal links through compileAsync
+  // (both shading call sites), so the first draw never blocks on it.
+  assert.equal((index.match(/contacts: groundContacts \}\);\s*warmGround\?\.\(\);/g) || []).length, 2);
+  assert.match(index, /warmGround = \(\) => \{\s*if \(!canvasShown\) warmShaders\("ground"\);\s*\};/);
 
   for (const path of ["shared/webgl-probe.js", "scene/quality.js", "scene/rendering.js"]) {
     assert.doesNotMatch(await source(path), /high-performance/, path);

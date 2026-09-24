@@ -90,8 +90,9 @@ export const ROCK_LIB = Object.freeze({
   createDeferredQualityStep,
 });
 
-// Fetches rock-build.js once the film is on and the tree channel has settled,
-// on high and balanced only; low, legacy comparisons and ?rocks=off never do.
+// Fetches rock-build.js once the scene has revealed, the film is on and the
+// tree channel has settled, on high and balanced only; low, legacy comparisons
+// and ?rocks=off never do. Nothing about the rocks delays the reveal.
 export function createRockScatter({
   enabled = true,
   tier,
@@ -101,11 +102,12 @@ export function createRockScatter({
 }) {
   let film = false,
     settled = false,
+    revealed = false,
     started = false,
     disposed = false,
     rocks = null;
   function start() {
-    if (started || disposed || !enabled || !film || !settled || !["high", "balanced"].includes(tier)) return;
+    if (started || disposed || !enabled || !film || !settled || !revealed || !["high", "balanced"].includes(tier)) return;
     started = true;
     onStatus({ status: "loading", tier });
     load().then(
@@ -130,6 +132,11 @@ export function createRockScatter({
     setTreeStatus(status) {
       if (disposed || !["ready", "fallback"].includes(status)) return;
       settled = true;
+      start();
+    },
+    setRevealed() {
+      if (disposed) return;
+      revealed = true;
       start();
     },
     take(frame) {

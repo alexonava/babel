@@ -151,7 +151,7 @@ function fakeAsset() {
   return scene;
 }
 
-test("the rock scatter waits for film, tree and tier, loads its chunk once and commits on a cut", async () => {
+test("the rock scatter waits for the reveal, film, tree and tier, loads its chunk once and commits on a cut", async () => {
   const statuses = [];
   let loads = 0;
   const load = async () => {
@@ -165,6 +165,7 @@ test("the rock scatter waits for film, tree and tier, loads its chunk once and c
     const idle = createRockScatter({ ...options, parent, groundHeight: flat, load, loadAsset });
     idle.setFilmActive(true);
     idle.setTreeStatus("ready");
+    idle.setRevealed();
     await tick();
     assert.equal(loads, 0);
     idle.dispose();
@@ -186,6 +187,9 @@ test("the rock scatter waits for film, tree and tier, loads its chunk once and c
   rocks.setTreeStatus("loading");
   rocks.setTreeStatus("fallback");
   rocks.setTreeStatus("ready");
+  await tick();
+  assert.equal(loads, 0, "nothing loads before the reveal");
+  rocks.setRevealed();
   for (let i = 0; i < 4; i++) await tick();
   assert.equal(loads, 1);
   const root = parent.getObjectByName("film-rocks");

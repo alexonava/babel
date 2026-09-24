@@ -447,6 +447,9 @@ function setSrgbTexture(texture) {
     let currentGroundMuddy = false;
     let currentGrass = null;
     let currentDetail = null;
+    // Set once the shader warm-up exists: a ground program that changes before
+    // the reveal links through compileAsync instead of blocking the first draw.
+    let warmGround = null;
     // The slate's contact darkening (tree roots, lantern, rocks) and detail map
     // slot: uniforms, so rocks arriving or shadows switching never recompile.
     const groundContacts = createSlateContacts(estateContacts());
@@ -476,6 +479,7 @@ function setSrgbTexture(texture) {
           if (!material) return;
           const { slate } = filmGroundSurface({ muddy: currentGroundMuddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL });
           configureMudShading(material, currentGroundMuddy, quietSetting, filmActive, currentGrass, { slate, detail: currentDetail, contacts: groundContacts });
+          warmGround?.();
           invalidateContent();
         },
         onDetailChange({ colorMap, normalMap, normalScale, bumpMap, roughnessMap = null, detailMap = null, muddy = false, filmTiled = false }) {
@@ -488,6 +492,7 @@ function setSrgbTexture(texture) {
           const surface = filmGroundSurface({ muddy, film: filmActive, slate: slateGround, surface: GROUND_SURFACE_MATERIAL });
           if (qualityDebug) qualityDebug.groundTreatment = muddy ? "mud" : surface.slate ? "slate" : "baseline";
           configureMudShading(material, muddy, quietSetting, filmActive, currentGrass, { slate: surface.slate, detail: detailMap, contacts: groundContacts });
+          warmGround?.();
           for (const texture of [colorMap, normalMap, roughnessMap, bumpMap].filter(Boolean)) {
             if (!groundRepeats.has(texture)) groundRepeats.set(texture, texture.repeat.clone());
             texture.repeat.copy(groundRepeats.get(texture)).multiplyScalar(filmActive && !filmTiled ? 384 / 176 : 1);
@@ -659,6 +664,9 @@ function setSrgbTexture(texture) {
     // visible stays hidden until its programs are ready.
     let canvasShown = false;
     const shaderWarmup = createShaderWarmup({ compile: () => rendering.compileShaders() });
+    warmGround = () => {
+      if (!canvasShown) warmShaders("ground");
+    };
     function warmShaders(label, subject = null) {
       const start = sceneNow();
       shaderWarmup.warm(subject, (ready) => {
@@ -988,7 +996,11 @@ function setSrgbTexture(texture) {
       }
       const sceneShown = !sceneFailed && (cinematic.ready || Boolean(scene.devMode?.active)) &&
         (canvasShown || !shaderWarmup.pending);
-      if (sceneShown && !canvasShown) markScene("reveal");
+      if (sceneShown && !canvasShown) {
+        markScene("reveal");
+        // The rocks fetch and link only after the reveal, off its critical path.
+        rockScatter.setRevealed();
+      }
       canvasShown = sceneShown;
       container?.classList.toggle("is-ready", sceneShown);
       // Until the reveal, the transparent canvas redraws only when invalidated
