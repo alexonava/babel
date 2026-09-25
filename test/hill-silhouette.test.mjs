@@ -14,6 +14,7 @@ import {
   mountainCrests,
   SNOW,
   snowReach,
+  mountainLight,
 } from "../src/scene/hill-silhouette.js";
 import { FILM_SKY_GLSL } from "../src/scene/estate-sky.js";
 import { createStarfield } from "../src/scene/starfield.js";
@@ -139,15 +140,16 @@ const rotate = (profile, by) => profile.map((_, j) => profile[(j + by) % profile
 const elevationOf = (p, i) =>
   (Math.atan2(p.getY(i), Math.hypot(p.getX(i), p.getZ(i))) * 180) / Math.PI;
 
-test("film mountains are four camera-centred ranges in one wrapped Uint16 mesh that faces the centre", () => {
+test("film mountains are five camera-centred ranges in one wrapped Uint16 mesh that faces the centre", () => {
   const geometry = createMountainGeometry(crests);
   const { radii, rows, columns: n, foot } = MOUNTAINS,
     p = geometry.attributes.position,
     terrain = geometry.attributes.aTerrain,
     index = geometry.index.array,
     perRange = rows.length * n;
-  assert.equal(p.count, 11520);
-  assert.equal(index.length / 3, 17280);
+  assert.equal(p.count, radii.length * rows.length * n);
+  assert.ok(p.count < 65536, "Uint16 indices");
+  assert.equal(index.length / 3, radii.length * (rows.length - 1) * n * 2);
   assert.ok(index instanceof Uint16Array);
   assert.equal(geometry.attributes.normal, undefined, "lighting is baked, so no normal ships");
   assert.equal(terrain.itemSize, 4);
@@ -219,7 +221,9 @@ test("mountain crests never repeat around the ring, between ranges or across tou
     for (let k = 2; k <= 8; k++)
       assert.ok(correlation(profile, rotate(profile, Math.round(n / k))) < 0.5);
   for (let a = 0; a < crests.length; a++)
-    for (let b = a + 1; b < crests.length; b++) assert.ok(correlation(crests[a], crests[b]) < 0.6);
+    // Ranges share the authored height envelope (framing), so they correlate
+    // somewhat, but no range is a copy of another.
+    for (let b = a + 1; b < crests.length; b++) assert.ok(correlation(crests[a], crests[b]) < 0.7);
   // The watch, Portrait, Lantern study and Close-up windows, 40 degrees from each left edge.
   const windows = [141.5, 68.4, 31.8, -4.6].map((from) =>
     columns(from, from + 40).map((j) => skyline[j]),
@@ -375,4 +379,18 @@ test("stars draw after the sky and before the mountains, which stay inside the f
   // The ground is fully hazed before the near range rises out of it.
   assert.ok(HORIZON_HAZE.far <= MOUNTAINS.radii[0] * MOUNTAINS.rows[2]);
   geometry.dispose();
+});
+
+test("each peak has a lit flank toward the orb and a shadow flank, softer with distance", () => {
+  const sun = { x: -85, y: 55, z: -14 },
+    length = Math.hypot(sun.x, sun.y, sun.z),
+    light = mountainLight(crests, { x: sun.x / length, y: sun.y / length, z: sun.z / length });
+  const n = MOUNTAINS.columns,
+    at = (range, degrees) => light[range][Math.round((degrees / 360) * n) % n];
+  for (const row of light) for (const value of row) assert.ok(value >= 0.3 && value <= 1);
+  // The Watch massif's summit (150 degrees, far range): the flank toward the
+  // orb (about 189 degrees) is lit, the other in shadow.
+  assert.ok(at(4, 154) - at(4, 147) > 0.15, `${at(4, 147)} -> ${at(4, 154)}`);
+  const spread = (row) => Math.max(...row) - Math.min(...row);
+  assert.ok(spread(light[4]) < spread(light[0]), "distance flattens form");
 });

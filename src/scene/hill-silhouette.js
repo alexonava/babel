@@ -34,7 +34,7 @@ export const HILL = Object.freeze({
 
 // Film alpine ranges, built around the camera: crests are elevation angles (degrees)
 // per world azimuth atan2(z, x), so every shot and viewport gets a known backdrop and
-// the camera can never stand inside a range. Four ranges, near to far, all inside the
+// the camera can never stand inside a range. Five ranges, near to far, all inside the
 // camera's far plane (450). Prime lattice counts keep the crest from repeating around
 // the ring. peaks: [azimuth, apex, half-width, range]; background: [azimuth, cap] knots,
 // the tallest a range's noise may rise, capped low under the sun and roof saddle
@@ -51,13 +51,25 @@ export function snowReach(below, crest) {
   return cap > 0.001 && below - (cap * SNOW.noise) / 2 < 1.05 * cap ? 1 : 0;
 }
 export const MOUNTAINS = Object.freeze({
-  radii: Object.freeze([225, 275, 330, 385]),
-  share: Object.freeze([0.4, 0.6, 0.8, 1]),
+  radii: Object.freeze([225, 275, 300, 330, 385]),
+  share: Object.freeze([0.45, 0.6, 0.72, 0.84, 1]),
   rows: Object.freeze([1, 0.94, 0.87, 0.8]),
-  columns: 720,
+  columns: 1080,
   foot: -18,
   octaves: Object.freeze([7, 17, 41, 97, 211]),
-  summits: Object.freeze([53, 67, 83, 101]),
+  summits: Object.freeze([53, 67, 61, 83, 101]),
+  // Gentle crest character on every range: soft shoulders and notches that
+  // survive the low windows, in degrees of relief (near, far).
+  jag: Object.freeze({ octaves: Object.freeze([131, 241]), relief: Object.freeze([0.28, 0.16]) }),
+  // Stepped aerial perspective, near to far: each range's share of the sky's
+  // luma behind it, and how far its hue leans from night rock toward the sky.
+  // Painted form: each peak's sides turn toward or away from the moon along the
+  // crest's own slope (smoothed over `smooth` columns each way and scaled by
+  // `slope`), faces lean toward the viewer by `lean`, and a soft spur field
+  // (`spurs` cycles around the ring) shades gullies by up to `fold`. `soft`
+  // feathers the lit/shadow divide; far ranges keep `distance` less form.
+  form: Object.freeze({ smooth: 12, slope: 1.4, lean: 0.35, spurs: Object.freeze([61, 149]), fold: 0.12, soft: 0.45, distance: 0.2 }),
+  tones: Object.freeze({ luma: Object.freeze([0.4, 0.5, 0.6, 0.7, 0.8]), sky: Object.freeze([0.1, 0.24, 0.38, 0.52, 0.66]) }),
   background: Object.freeze([
     [0, 3.1],
     [9, 3.2],
@@ -78,21 +90,21 @@ export const MOUNTAINS = Object.freeze({
     [340, 4.2],
   ]),
   peaks: Object.freeze([
-    [11, 6, 6, 3],
-    [17, 4.2, 4, 2],
-    [101, 3.6, 4, 2],
-    [114, 4.6, 6, 3],
-    [143, 6.8, 5, 3],
-    [150, 8, 8, 3],
-    [158, 6.2, 5, 2],
-    [175, 2.4, 3.5, 3],
-    [180.5, 2.1, 2.5, 2],
-    [188, 4.6, 3.5, 2],
-    [210, 8.5, 9, 3],
-    [222, 6, 5, 2],
-    [305, 7, 8, 3],
+    [11, 6, 6, 4],
+    [17, 4.2, 4, 3],
+    [101, 3.6, 4, 3],
+    [114, 4.6, 6, 4],
+    [143, 6.8, 5, 4],
+    [150, 8, 8, 4],
+    [158, 6.2, 5, 3],
+    [175, 2.4, 3.5, 4],
+    [180.5, 2.1, 2.5, 3],
+    [188, 4.6, 3.5, 3],
+    [210, 8.5, 9, 4],
+    [222, 6, 5, 3],
+    [305, 7, 8, 4],
     [318, 5, 5, 1],
-    [330, 6, 6, 2],
+    [330, 6, 6, 3],
   ]),
   renderOrder: -0.5,
 });
@@ -213,11 +225,12 @@ function summits(u, seed, cells) {
 // denser on farther ranges, varied by the ridged multifractal and toothed by a finer
 // summit lattice. Authored peaks keep their exact apex and get notched shoulders.
 export function mountainCrests() {
-  const { columns, share, octaves, peaks, summits: cells } = MOUNTAINS;
+  const { columns, share, octaves, peaks, summits: cells, jag } = MOUNTAINS;
   return share.map((part, range) => {
     const t = Array.from({ length: columns }, (_, j) => j / columns);
     const rough = normalized(t.map((u) => ridged(u, 7919 * (range + 1), octaves)));
     const fine = normalized(t.map((u) => summits(u, 104729 + 31 * range, 197)));
+    const teeth = normalized(t.map((u) => ridged(u, 15485863 + 97 * range, jag.octaves)));
     return t.map((u, j) => {
       const azimuth = u * 360,
         notch = 0.3 * (1 - fine[j]);
@@ -232,16 +245,54 @@ export function mountainCrests() {
         if (peakRange === range && delta < 1)
           crest = Math.max(crest, apex * (1 - delta) ** 1.1 * (1 - notch * Math.min(1, 3 * delta)));
       }
-      return crest;
+      // Fine teeth on every crest; the low windows keep their 2.6 degree ceiling.
+      const relief = jag.relief[0] + (jag.relief[1] - jag.relief[0]) * (range / (share.length - 1));
+      crest += relief * (teeth[j] - 0.35);
+      return Math.max(0.2, backgroundCap(azimuth) <= 2.6 ? Math.min(crest, 2.6) : crest);
     });
   });
 }
 
 const KEY = new Vector3(32, 28, 14).normalize();
-// Four ranges x four rows x one ring of columns; columns wrap, so there is no seam
+const smoothstep = (a, b, x) => {
+  const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+};
+
+// Per range and column, the baked light (0.3-1) from `light` (the key, or the
+// visible orb in the scene): a surface normal built
+// from the crest's slope along the ring (so each peak has a lit and a shadow
+// side, divided down from its summit), a lean toward the viewer, and soft spur
+// and gully folds. Feathered, and flatter with distance.
+export function mountainLight(crests = mountainCrests(), light = KEY) {
+  const { columns, form, radii } = MOUNTAINS,
+    step = (Math.PI * 2) / columns,
+    rad = Math.PI / 180;
+  return crests.map((crest, range) => {
+    const far = range / (radii.length - 1),
+      spurs = normalized(Array.from({ length: columns }, (_, j) => ridged(j / columns, 6007 + 13 * range, form.spurs)));
+    return crest.map((_, j) => {
+      const at = (k) => Math.tan(crest[(j + k + columns) % columns] * rad);
+      const slope = ((at(form.smooth) - at(-form.smooth)) / (2 * form.smooth * step)) * form.slope,
+        azimuth = j * step,
+        tangent = [-Math.sin(azimuth), 0, Math.cos(azimuth)],
+        inward = [-Math.cos(azimuth), 0, -Math.sin(azimuth)],
+        spur = spurs[j] * 2 - 1,
+        lean = form.lean * (1 + 0.35 * spur);
+      // Height falls along +tangent where the crest descends, so the normal
+      // tips that way; it also tips toward the viewer (inward).
+      const n = [-slope * tangent[0] + lean * inward[0], 1, -slope * tangent[2] + lean * inward[2]],
+        length = Math.hypot(...n),
+        lit = (n[0] * light.x + n[1] * light.y + n[2] * light.z) / length;
+      const shaded = smoothstep(-form.soft, form.soft, lit - 0.35) * (1 - form.fold * Math.max(0, -spur));
+      return 0.3 + 0.7 * (0.65 + (shaded - 0.65) * (1 - form.distance * far));
+    });
+  });
+}
+// Five ranges x four rows x one ring of columns; columns wrap, so there is no seam
 // column at azimuth 0. Triangles face the centre. aTerrain bakes per vertex: degrees
 // below this column's crest (ink and rim), range, moonlight from the key and snow.
-export function createMountainGeometry(crests = mountainCrests()) {
+export function createMountainGeometry(crests = mountainCrests(), light = KEY) {
   const { radii, rows, columns, foot } = MOUNTAINS,
     perRange = rows.length * columns;
   const positions = new Float32Array(radii.length * perRange * 3),
@@ -280,18 +331,18 @@ export function createMountainGeometry(crests = mountainCrests()) {
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new BufferAttribute(positions, 3));
   geometry.setIndex(new BufferAttribute(index, 1));
-  geometry.computeVertexNormals();
-  const normal = geometry.attributes.normal;
-  for (let v = 0; v < normal.count; v++) {
-    const ny = normal.getY(v),
-      lit = normal.getX(v) * KEY.x + ny * KEY.y + normal.getZ(v) * KEY.z,
-      row = Math.floor((v % perRange) / columns);
-    terrain[v * 4 + 2] = 0.24 + 0.62 * Math.max(lit, 0) + 0.14 * ny;
+  // Moonlight from each column's painted form (see MOUNTAINS.form): the
+  // silhouette stays exactly the crest; only the shading turns.
+  const shade = mountainLight(crests, light);
+  const vertices = positions.length / 3;
+  for (let v = 0; v < vertices; v++) {
+    const range = Math.floor(v / perRange),
+      j = v % columns;
+    terrain[v * 4 + 2] = shade[range][j];
     // Snow: the column's crest elevation, from which the fragment sizes a cap
     // that reaches further down taller peaks. The near range stays bare.
     terrain[v * 4 + 3] = terrain[v * 4 + 1] > 0 ? crestOf[v] : 0;
   }
-  geometry.deleteAttribute("normal");
   geometry.setAttribute("aTerrain", new BufferAttribute(terrain, 4));
   geometry.computeBoundingSphere();
   return geometry;
@@ -351,12 +402,15 @@ void main() {
 vec3 d=normalize(vL), o=cameraPosition, W=vec3(.2126,.7152,.0722);
 float b=dot(o,d), t=-b+sqrt(max(b*b-dot(o,o)+uSky.x,0.)), a=(o.y+d.y*t)*inversesqrt(uSky.x);
 vec3 s=(filmSky(a)+filmBand(a)+vec3(.24,.24,.3)*smoothstep(-.03,.17,a))*uSky.y;
-float k=vT.y/3., px=vT.x/max(fwidth(vT.x),1e-5), r=length(vL.xz);
+float k=vT.y/${glslFloat(MOUNTAINS.radii.length - 1)}, px=vT.x/max(fwidth(vT.x),1e-5), r=length(vL.xz);
 float n=mn(vL.xz*(80./r)+vec2(vL.y*.2+vT.y*17.,vL.y*-.13));
-vec3 c=mix(vec3(.11,.12,.155),vec3(.19,.2,.245),k)*mix(.8,vT.z,k);
-c=mix(c,s*.9,.08+.37*k);
-c=mix(c,s,.3*k*(1.-smoothstep(.005,.04,vL.y/r)));
-if(k>0.) c*=min(1.,.92*dot(s,W)/max(dot(c,W),1e-4));
+float tL=${steps("luma")}, tS=${steps("sky")};
+vec3 c=mix(mix(vec3(.1,.11,.15),vec3(.15,.16,.21),k),s,tS);
+c*=tL*dot(s,W)*mix(.74,1.16,vT.z)/max(dot(c,W),1e-4);
+c*=1.+.07*(1.-.6*k)*(1.-smoothstep(0.,3.,vT.x));
+c=max(c+(vT.z-.6)*vec3(.12,.14,.19)*(1.-.35*k),c*.5);
+c=mix(c,s*(tL+.1),(.2+.25*k)*(1.-smoothstep(.004,.03,vL.y/r)));
+c*=min(1.,.92*dot(s,W)/max(dot(c,W),1e-4));
 float cap=clamp((vT.w-${SNOW.line.toFixed(2)})*${SNOW.depth.toFixed(2)},0.,${SNOW.max.toFixed(2)});
 float snow=(1.-smoothstep(.7*cap,1.05*cap,vT.x+cap*${SNOW.noise.toFixed(2)}*(n-.5)))*step(.001,cap);
 c=mix(c,mix(vec3(${SNOW.color.map((value) => value.toFixed(2))})*mix(.62,1.,vT.z),s,.25*k),snow);
@@ -371,6 +425,16 @@ c=mix(c,vec3(.012,.016,.03),(1.-smoothstep(.4,1.4,px))*(.7-.3*k));
 gl_FragColor=vec4(c,${DEPTH_LAYER.mountains});
 }`,
   });
+}
+
+// Stepped per-range value from MOUNTAINS.tones, as GLSL: the range index
+// (vT.y) selects its step, so each layer reads as one flat, distinct tone.
+const glslFloat = (value) => (Number.isInteger(value) ? value.toFixed(1) : String(value));
+function steps(key) {
+  const values = MOUNTAINS.tones[key];
+  return values
+    .slice(1)
+    .reduce((glsl, value, i) => `mix(${glsl},${glslFloat(value)},step(${i + 0.5},vT.y))`, glslFloat(values[0]));
 }
 
 // The baseline keeps the South Downs ring; film swaps in the camera-centred ranges.
@@ -397,7 +461,8 @@ export function createHillSilhouette({
     setFilmTreatment(active) {
       if (disposed) return false;
       if (active) {
-        mountainGeometry ||= createMountainGeometry();
+        // The form is lit from the visible orb, so peaks cross-light toward it.
+    mountainGeometry ||= createMountainGeometry(mountainCrests(), new Vector3(...sunPosition).normalize());
         mountainShading ||= mountainMaterial({ skyRadius, shellOpacity, sunPosition });
       }
       mesh.geometry = active ? mountainGeometry : geometry;
