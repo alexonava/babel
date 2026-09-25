@@ -902,7 +902,7 @@ test("core GitHub Actions use hardened reviewed checkout and setup-node revision
   for (const workflow of workflows) {
     assert.match(
       workflow,
-      /actions\/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd\r?\n\s+with:\r?\n\s+persist-credentials:\s*false/,
+      /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\r?\n\s+with:\r?\n\s+persist-credentials:\s*false/,
     );
     if (workflow.includes("actions/setup-node@")) {
       assert.match(workflow, /actions\/setup-node@820762786026740c76f36085b0efc47a31fe5020/);
