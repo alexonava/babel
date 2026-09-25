@@ -34,7 +34,7 @@ export const HILL = Object.freeze({
 
 // Film alpine ranges, built around the camera: crests are elevation angles (degrees)
 // per world azimuth atan2(z, x), so every shot and viewport gets a known backdrop and
-// the camera can never stand inside a range. Four ranges, near to far, all inside the
+// the camera can never stand inside a range. Five ranges, near to far, all inside the
 // camera's far plane (450). Prime lattice counts keep the crest from repeating around
 // the ring. peaks: [azimuth, apex, half-width, range]; background: [azimuth, cap] knots,
 // the tallest a range's noise may rise, capped low under the sun and roof saddle
@@ -289,7 +289,7 @@ export function mountainLight(crests = mountainCrests(), light = KEY) {
     });
   });
 }
-// Four ranges x four rows x one ring of columns; columns wrap, so there is no seam
+// Five ranges x four rows x one ring of columns; columns wrap, so there is no seam
 // column at azimuth 0. Triangles face the centre. aTerrain bakes per vertex: degrees
 // below this column's crest (ink and rim), range, moonlight from the key and snow.
 export function createMountainGeometry(crests = mountainCrests(), light = KEY) {
